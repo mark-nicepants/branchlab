@@ -70,7 +70,8 @@ pub fn remove_worktree(repo: &str, worktree_path: &str, force: bool) -> Result<(
 }
 
 /// Uncommitted change summary: changed/untracked file count (porcelain) plus
-/// tracked insertions/deletions (numstat vs HEAD).
+/// insertions/deletions (tracked via numstat vs HEAD, untracked counted as
+/// whole-file lines) — matching the totals shown in the Changes view.
 pub fn diff_stat(path: &str) -> DiffStat {
     let mut stat = DiffStat::default();
 
@@ -85,6 +86,16 @@ pub fn diff_stat(path: &str) -> DiffStat {
             stat.insertions += cols.next().and_then(|c| c.parse::<u32>().ok()).unwrap_or(0);
             stat.deletions += cols.next().and_then(|c| c.parse::<u32>().ok()).unwrap_or(0);
         }
+    }
+
+    // Untracked files aren't in `diff --numstat`; count their lines as
+    // insertions so the totals match the Changes view (which lists them too).
+    for file in git_out(path, &["ls-files", "--others", "--exclude-standard"]).lines() {
+        if file.is_empty() {
+            continue;
+        }
+        stat.insertions +=
+            std::fs::read_to_string(Path::new(path).join(file)).map(|s| s.lines().count() as u32).unwrap_or(0);
     }
 
     stat
