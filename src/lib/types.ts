@@ -21,6 +21,8 @@ export interface Workspace {
   branch: string | null;
   /** AI-generated display name (from first chat), else null → fall back to branch. */
   name: string | null;
+  /** Branch this workspace was forked from (for the "Branched X from Y" line). */
+  base_branch: string | null;
 }
 
 /** Human label for a workspace: explicit name, else branch, else a fallback. */

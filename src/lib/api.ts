@@ -48,13 +48,12 @@ export function listBranches(projectId: string): Promise<string[]> {
   return invoke<string[]>("list_branches", { projectId });
 }
 
-/** Create a worktree on a new `branch` off `base`; returns the updated project. */
-export function addWorktree(
-  projectId: string,
-  branch: string,
-  base: string,
-): Promise<ProjectView> {
-  return invoke<ProjectView>("add_worktree", { projectId, branch, base });
+/**
+ * Create a workspace (a worktree on a generated branch codename). Omit `base`
+ * to fork from the repo's current branch. Returns the new workspace.
+ */
+export function createWorkspace(projectId: string, base?: string): Promise<Workspace> {
+  return invoke<Workspace>("create_workspace", { projectId, base: base ?? null });
 }
 
 /** Remove a worktree workspace (stops its server first). */
@@ -83,4 +82,17 @@ export function listServers(): Promise<ServerInfo[]> {
 /** Heartbeat to defer idle reaping of the active workspace's server. */
 export function touchServer(workspaceId: string): Promise<void> {
   return invoke<void>("touch_server", { workspaceId });
+}
+
+/** Open the webview inspector (bound to a shortcut; right-click menu is disabled). */
+export function openDevtools(): Promise<void> {
+  return invoke<void>("open_devtools");
+}
+
+/**
+ * Open a path externally. Pass a macOS app name (`open -a`, e.g. "Terminal",
+ * "Visual Studio Code"); omit `app` to reveal it in Finder.
+ */
+export function openExternal(path: string, app?: string): Promise<void> {
+  return invoke<void>("open_external", { path, app: app ?? null });
 }

@@ -35,11 +35,16 @@ pub struct Workspace {
     pub project_id: String,
     pub kind: WorkspaceKind,
     pub path: String,
+    /// The workspace's own branch (a generated codename like `bubbly-cheetah`
+    /// for new workspaces). Doubles as the fallback display name.
     pub branch: Option<String>,
     /// Display name. AI-generated from the first chat interaction, then only
     /// changed manually. `#[serde(default)]` keeps older registries loadable.
     #[serde(default)]
     pub name: Option<String>,
+    /// Branch this workspace was forked from (for the "Branched X from Y" line).
+    #[serde(default)]
+    pub base_branch: Option<String>,
 }
 
 /// A project together with its workspaces — the shape the UI consumes.
@@ -117,6 +122,7 @@ impl Registry {
                 path: root.clone(),
                 branch: current_branch(&canonical),
                 name: None,
+                base_branch: None,
             });
             self.persist(&data);
         }
@@ -176,33 +182,43 @@ impl Registry {
             .map(|p| p.root_path.clone())
     }
 
-    /// Create a worktree off `base` on a new branch, register it as a workspace.
-    pub fn add_worktree(
+    /// Create a workspace: a worktree on a freshly generated branch codename
+    /// (e.g. `bubbly-cheetah`) forked off `base` (or the repo's current branch
+    /// when `base` is None). Returns the new workspace.
+    pub fn create_workspace(
         &self,
         project_id: &str,
-        branch: &str,
-        base: &str,
-    ) -> Result<ProjectView, String> {
+        base: Option<String>,
+    ) -> Result<Workspace, String> {
         let root = self.repo_root(project_id).ok_or("unknown project")?;
+        let base = match base {
+            Some(b) if !b.is_empty() => b,
+            _ => current_branch(Path::new(&root)).ok_or("cannot determine base branch")?,
+        };
+
+        let existing = git::list_branches(&root).unwrap_or_default();
+        let branch = unique_codename(&existing);
         let dir = self
             .worktrees_dir
             .join(project_id)
-            .join(git::sanitize_branch(branch));
+            .join(git::sanitize_branch(&branch));
         let path = dir.to_string_lossy().into_owned();
 
-        git::add_worktree(&root, &path, branch, base)?;
+        git::add_worktree(&root, &path, &branch, &base)?;
 
-        let mut data = self.data.lock().unwrap();
-        data.workspaces.push(Workspace {
+        let ws = Workspace {
             id: id_for(&path),
             project_id: project_id.to_string(),
             kind: WorkspaceKind::Worktree,
             path,
-            branch: Some(branch.to_string()),
+            branch: Some(branch),
             name: None,
-        });
+            base_branch: Some(base),
+        };
+        let mut data = self.data.lock().unwrap();
+        data.workspaces.push(ws.clone());
         self.persist(&data);
-        Ok(self.view_of(&data, project_id))
+        Ok(ws)
     }
 
     /// Remove a worktree workspace (and its git worktree). Base workspaces
@@ -255,6 +271,36 @@ fn id_for(path: &str) -> String {
     let mut h = DefaultHasher::new();
     path.hash(&mut h);
     format!("{:016x}", h.finish())
+}
+
+/// A friendly `adjective-animal` codename (e.g. `bubbly-cheetah`), used as both
+/// the new branch name and the initial workspace label.
+fn generate_codename() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    const ADJ: &[&str] = &[
+        "bubbly", "sunny", "witty", "mellow", "brave", "clever", "cosmic", "fuzzy", "jolly",
+        "nimble", "quiet", "swift", "lucky", "snappy", "vivid", "zesty",
+    ];
+    const ANI: &[&str] = &[
+        "cheetah", "otter", "falcon", "panda", "lynx", "heron", "bison", "marmot", "gecko",
+        "walrus", "ferret", "badger", "magpie", "narwhal", "koala", "tapir",
+    ];
+    let n = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0) as usize;
+    format!("{}-{}", ADJ[n % ADJ.len()], ANI[(n / 97) % ANI.len()])
+}
+
+/// A codename that doesn't collide with an existing branch.
+fn unique_codename(existing: &[String]) -> String {
+    let mut name = generate_codename();
+    let mut suffix = 2;
+    while existing.iter().any(|e| e == &name) {
+        name = format!("{}-{}", generate_codename(), suffix);
+        suffix += 1;
+    }
+    name
 }
 
 fn is_git_repo(path: &Path) -> bool {

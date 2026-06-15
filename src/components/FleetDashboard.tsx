@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { listServers, startServer, stopServer, workspaceDiffStat } from "../lib/api";
-import type { DiffStat, ProjectView, Workspace } from "../lib/types";
+import { workspaceDiffStat } from "../lib/api";
+import { workspaceLabel, type DiffStat, type ProjectView, type Workspace } from "../lib/types";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 interface Props {
   projects: ProjectView[];
@@ -14,21 +15,17 @@ interface Row {
 
 /**
  * The fleet view: every workspace across every project as a card, with live
- * server status and uncommitted-change stats. This is the product's soul —
- * monitoring and switching between parallel agents.
+ * uncommitted-change stats. Server/connection state is intentionally hidden —
+ * it's an internal detail.
  */
 export function FleetDashboard({ projects, onOpenWorkspace }: Props) {
   const rows: Row[] = projects.flatMap((p) =>
     p.workspaces.map((w) => ({ workspace: w, projectName: p.name })),
   );
 
-  const [running, setRunning] = useState<Set<string>>(new Set());
   const [diffs, setDiffs] = useState<Record<string, DiffStat>>({});
 
   const poll = useCallback(async () => {
-    const servers = await listServers().catch(() => []);
-    setRunning(new Set(servers.map((s) => s.workspace_id)));
-    // Diff stats are cheap git calls; fetch for all known workspaces.
     const entries = await Promise.all(
       rows.map(async (r) => [r.workspace.id, await workspaceDiffStat(r.workspace.id)] as const),
     );
@@ -43,66 +40,51 @@ export function FleetDashboard({ projects, onOpenWorkspace }: Props) {
   }, [poll]);
 
   return (
-    <div className="fleet">
-      <header className="fleet-header">
-        <h1>Fleet</h1>
-        <span className="muted small">
-          {running.size} running · {rows.length} workspaces
-        </span>
+    <div className="flex h-full flex-col">
+      <header className="flex items-baseline gap-3 border-b border-border px-6 py-4">
+        <h1 className="text-base font-semibold">Fleet</h1>
+        <span className="text-xs text-muted-foreground">{rows.length} workspaces</span>
       </header>
 
-      {rows.length === 0 && (
-        <p className="muted" style={{ padding: 24 }}>
-          No workspaces yet. Add a project and create a worktree to start a fleet.
-        </p>
-      )}
-
-      <div className="fleet-grid">
-        {rows.map(({ workspace, projectName }) => {
-          const isRunning = running.has(workspace.id);
-          const diff = diffs[workspace.id];
-          return (
-            <div
-              key={workspace.id}
-              className="fleet-card"
-              onClick={() => onOpenWorkspace(workspace)}
-            >
-              <div className="fleet-card-top">
-                <span className="muted xsmall">{projectName}</span>
-                <span className={`dot ${isRunning ? "on" : "off"}`} title={isRunning ? "running" : "stopped"} />
-              </div>
-              <div className="ws-branch fleet-branch">{workspace.branch ?? "—"}</div>
-              <div className="muted xsmall">{workspace.kind === "Base" ? "base repo" : "worktree"}</div>
-
-              <div className="fleet-diff">
-                {diff && (diff.files > 0 ? (
-                  <span>
-                    {diff.files} files <span className="ins">+{diff.insertions}</span>{" "}
-                    <span className="del">-{diff.deletions}</span>
+      <ScrollArea className="flex-1">
+        {rows.length === 0 ? (
+          <p className="p-6 text-sm text-muted-foreground">
+            No workspaces yet. Add a project and create a workspace to start a fleet.
+          </p>
+        ) : (
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3 p-6">
+            {rows.map(({ workspace, projectName }) => {
+              const diff = diffs[workspace.id];
+              return (
+                <button
+                  key={workspace.id}
+                  className="flex flex-col gap-1.5 rounded-lg border border-border bg-card p-3 text-left transition-colors hover:border-muted-foreground/40"
+                  onClick={() => onOpenWorkspace(workspace)}
+                >
+                  <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                    {projectName}
                   </span>
-                ) : (
-                  <span className="muted">clean</span>
-                ))}
-              </div>
-
-              <div className="fleet-actions" onClick={(e) => e.stopPropagation()}>
-                {isRunning ? (
-                  <button className="ghost xsmall" onClick={() => void stopServer(workspace.id).then(poll)}>
-                    Stop
-                  </button>
-                ) : (
-                  <button className="ghost xsmall" onClick={() => void startServer(workspace.id).then(poll)}>
-                    Start
-                  </button>
-                )}
-                <button className="ghost xsmall" onClick={() => onOpenWorkspace(workspace)}>
-                  Open →
+                  <span className="truncate text-sm font-medium">{workspaceLabel(workspace)}</span>
+                  <span className="text-[11px] text-muted-foreground">
+                    {workspace.kind === "Base" ? "base repo" : "workspace"}
+                  </span>
+                  <span className="min-h-4 text-xs">
+                    {diff &&
+                      (diff.files > 0 ? (
+                        <>
+                          {diff.files} files <span className="text-primary">+{diff.insertions}</span>{" "}
+                          <span className="text-destructive">−{diff.deletions}</span>
+                        </>
+                      ) : (
+                        <span className="text-muted-foreground">clean</span>
+                      ))}
+                  </span>
                 </button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+              );
+            })}
+          </div>
+        )}
+      </ScrollArea>
     </div>
   );
 }

@@ -206,9 +206,21 @@
     @apply border-border outline-ring/50;
     }
   body {
-    @apply bg-background text-foreground;
-    }
+    @apply bg-background text-foreground overflow-hidden;
+    /* Desktop app: nothing selectable by default, default cursor. */
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: default;
+  }
   html {
     @apply font-sans;
     }
+  /* Re-enable selection for inputs and anything explicitly opted-in. */
+  input,
+  textarea,
+  [contenteditable="true"],
+  .select-text {
+    -webkit-user-select: text;
+    user-select: text;
+  }
 }

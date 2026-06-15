@@ -69,9 +69,10 @@ export class OpencodeClient {
   }
 
   /**
-   * Generate a short workspace name from the first user prompt. Uses a
-   * throwaway session with structured output so the chat stays clean, then
-   * deletes it. opencode 1.17.7 doesn't auto-title sessions, so we do it here.
+   * Generate a workspace name from the first user prompt using opencode's
+   * built-in `title` agent (purpose-built, no tool use). Runs in a throwaway
+   * session so the chat stays clean, then deletes it. opencode 1.17.7 doesn't
+   * auto-title sessions, so we drive it explicitly here.
    */
   async generateName(
     firstUserText: string,
@@ -85,30 +86,14 @@ export class OpencodeClient {
         {
           method: "POST",
           body: JSON.stringify({
+            agent: "title",
             ...(model ? { model } : {}),
-            parts: [
-              {
-                type: "text",
-                text:
-                  `Generate a concise 2-4 word title for a coding workspace based on this request. ` +
-                  `Reply with ONLY the title, no quotes or punctuation.\n\nRequest: ${firstUserText}`,
-              },
-            ],
-            format: {
-              type: "json_schema",
-              schema: {
-                type: "object",
-                properties: { title: { type: "string" } },
-                required: ["title"],
-                additionalProperties: false,
-              },
-            },
+            parts: [{ type: "text", text: firstUserText }],
           }),
         },
       );
-      const text = res.parts?.find((p) => p.type === "text")?.text ?? "";
-      const title = (JSON.parse(text) as { title?: string }).title?.trim();
-      return title || null;
+      const text = res.parts?.find((p) => p.type === "text")?.text?.trim();
+      return text || null;
     } catch {
       return null;
     } finally {

@@ -26,14 +26,15 @@ pub fn list_branches(project_id: String, registry: State<Registry>) -> Result<Ve
     registry.branches(&project_id)
 }
 
+/// Create a workspace (worktree on a generated branch codename). `base` is
+/// optional — omit to fork from the repo's current branch.
 #[tauri::command]
-pub fn add_worktree(
+pub fn create_workspace(
     project_id: String,
-    branch: String,
-    base: String,
+    base: Option<String>,
     registry: State<Registry>,
-) -> Result<ProjectView, String> {
-    registry.add_worktree(&project_id, &branch, &base)
+) -> Result<Workspace, String> {
+    registry.create_workspace(&project_id, base)
 }
 
 /// Remove a worktree workspace: stop its server first, then remove the worktree.
@@ -98,4 +99,26 @@ pub fn list_servers(servers: State<ServerManager>) -> Vec<ServerInfo> {
 #[tauri::command]
 pub fn touch_server(workspace_id: String, servers: State<ServerManager>) {
     servers.touch(&workspace_id);
+}
+
+/// Open the webview inspector (we disable the default right-click menu, so this
+/// is bound to a keyboard shortcut instead). Available because the tauri
+/// `devtools` feature is enabled in Cargo.toml.
+#[tauri::command]
+pub fn open_devtools(window: tauri::WebviewWindow) {
+    window.open_devtools();
+}
+
+/// Open a path in an external app. `app` is a macOS application name for
+/// `open -a` (e.g. "Terminal", "Visual Studio Code"); omit it to reveal the
+/// path in Finder. (Windows/Linux equivalents land with the portability pass.)
+#[tauri::command]
+pub fn open_external(path: String, app: Option<String>) -> Result<(), String> {
+    use std::process::Command;
+    let mut cmd = Command::new("open");
+    if let Some(app) = app {
+        cmd.arg("-a").arg(app);
+    }
+    cmd.arg(&path);
+    cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
 }

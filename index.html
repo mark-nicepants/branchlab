@@ -1,13 +1,30 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark" data-theme="default-dark">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tauri + React + Typescript</title>
+    <title>OpenScope</title>
+    <!-- Apply the persisted theme + background before the bundle loads to avoid a flash. -->
+    <script>
+      (function () {
+        var bg = {
+          "default-dark": "#0d0e11",
+          "one-dark": "#282c34",
+          "tokyo-night": "#1a1b26",
+          "catppuccin-mocha": "#1e1e2e",
+          light: "#ffffff",
+        };
+        var t = localStorage.getItem("openscope.theme") || "default-dark";
+        var d = document.documentElement;
+        d.dataset.theme = t;
+        d.classList.toggle("dark", t !== "light");
+        d.style.background = bg[t] || "#0d0e11";
+      })();
+    </script>
   </head>
 
-  <body>
+  <body class="bg-background">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

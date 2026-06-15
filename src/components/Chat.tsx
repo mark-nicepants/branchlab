@@ -1,9 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowUp, GitBranch, Plus, Square, Wrench } from "lucide-react";
 import { OpencodeClient } from "../lib/opencode";
-import type { BusEvent, ModelOption, Part } from "../lib/types";
+import type { BusEvent, ModelOption, Part, Workspace } from "../lib/types";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 
 interface Props {
+  workspace: Workspace;
   baseUrl: string;
+  onRenamed: (workspaceId: string, name: string) => void;
 }
 
 interface UiMessage {
@@ -14,11 +28,12 @@ interface UiMessage {
 }
 
 /**
- * Minimal streaming chat for one workspace (orchestration-first MVP).
- * Renders assistant text as it streams over SSE; tool/reasoning parts get a
- * one-line summary. Rich rendering is deferred.
+ * Minimal streaming chat for one workspace. Renders assistant text as it
+ * streams over SSE; tool/reasoning parts get a one-line summary. On the first
+ * user prompt (for an unnamed workspace) it asks opencode's title agent for a
+ * name and reports it back via onRenamed.
  */
-export function Chat({ baseUrl }: Props) {
+export function Chat({ workspace, baseUrl, onRenamed }: Props) {
   const client = useMemo(() => new OpencodeClient(baseUrl), [baseUrl]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Record<string, UiMessage>>({});
@@ -29,6 +44,7 @@ export function Chat({ baseUrl }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const nameRequested = useRef(false);
 
   const upsertPart = useCallback((part: Part) => {
     setMessages((prev) => {
@@ -53,7 +69,6 @@ export function Chat({ baseUrl }: Props) {
     setOrder((prev) => (prev.includes(part.messageID) ? prev : [...prev, part.messageID]));
   }, []);
 
-  // Establish a session + load models once per server.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -68,7 +83,6 @@ export function Chat({ baseUrl }: Props) {
         setModels(models);
         setModel(models.find((m) => m.label === defaultLabel) ?? models[0] ?? null);
 
-        // Hydrate prior messages (persisted in opencode's DB).
         const history = await client.listMessages(session.id);
         if (cancelled) return;
         for (const m of history) {
@@ -83,7 +97,6 @@ export function Chat({ baseUrl }: Props) {
     };
   }, [client, upsertPart]);
 
-  // Subscribe to the SSE bus and react to message/part/idle/error events.
   useEffect(() => {
     if (!sessionId) return;
     const unsub = client.subscribeEvents((e: BusEvent) => {
@@ -120,7 +133,6 @@ export function Chat({ baseUrl }: Props) {
     return unsub;
   }, [client, sessionId, upsertPart]);
 
-  // Keep scrolled to the latest content.
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages, order]);
@@ -132,7 +144,6 @@ export function Chat({ baseUrl }: Props) {
     setError(null);
     setBusy(true);
 
-    // Optimistic user bubble (real one arrives via SSE too, keyed by id).
     const tempId = `local-${order.length}`;
     setMessages((prev) => ({
       ...prev,
@@ -144,6 +155,14 @@ export function Chat({ baseUrl }: Props) {
       },
     }));
     setOrder((prev) => [...prev, tempId]);
+
+    // First interaction → let the title agent name the workspace (background).
+    if (!workspace.name && !nameRequested.current) {
+      nameRequested.current = true;
+      void client
+        .generateName(text, model ?? undefined)
+        .then((name) => name && onRenamed(workspace.id, name));
+    }
 
     try {
       await client.sendPrompt(sessionId, text, model ?? undefined);
@@ -159,61 +178,108 @@ export function Chat({ baseUrl }: Props) {
   }
 
   return (
-    <div className="chat">
-      <div className="chat-messages" ref={scrollRef}>
-        {order.length === 0 && <p className="muted center-text">Send a prompt to begin.</p>}
-        {order.map((mid) => {
-          const m = messages[mid];
-          if (!m) return null;
-          return (
-            <div key={mid} className={`msg ${m.role}`}>
-              <div className="msg-role">{m.role}</div>
-              <div className="msg-body">
-                {m.order.map((pid) => (
-                  <PartView key={pid} part={m.partsById[pid]} />
-                ))}
-              </div>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+        <div className="mx-auto flex max-w-4xl flex-col gap-5 p-5">
+          {workspace.base_branch && workspace.branch && (
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <GitBranch className="size-3.5" />
+              <span>
+                Branched <span className="font-mono text-foreground">{workspace.branch}</span> from{" "}
+                <span className="font-mono text-foreground">{workspace.base_branch}</span>
+              </span>
             </div>
-          );
-        })}
-        {busy && <p className="muted small">● working…</p>}
-        {error && <p className="error-text">{error}</p>}
+          )}
+          {order.length === 0 && (
+            <p className="py-10 text-center text-sm text-muted-foreground">
+              Send a prompt to begin.
+            </p>
+          )}
+          {order.map((mid) => {
+            const m = messages[mid];
+            if (!m) return null;
+            return (
+              <div key={mid} className="flex flex-col gap-1">
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                  {m.role}
+                </div>
+                <div
+                  className={cn(
+                    "select-text text-sm",
+                    m.role === "user" &&
+                      "self-start rounded-lg border border-border bg-card px-3 py-2",
+                  )}
+                >
+                  {m.order.map((pid) => (
+                    <PartView key={pid} part={m.partsById[pid]} />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          {busy && <p className="text-xs text-muted-foreground">● working…</p>}
+          {error && <p className="text-xs text-destructive">{error}</p>}
+        </div>
       </div>
 
-      <div className="composer">
-        <select
-          value={model?.label ?? ""}
-          onChange={(e) => setModel(models.find((m) => m.label === e.target.value) ?? null)}
-          title="Model"
-        >
-          {models.length === 0 && <option value="">default model</option>}
-          {models.map((m) => (
-            <option key={m.label} value={m.label}>
-              {m.label}
-            </option>
-          ))}
-        </select>
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-              e.preventDefault();
-              void send();
-            }
-          }}
-          placeholder="Prompt the agent…  (⌘/Ctrl+Enter to send)"
-          rows={3}
-        />
-        {busy ? (
-          <button className="danger-btn" onClick={() => void abort()}>
-            Stop
-          </button>
-        ) : (
-          <button className="primary" onClick={() => void send()} disabled={!sessionId}>
-            Send
-          </button>
-        )}
+      <div className="p-3">
+        <div className="mx-auto max-w-4xl rounded-xl border border-border bg-card focus-within:border-muted-foreground/40">
+          {/* Controls on top (Polyscope-style), composer below. */}
+          <div className="flex items-center gap-1.5 px-2 py-1.5">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon" className="size-6 text-muted-foreground" disabled>
+                  <Plus className="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Attach (soon)</TooltipContent>
+            </Tooltip>
+            <Select
+              value={model?.label ?? ""}
+              onValueChange={(v) => setModel(models.find((m) => m.label === v) ?? null)}
+            >
+              <SelectTrigger size="sm" className="h-7 max-w-[280px] border-0 bg-transparent text-xs shadow-none">
+                <SelectValue placeholder="default model" />
+              </SelectTrigger>
+              <SelectContent>
+                {models.map((m) => (
+                  <SelectItem key={m.label} value={m.label} className="text-xs">
+                    {m.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="ml-auto">
+              {busy ? (
+                <Button variant="destructive" size="icon" className="size-7" onClick={() => void abort()}>
+                  <Square className="size-3.5" />
+                </Button>
+              ) : (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="size-7 text-primary hover:bg-primary/10 disabled:text-muted-foreground/40 disabled:hover:bg-transparent"
+                  onClick={() => void send()}
+                  disabled={!input.trim() || !sessionId}
+                >
+                  <ArrowUp className="size-4" />
+                </Button>
+              )}
+            </div>
+          </div>
+          <Textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                void send();
+              }
+            }}
+            placeholder="Ask the agent…  (⌘/Ctrl+Enter to send)"
+            className="min-h-[80px] resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
+          />
+        </div>
       </div>
     </div>
   );
@@ -221,15 +287,15 @@ export function Chat({ baseUrl }: Props) {
 
 function PartView({ part }: { part: Part | undefined }) {
   if (!part) return null;
-  if (part.type === "text") return <div className="part-text">{part.text}</div>;
+  if (part.type === "text") return <div className="whitespace-pre-wrap break-words">{part.text}</div>;
   if (part.type === "reasoning")
-    return <div className="part-reasoning muted">{part.text}</div>;
+    return <div className="whitespace-pre-wrap italic text-muted-foreground">{part.text}</div>;
   if (part.type === "tool")
     return (
-      <div className="part-tool muted small">
-        🔧 {part.tool ?? "tool"} {part.state?.status ? `· ${part.state.status}` : ""}
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Wrench className="size-3" /> {part.tool ?? "tool"}
+        {part.state?.status ? ` · ${part.state.status}` : ""}
       </div>
     );
-  // step markers and other parts are noise in the MVP view.
   return null;
 }
