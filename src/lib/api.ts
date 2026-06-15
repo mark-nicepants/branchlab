@@ -8,6 +8,7 @@ import type {
   DiffStat,
   EnvReport,
   FileChange,
+  FileContent,
   ProjectView,
   ServerInfo,
   Workspace,
@@ -98,6 +99,11 @@ export function discardFile(workspaceId: string, file: string): Promise<void> {
 /** All files in a workspace (tracked + untracked) for the file-tree browser. */
 export function workspaceFiles(workspaceId: string): Promise<string[]> {
   return invoke<string[]>("workspace_files", { workspaceId });
+}
+
+/** Read a workspace file's contents for the in-app viewer. */
+export function readFile(workspaceId: string, file: string): Promise<FileContent> {
+  return invoke<FileContent>("read_file", { workspaceId, file });
 }
 
 // ── M3: config & internals ──

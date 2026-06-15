@@ -40,11 +40,7 @@ fn resolve(dir: &Path) -> (PathBuf, bool) {
 pub fn read(dir: &Path) -> ConfigFile {
     let (path, exists) = resolve(dir);
     let content = std::fs::read_to_string(&path).unwrap_or_default();
-    ConfigFile {
-        path: path.to_string_lossy().into_owned(),
-        content,
-        exists,
-    }
+    ConfigFile { path: path.to_string_lossy().into_owned(), content, exists }
 }
 
 pub fn write(dir: &Path, content: &str) -> Result<String, String> {

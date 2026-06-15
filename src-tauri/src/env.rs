@@ -43,21 +43,13 @@ fn probe_tool(bin: &str, version_args: &[&str], extract: fn(&str) -> Option<Stri
         Err(_) => return ToolStatus::missing(),
     };
 
-    let version = Command::new(&resolved)
-        .args(version_args)
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| {
+    let version =
+        Command::new(&resolved).args(version_args).output().ok().filter(|o| o.status.success()).and_then(|o| {
             let text = String::from_utf8_lossy(&o.stdout);
             extract(text.trim())
         });
 
-    ToolStatus {
-        found: true,
-        path: Some(resolved.to_string_lossy().into_owned()),
-        version,
-    }
+    ToolStatus { found: true, path: Some(resolved.to_string_lossy().into_owned()), version }
 }
 
 /// opencode prints just the bare version (e.g. `1.17.7`) to stdout.

@@ -52,6 +52,7 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [centerTab, setCenterTab] = useState<CenterTab>("activity");
   const [focusedFile, setFocusedFile] = useState<string | null>(null);
+  const [viewerFile, setViewerFile] = useState<string | null>(null);
   const [viewedFiles, setViewedFiles] = useState<Set<string>>(new Set());
   const [context, setContext] = useState<ContextInfo | null>(null);
 
@@ -132,9 +133,19 @@ function App() {
   useEffect(() => {
     setCenterTab("activity");
     setFocusedFile(null);
+    setViewerFile(null);
     setViewedFiles(new Set());
     setContext(null);
   }, [selectedId]);
+
+  const openFileViewer = useCallback((path: string) => {
+    setViewerFile(path);
+    setCenterTab("file");
+  }, []);
+  const closeFileViewer = useCallback(() => {
+    setViewerFile(null);
+    setCenterTab((t) => (t === "file" ? "activity" : t));
+  }, []);
 
   // Hide the right (Changes) panel in the Fleet view; restore it in a workspace.
   useEffect(() => {
@@ -254,6 +265,8 @@ function App() {
                 tab={centerTab}
                 onTabChange={setCenterTab}
                 focusedFile={focusedFile}
+                viewerFile={viewerFile}
+                onCloseFile={closeFileViewer}
                 viewed={viewedFiles}
                 onToggleViewed={toggleViewed}
                 onMarkAllViewed={markAllViewed}
@@ -288,6 +301,7 @@ function App() {
               setCenterTab("changes");
               setFocusedFile(path);
             }}
+            onViewFile={openFileViewer}
           />
         </ResizablePanel>
       </ResizablePanelGroup>

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use tauri::State;
 
 use crate::config::{self, ConfigFile};
-use crate::git::{self, DiffStat, FileChange};
+use crate::git::{self, DiffStat, FileChange, FileContent};
 use crate::project::{ProjectView, Registry, Workspace};
 use crate::server::{ServerInfo, ServerManager};
 
@@ -73,11 +73,7 @@ pub fn workspace_diff_stat(workspace_id: String, registry: State<Registry>) -> D
 /// Changed files for the diff panel. `against` defaults to HEAD (local working
 /// tree); pass a base branch to compare against it instead.
 #[tauri::command]
-pub fn workspace_changes(
-    workspace_id: String,
-    against: Option<String>,
-    registry: State<Registry>,
-) -> Vec<FileChange> {
+pub fn workspace_changes(workspace_id: String, against: Option<String>, registry: State<Registry>) -> Vec<FileChange> {
     match registry.workspace_path(&workspace_id) {
         Some(path) => git::changes(&path, against.as_deref().unwrap_or("HEAD")),
         None => vec![],
@@ -107,16 +103,17 @@ pub fn workspace_files(workspace_id: String, registry: State<Registry>) -> Vec<S
     }
 }
 
+/// Read a file's contents from a workspace for the in-app viewer.
+#[tauri::command]
+pub fn read_file(workspace_id: String, file: String, registry: State<Registry>) -> Result<FileContent, String> {
+    let repo = registry.workspace_path(&workspace_id).ok_or("unknown workspace")?;
+    git::read_file(&repo, &file)
+}
+
 /// Discard a file's local changes (restore to HEAD, or delete if untracked).
 #[tauri::command]
-pub fn discard_file(
-    workspace_id: String,
-    file: String,
-    registry: State<Registry>,
-) -> Result<(), String> {
-    let repo = registry
-        .workspace_path(&workspace_id)
-        .ok_or("unknown workspace")?;
+pub fn discard_file(workspace_id: String, file: String, registry: State<Registry>) -> Result<(), String> {
+    let repo = registry.workspace_path(&workspace_id).ok_or("unknown workspace")?;
     git::discard_file(&repo, &file)
 }
 
@@ -126,9 +123,7 @@ pub fn start_server(
     registry: State<Registry>,
     servers: State<ServerManager>,
 ) -> Result<ServerInfo, String> {
-    let path = registry
-        .workspace_path(&workspace_id)
-        .ok_or_else(|| format!("unknown workspace: {workspace_id}"))?;
+    let path = registry.workspace_path(&workspace_id).ok_or_else(|| format!("unknown workspace: {workspace_id}"))?;
     servers.start(&workspace_id, &path)
 }
 
@@ -162,19 +157,13 @@ pub fn restart_server(
     servers: State<ServerManager>,
 ) -> Result<ServerInfo, String> {
     servers.stop(&workspace_id);
-    let path = registry
-        .workspace_path(&workspace_id)
-        .ok_or_else(|| format!("unknown workspace: {workspace_id}"))?;
+    let path = registry.workspace_path(&workspace_id).ok_or_else(|| format!("unknown workspace: {workspace_id}"))?;
     servers.start(&workspace_id, &path)
 }
 
 // ── Config & internals ──
 
-fn config_dir(
-    scope: &str,
-    workspace_id: Option<String>,
-    registry: &Registry,
-) -> Result<PathBuf, String> {
+fn config_dir(scope: &str, workspace_id: Option<String>, registry: &Registry) -> Result<PathBuf, String> {
     match scope {
         "global" => Ok(config::global_dir()),
         "project" => {

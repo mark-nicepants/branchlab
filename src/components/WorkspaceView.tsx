@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Loader2, TriangleAlert } from "lucide-react";
+import { Loader2, TriangleAlert, X } from "lucide-react";
 import { startServer } from "../lib/api";
 import { OpencodeClient } from "../lib/opencode";
 import type { ContextInfo, Workspace } from "../lib/types";
@@ -7,9 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Chat } from "./Chat";
 import { ChangesView } from "./center/ChangesView";
 import { ConfigView } from "./center/ConfigView";
+import { FileView } from "./center/FileView";
 import { cn } from "@/lib/utils";
 
-export type CenterTab = "activity" | "changes" | "config";
+export type CenterTab = "activity" | "changes" | "config" | "file";
 
 interface Props {
   workspace: Workspace;
@@ -17,6 +18,8 @@ interface Props {
   tab: CenterTab;
   onTabChange: (tab: CenterTab) => void;
   focusedFile: string | null;
+  viewerFile: string | null;
+  onCloseFile: () => void;
   viewed: Set<string>;
   onToggleViewed: (path: string) => void;
   onMarkAllViewed: (paths: string[]) => void;
@@ -34,6 +37,8 @@ export function WorkspaceView({
   tab,
   onTabChange,
   focusedFile,
+  viewerFile,
+  onCloseFile,
   viewed,
   onToggleViewed,
   onMarkAllViewed,
@@ -86,9 +91,32 @@ export function WorkspaceView({
         <Tab active={tab === "config"} onClick={() => onTabChange("config")}>
           Config
         </Tab>
+        {viewerFile && (
+          <Tab active={tab === "file"} onClick={() => onTabChange("file")}>
+            <span className="flex items-center gap-1.5">
+              <span className="max-w-40 truncate" title={viewerFile}>
+                {viewerFile.split("/").pop()}
+              </span>
+              <span
+                role="button"
+                tabIndex={0}
+                className="rounded-sm p-0.5 hover:bg-accent"
+                title="Close file"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCloseFile();
+                }}
+              >
+                <X className="size-3" />
+              </span>
+            </span>
+          </Tab>
+        )}
       </header>
 
-      {tab === "config" ? (
+      {tab === "file" && viewerFile ? (
+        <FileView workspaceId={workspace.id} file={viewerFile} />
+      ) : tab === "config" ? (
         <ConfigView
           workspaceId={workspace.id}
           baseUrl={state.kind === "ready" ? state.baseUrl : null}

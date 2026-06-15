@@ -62,6 +62,18 @@ export interface FileChange {
   deletions: number;
 }
 
+export interface FileContent {
+  path: string;
+  /** UTF-8 text. Empty when `binary` is true. */
+  content: string;
+  /** File looks binary — `content` is empty. */
+  binary: boolean;
+  /** File exceeded the size cap; `content` holds only the first chunk. */
+  truncated: boolean;
+  /** File size on disk, in bytes. */
+  size: number;
+}
+
 export interface ConfigFile {
   path: string;
   content: string;

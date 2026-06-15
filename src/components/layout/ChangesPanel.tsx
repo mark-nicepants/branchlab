@@ -8,6 +8,7 @@ import {
   FileDiff,
   Folder,
   Search,
+  SquareArrowOutUpRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import { openExternal, workspaceChanges, workspaceFiles } from "../../lib/api";
@@ -21,6 +22,8 @@ interface Props {
   viewed: Set<string>;
   onToggleViewed: (path: string) => void;
   onOpenFile: (path: string) => void;
+  /** Open a file in the in-app viewer (center "file" tab). */
+  onViewFile: (path: string) => void;
 }
 
 type Tab = "changes" | "files";
@@ -33,7 +36,7 @@ const STATUS_STYLES: Record<string, { letter: string; className: string }> = {
   renamed: { letter: "R", className: "text-sky-600 dark:text-sky-400" },
 };
 
-export function ChangesPanel({ workspace, viewed, onToggleViewed, onOpenFile }: Props) {
+export function ChangesPanel({ workspace, viewed, onToggleViewed, onOpenFile, onViewFile }: Props) {
   const [tab, setTab] = useState<Tab>("changes");
 
   return (
@@ -52,7 +55,7 @@ export function ChangesPanel({ workspace, viewed, onToggleViewed, onOpenFile }: 
       ) : tab === "changes" ? (
         <ChangesTab workspace={workspace} viewed={viewed} onToggleViewed={onToggleViewed} onOpenFile={onOpenFile} />
       ) : (
-        <FilesTab workspace={workspace} />
+        <FilesTab workspace={workspace} onViewFile={onViewFile} />
       )}
     </div>
   );
@@ -199,7 +202,7 @@ function buildTree(paths: string[]): TreeNode[] {
   return root.children;
 }
 
-function FilesTab({ workspace }: { workspace: Workspace }) {
+function FilesTab({ workspace, onViewFile }: { workspace: Workspace; onViewFile: (path: string) => void }) {
   const { prefs } = usePreferences();
   const [paths, setPaths] = useState<string[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -219,7 +222,7 @@ function FilesTab({ workspace }: { workspace: Workspace }) {
     });
   }
 
-  function openFile(path: string) {
+  function openExternally(path: string) {
     openExternal(`${workspace.path}/${path}`, prefs.editorApp).catch((e) =>
       toast.error("Could not open", { description: String(e) }),
     );
@@ -230,7 +233,15 @@ function FilesTab({ workspace }: { workspace: Workspace }) {
   return (
     <div className="flex-1 overflow-auto py-1 text-sm">
       {tree.map((n) => (
-        <TreeRow key={n.path} node={n} depth={0} expanded={expanded} onToggle={toggle} onOpenFile={openFile} />
+        <TreeRow
+          key={n.path}
+          node={n}
+          depth={0}
+          expanded={expanded}
+          onToggle={toggle}
+          onViewFile={onViewFile}
+          onOpenExternally={openExternally}
+        />
       ))}
     </div>
   );
@@ -241,33 +252,48 @@ function TreeRow({
   depth,
   expanded,
   onToggle,
-  onOpenFile,
+  onViewFile,
+  onOpenExternally,
 }: {
   node: TreeNode;
   depth: number;
   expanded: Set<string>;
   onToggle: (path: string) => void;
-  onOpenFile: (path: string) => void;
+  onViewFile: (path: string) => void;
+  onOpenExternally: (path: string) => void;
 }) {
   const isOpen = expanded.has(node.path);
   return (
     <>
-      <button
-        className="flex w-full items-center gap-1.5 py-1 pr-2 text-left hover:bg-accent"
+      <div
+        className="group flex w-full items-center gap-1.5 pr-2 hover:bg-accent"
         style={{ paddingLeft: `${depth * 14 + 8}px` }}
-        onClick={() => (node.isFile ? onOpenFile(node.path) : onToggle(node.path))}
-        title={node.path}
       >
-        {node.isFile ? (
-          <File className="size-3.5 shrink-0 text-muted-foreground" />
-        ) : isOpen ? (
-          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-        ) : (
-          <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+        <button
+          className="flex min-w-0 flex-1 items-center gap-1.5 py-1 text-left"
+          onClick={() => (node.isFile ? onViewFile(node.path) : onToggle(node.path))}
+          title={node.path}
+        >
+          {node.isFile ? (
+            <File className="size-3.5 shrink-0 text-muted-foreground" />
+          ) : isOpen ? (
+            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+          )}
+          {!node.isFile && <Folder className="size-3.5 shrink-0 text-muted-foreground" />}
+          <span className="truncate">{node.name}</span>
+        </button>
+        {node.isFile && (
+          <button
+            className="shrink-0 text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100"
+            title="Open in external editor"
+            onClick={() => onOpenExternally(node.path)}
+          >
+            <SquareArrowOutUpRight className="size-3.5" />
+          </button>
         )}
-        {!node.isFile && <Folder className="size-3.5 shrink-0 text-muted-foreground" />}
-        <span className="truncate">{node.name}</span>
-      </button>
+      </div>
       {!node.isFile &&
         isOpen &&
         node.children.map((c) => (
@@ -277,7 +303,8 @@ function TreeRow({
             depth={depth + 1}
             expanded={expanded}
             onToggle={onToggle}
-            onOpenFile={onOpenFile}
+            onViewFile={onViewFile}
+            onOpenExternally={onOpenExternally}
           />
         ))}
     </>

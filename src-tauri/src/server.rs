@@ -32,11 +32,7 @@ const REAP_INTERVAL: Duration = Duration::from_secs(60);
 /// frontend can call the server's REST/SSE endpoints cross-origin.
 /// Covers the Vite dev server and the packaged Tauri custom protocol on
 /// macOS/Linux and Windows.
-pub const CORS_ORIGINS: &[&str] = &[
-    "http://localhost:1420",
-    "tauri://localhost",
-    "http://tauri.localhost",
-];
+pub const CORS_ORIGINS: &[&str] = &["http://localhost:1420", "tauri://localhost", "http://tauri.localhost"];
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ServerInfo {
@@ -66,9 +62,7 @@ impl Default for ServerManager {
 
 impl ServerManager {
     pub fn new() -> Self {
-        Self {
-            servers: Arc::new(Mutex::new(HashMap::new())),
-        }
+        Self { servers: Arc::new(Mutex::new(HashMap::new())) }
     }
 
     /// Spawn the background idle reaper. Call once at startup.
@@ -109,21 +103,13 @@ impl ServerManager {
         }
 
         let mut cmd = Command::new("opencode");
-        cmd.arg("serve")
-            .arg("--hostname")
-            .arg("127.0.0.1")
-            .arg("--port")
-            .arg("0");
+        cmd.arg("serve").arg("--hostname").arg("127.0.0.1").arg("--port").arg("0");
         for origin in CORS_ORIGINS {
             cmd.arg("--cors").arg(origin);
         }
-        cmd.current_dir(cwd)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+        cmd.current_dir(cwd).stdout(Stdio::piped()).stderr(Stdio::null());
 
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| format!("failed to spawn opencode: {e}"))?;
+        let mut child = cmd.spawn().map_err(|e| format!("failed to spawn opencode: {e}"))?;
 
         let stdout = child.stdout.take().ok_or("opencode produced no stdout")?;
         let (tx, rx) = mpsc::channel::<String>();
@@ -153,18 +139,10 @@ impl ServerManager {
         };
 
         let port = parse_port(&base_url).unwrap_or(0);
-        let info = ServerInfo {
-            workspace_id: workspace_id.to_string(),
-            base_url,
-            port,
-        };
+        let info = ServerInfo { workspace_id: workspace_id.to_string(), base_url, port };
         servers.insert(
             workspace_id.to_string(),
-            RunningServer {
-                child,
-                info: info.clone(),
-                last_touched: Instant::now(),
-            },
+            RunningServer { child, info: info.clone(), last_touched: Instant::now() },
         );
         Ok(info)
     }
@@ -228,10 +206,7 @@ impl ServerManager {
 /// `opencode server listening on http://127.0.0.1:47391`.
 fn parse_listening_url(line: &str) -> Option<String> {
     let idx = line.find("http://")?;
-    let url = line[idx..]
-        .split_whitespace()
-        .next()?
-        .trim_end_matches(['.', ',']);
+    let url = line[idx..].split_whitespace().next()?.trim_end_matches(['.', ',']);
     Some(url.to_string())
 }
 
@@ -245,8 +220,7 @@ mod tests {
 
     #[test]
     fn parses_listen_line() {
-        let url =
-            parse_listening_url("opencode server listening on http://127.0.0.1:47391").unwrap();
+        let url = parse_listening_url("opencode server listening on http://127.0.0.1:47391").unwrap();
         assert_eq!(url, "http://127.0.0.1:47391");
         assert_eq!(parse_port(&url), Some(47391));
     }

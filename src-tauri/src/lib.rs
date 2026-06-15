@@ -2,6 +2,7 @@ mod commands;
 mod config;
 mod env;
 mod git;
+mod path;
 mod project;
 mod server;
 
@@ -11,6 +12,11 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Repair PATH first: a Finder/Dock-launched .app gets a minimal PATH that
+    // omits where `opencode` lives, so the env probe and server spawn would
+    // both fail. Must run before anything resolves an external binary.
+    path::fix_path();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -50,6 +56,7 @@ pub fn run() {
             commands::workspace_changes,
             commands::workspace_file_diff,
             commands::workspace_files,
+            commands::read_file,
             commands::discard_file,
             commands::start_server,
             commands::stop_server,

@@ -72,15 +72,8 @@ impl Registry {
     /// Load the registry from `file`, or start empty if it doesn't exist.
     /// Worktrees are created under `worktrees_dir`.
     pub fn load(file: PathBuf, worktrees_dir: PathBuf) -> Self {
-        let data = std::fs::read_to_string(&file)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
-        Self {
-            data: Mutex::new(data),
-            file,
-            worktrees_dir,
-        }
+        let data = std::fs::read_to_string(&file).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        Self { data: Mutex::new(data), file, worktrees_dir }
     }
 
     fn persist(&self, data: &RegistryData) {
@@ -95,8 +88,7 @@ impl Registry {
     /// Register a git repo as a project (idempotent on path). Creates the
     /// implicit base workspace. Returns the project view.
     pub fn add_project(&self, root_path: &str) -> Result<ProjectView, String> {
-        let canonical = std::fs::canonicalize(root_path)
-            .map_err(|e| format!("cannot access path: {e}"))?;
+        let canonical = std::fs::canonicalize(root_path).map_err(|e| format!("cannot access path: {e}"))?;
         if !is_git_repo(&canonical) {
             return Err("selected folder is not a git repository".into());
         }
@@ -105,10 +97,7 @@ impl Registry {
 
         let mut data = self.data.lock().unwrap();
         if !data.projects.iter().any(|p| p.id == id) {
-            let name = canonical
-                .file_name()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| root.clone());
+            let name = canonical.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| root.clone());
             data.projects.push(Project {
                 id: id.clone(),
                 name,
@@ -147,18 +136,12 @@ impl Registry {
 
     pub fn list(&self) -> Vec<ProjectView> {
         let data = self.data.lock().unwrap();
-        data.projects
-            .iter()
-            .map(|p| self.view_of(&data, &p.id))
-            .collect()
+        data.projects.iter().map(|p| self.view_of(&data, &p.id)).collect()
     }
 
     pub fn workspace_path(&self, workspace_id: &str) -> Option<String> {
         let data = self.data.lock().unwrap();
-        data.workspaces
-            .iter()
-            .find(|w| w.id == workspace_id)
-            .map(|w| w.path.clone())
+        data.workspaces.iter().find(|w| w.id == workspace_id).map(|w| w.path.clone())
     }
 
     /// All workspaces across all projects (for the fleet dashboard).
@@ -173,23 +156,13 @@ impl Registry {
     }
 
     fn repo_root(&self, project_id: &str) -> Option<String> {
-        self.data
-            .lock()
-            .unwrap()
-            .projects
-            .iter()
-            .find(|p| p.id == project_id)
-            .map(|p| p.root_path.clone())
+        self.data.lock().unwrap().projects.iter().find(|p| p.id == project_id).map(|p| p.root_path.clone())
     }
 
     /// Create a workspace: a worktree on a freshly generated branch codename
     /// (e.g. `bubbly-cheetah`) forked off `base` (or the repo's current branch
     /// when `base` is None). Returns the new workspace.
-    pub fn create_workspace(
-        &self,
-        project_id: &str,
-        base: Option<String>,
-    ) -> Result<Workspace, String> {
+    pub fn create_workspace(&self, project_id: &str, base: Option<String>) -> Result<Workspace, String> {
         let root = self.repo_root(project_id).ok_or("unknown project")?;
         let base = match base {
             Some(b) if !b.is_empty() => b,
@@ -198,10 +171,7 @@ impl Registry {
 
         let existing = git::list_branches(&root).unwrap_or_default();
         let branch = unique_codename(&existing);
-        let dir = self
-            .worktrees_dir
-            .join(project_id)
-            .join(git::sanitize_branch(&branch));
+        let dir = self.worktrees_dir.join(project_id).join(git::sanitize_branch(&branch));
         let path = dir.to_string_lossy().into_owned();
 
         git::add_worktree(&root, &path, &branch, &base)?;
@@ -226,11 +196,7 @@ impl Registry {
     pub fn remove_workspace(&self, workspace_id: &str, force: bool) -> Result<(), String> {
         let (project_id, path) = {
             let data = self.data.lock().unwrap();
-            let ws = data
-                .workspaces
-                .iter()
-                .find(|w| w.id == workspace_id)
-                .ok_or("unknown workspace")?;
+            let ws = data.workspaces.iter().find(|w| w.id == workspace_id).ok_or("unknown workspace")?;
             if ws.kind == WorkspaceKind::Base {
                 return Err("cannot remove the base workspace".into());
             }
@@ -246,22 +212,9 @@ impl Registry {
     }
 
     fn view_of(&self, data: &RegistryData, project_id: &str) -> ProjectView {
-        let project = data
-            .projects
-            .iter()
-            .find(|p| p.id == project_id)
-            .cloned()
-            .expect("project exists");
-        let workspaces = data
-            .workspaces
-            .iter()
-            .filter(|w| w.project_id == project_id)
-            .cloned()
-            .collect();
-        ProjectView {
-            project,
-            workspaces,
-        }
+        let project = data.projects.iter().find(|p| p.id == project_id).cloned().expect("project exists");
+        let workspaces = data.workspaces.iter().filter(|w| w.project_id == project_id).cloned().collect();
+        ProjectView { project, workspaces }
     }
 }
 
@@ -278,17 +231,14 @@ fn id_for(path: &str) -> String {
 fn generate_codename() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     const ADJ: &[&str] = &[
-        "bubbly", "sunny", "witty", "mellow", "brave", "clever", "cosmic", "fuzzy", "jolly",
-        "nimble", "quiet", "swift", "lucky", "snappy", "vivid", "zesty",
+        "bubbly", "sunny", "witty", "mellow", "brave", "clever", "cosmic", "fuzzy", "jolly", "nimble", "quiet",
+        "swift", "lucky", "snappy", "vivid", "zesty",
     ];
     const ANI: &[&str] = &[
-        "cheetah", "otter", "falcon", "panda", "lynx", "heron", "bison", "marmot", "gecko",
-        "walrus", "ferret", "badger", "magpie", "narwhal", "koala", "tapir",
+        "cheetah", "otter", "falcon", "panda", "lynx", "heron", "bison", "marmot", "gecko", "walrus", "ferret",
+        "badger", "magpie", "narwhal", "koala", "tapir",
     ];
-    let n = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0) as usize;
+    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0) as usize;
     format!("{}-{}", ADJ[n % ADJ.len()], ANI[(n / 97) % ANI.len()])
 }
 

@@ -1,9 +1,9 @@
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { FolderPlus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { CornerDownLeft, FolderPlus } from "lucide-react";
 import { workspaceDiffStat } from "../lib/api";
 import { workspaceLabel, type DiffStat, type ProjectView, type Workspace } from "../lib/types";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Button } from "@/components/ui/button";
 
 interface Props {
   projects: ProjectView[];
@@ -44,30 +44,21 @@ export function FleetDashboard({ projects, onOpenWorkspace, onAddProject }: Prop
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-baseline gap-3 border-b border-border px-6 py-4">
-        <h1 className="text-base font-semibold">Fleet</h1>
-        <span className="text-xs text-muted-foreground">{rows.length} workspaces</span>
-      </header>
 
-      <ScrollArea className="flex-1">
-        {rows.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
-            <FolderPlus className="size-10 text-muted-foreground/40" />
-            <div>
-              <p className="text-sm font-medium">No projects yet</p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Add a git repository to start your fleet of agent workspaces.
-              </p>
-            </div>
-            <Button onClick={onAddProject} className="gap-2">
-              <FolderPlus className="size-4" /> New project
-            </Button>
-            <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-              <CornerDownLeft className="size-3.5" />
-              or use “New project” at the bottom of the sidebar
+      {rows.length === 0 ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
+          <div>
+            <p className="text-sm font-medium">No projects yet</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Add a git repository to start your fleet of agent workspaces.
             </p>
           </div>
-        ) : (
+          <Button onClick={onAddProject} className="gap-2">
+            <FolderPlus className="size-4" /> New project
+          </Button>
+        </div>
+      ) : (
+        <ScrollArea className="flex-1">
           <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3 p-6">
             {rows.map(({ workspace, projectName }) => {
               const diff = diffs[workspace.id];
@@ -99,8 +90,8 @@ export function FleetDashboard({ projects, onOpenWorkspace, onAddProject }: Prop
               );
             })}
           </div>
-        )}
-      </ScrollArea>
+        </ScrollArea>
+      )}
     </div>
   );
 }
