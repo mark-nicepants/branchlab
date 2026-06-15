@@ -6,11 +6,10 @@ import type { ContextInfo, Workspace } from "../lib/types";
 import { Button } from "@/components/ui/button";
 import { Chat } from "./Chat";
 import { ChangesView } from "./center/ChangesView";
-import { ConfigView } from "./center/ConfigView";
 import { FileView } from "./center/FileView";
 import { cn } from "@/lib/utils";
 
-export type CenterTab = "activity" | "changes" | "config" | "file";
+export type CenterTab = "activity" | "changes" | "file";
 
 interface Props {
   workspace: Workspace;
@@ -24,6 +23,8 @@ interface Props {
   onToggleViewed: (path: string) => void;
   onMarkAllViewed: (paths: string[]) => void;
   onContext: (info: ContextInfo | null) => void;
+  /** Bumped to force a server reconnect (e.g. after editing config). */
+  reloadNonce: number;
 }
 
 type State =
@@ -43,6 +44,7 @@ export function WorkspaceView({
   onToggleViewed,
   onMarkAllViewed,
   onContext,
+  reloadNonce,
 }: Props) {
   const [state, setState] = useState<State>({ kind: "starting" });
   const [attempt, setAttempt] = useState(0);
@@ -77,19 +79,16 @@ export function WorkspaceView({
     return () => {
       cancelled = true;
     };
-  }, [workspace.id, attempt]);
+  }, [workspace.id, attempt, reloadNonce]);
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center gap-1 border-b border-border px-3 text-sm">
+      <header className="flex shrink-0 items-center gap-1 border-b border-border px-3 text-sm">
         <Tab active={tab === "activity"} onClick={() => onTabChange("activity")}>
           Activity
         </Tab>
         <Tab active={tab === "changes"} onClick={() => onTabChange("changes")}>
           Changes
-        </Tab>
-        <Tab active={tab === "config"} onClick={() => onTabChange("config")}>
-          Config
         </Tab>
         {viewerFile && (
           <Tab active={tab === "file"} onClick={() => onTabChange("file")}>
@@ -114,44 +113,40 @@ export function WorkspaceView({
         )}
       </header>
 
-      {tab === "file" && viewerFile ? (
-        <FileView workspaceId={workspace.id} file={viewerFile} />
-      ) : tab === "config" ? (
-        <ConfigView
-          workspaceId={workspace.id}
-          baseUrl={state.kind === "ready" ? state.baseUrl : null}
-          onRestarted={() => setAttempt((a) => a + 1)}
-        />
-      ) : tab === "changes" ? (
-        <ChangesView
-          workspaceId={workspace.id}
-          focusedFile={focusedFile}
-          viewed={viewed}
-          onToggleViewed={onToggleViewed}
-          onMarkAllViewed={onMarkAllViewed}
-        />
-      ) : state.kind === "ready" ? (
-        <Chat
-          key={workspace.id}
-          workspace={workspace}
-          baseUrl={state.baseUrl}
-          onRenamed={onRenamed}
-          onContext={onContext}
-        />
-      ) : state.kind === "error" ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm">
-          <TriangleAlert className="size-6 text-destructive" />
-          <p className="text-muted-foreground">Could not start the workspace.</p>
-          <Button variant="outline" size="sm" onClick={() => setAttempt((a) => a + 1)}>
-            Retry
-          </Button>
-        </div>
-      ) : (
-        <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="size-4 animate-spin" />
-          Creating workspace…
-        </div>
-      )}
+      <div className="flex min-h-0 flex-1 flex-col">
+        {tab === "file" && viewerFile ? (
+          <FileView workspaceId={workspace.id} file={viewerFile} />
+        ) : tab === "changes" ? (
+          <ChangesView
+            workspaceId={workspace.id}
+            focusedFile={focusedFile}
+            viewed={viewed}
+            onToggleViewed={onToggleViewed}
+            onMarkAllViewed={onMarkAllViewed}
+          />
+        ) : state.kind === "ready" ? (
+          <Chat
+            key={workspace.id}
+            workspace={workspace}
+            baseUrl={state.baseUrl}
+            onRenamed={onRenamed}
+            onContext={onContext}
+          />
+        ) : state.kind === "error" ? (
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm">
+            <TriangleAlert className="size-6 text-destructive" />
+            <p className="text-muted-foreground">Could not start the workspace.</p>
+            <Button variant="outline" size="sm" onClick={() => setAttempt((a) => a + 1)}>
+              Retry
+            </Button>
+          </div>
+        ) : (
+          <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" />
+            Creating workspace…
+          </div>
+        )}
+      </div>
     </div>
   );
 }

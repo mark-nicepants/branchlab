@@ -55,6 +55,7 @@ function App() {
   const [viewerFile, setViewerFile] = useState<string | null>(null);
   const [viewedFiles, setViewedFiles] = useState<Set<string>>(new Set());
   const [context, setContext] = useState<ContextInfo | null>(null);
+  const [reloadNonce, setReloadNonce] = useState(0);
 
   const toggleViewed = useCallback((path: string) => {
     setViewedFiles((prev) => {
@@ -218,6 +219,7 @@ function App() {
         branch={selected ? workspaceLabel(selected) : null}
         leftCollapsed={leftCollapsed}
         rightCollapsed={rightCollapsed}
+        rightAvailable={!!selected}
         onToggleLeft={toggleLeft}
         onToggleRight={toggleRight}
         onOpenSettings={() => setSettingsOpen(true)}
@@ -271,6 +273,7 @@ function App() {
                 onToggleViewed={toggleViewed}
                 onMarkAllViewed={markAllViewed}
                 onContext={setContext}
+                reloadNonce={reloadNonce}
               />
             ) : (
               <FleetDashboard
@@ -313,6 +316,7 @@ function App() {
         workspace={selected}
         context={context}
         opencodeVersion={phase.env.opencode.version}
+        onConfigRestarted={() => setReloadNonce((n) => n + 1)}
       />
 
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />

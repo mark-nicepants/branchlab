@@ -8,6 +8,8 @@ interface Props {
   branch: string | null;
   leftCollapsed: boolean;
   rightCollapsed: boolean;
+  /** Whether the right (changes) panel exists for the current view. */
+  rightAvailable: boolean;
   onToggleLeft: () => void;
   onToggleRight: () => void;
   onOpenSettings: () => void;
@@ -24,6 +26,7 @@ export function Titlebar({
   branch,
   leftCollapsed,
   rightCollapsed,
+  rightAvailable,
   onToggleLeft,
   onToggleRight,
   onOpenSettings,
@@ -54,7 +57,9 @@ export function Titlebar({
       </div>
 
       <div className="flex items-center gap-0.5">
-        <PanelToggle active={!rightCollapsed} onClick={onToggleRight} side="right" hint="Toggle changes  ⌘D" />
+        {rightAvailable && (
+          <PanelToggle active={!rightCollapsed} onClick={onToggleRight} side="right" hint="Toggle changes  ⌘D" />
+        )}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button variant="ghost" size="icon" className="size-7" onClick={onOpenSettings}>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Cog } from "lucide-react";
 import type { Layout } from "react-resizable-panels";
 import { restartServer, serverStatus } from "../lib/api";
 import type { ContextInfo, ServerInfo, Workspace } from "../lib/types";
@@ -7,7 +8,10 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/ui/hover-card";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
+import { OpencodeStatus } from "./OpencodeStatus";
+import { ConfigView } from "./center/ConfigView";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -17,13 +21,15 @@ interface Props {
   workspace: Workspace | null;
   context: ContextInfo | null;
   opencodeVersion: string | null;
+  /** Called after the config panel restarts the server, to force a reconnect. */
+  onConfigRestarted: () => void;
 }
 
 /**
  * Three-segment status bar whose widths track the resizable panel layout, so
  * each panel "owns" its slice. Left = sidebar summary, center = active
- * workspace (context window), right = opencode/server status. Hovering a
- * segment opens a richer card (VS Code style).
+ * workspace (context window) plus the OpenCode config + server controls,
+ * right-aligned under the center panel. Hovering a segment opens a richer card.
  */
 export function StatusBar({
   layout,
@@ -32,6 +38,7 @@ export function StatusBar({
   workspace,
   context,
   opencodeVersion,
+  onConfigRestarted,
 }: Props) {
   const [server, setServer] = useState<ServerInfo | null>(null);
 
@@ -55,7 +62,7 @@ export function StatusBar({
           <HoverCardTrigger className="truncate">
             {projectCount} {projectCount === 1 ? "project" : "projects"}
           </HoverCardTrigger>
-          <HoverCardContent side="top" align="start" className="w-56 text-xs">
+          <HoverCardContent side="top" align="start" className="w-56 rounded-none text-xs">
             <div className="font-medium text-foreground">Projects</div>
             <p className="mt-1 text-muted-foreground">
               {projectCount} projects · {workspaceCount} workspaces
@@ -65,63 +72,80 @@ export function StatusBar({
       </Segment>
 
       <Segment basis={layout.center} bordered>
-        {workspace ? (
-          pct !== null ? (
-            <HoverCard openDelay={150}>
-              <HoverCardTrigger
-                className={cn("truncate", pct >= 80 && "text-amber-600 dark:text-amber-400")}
-              >
-                {pct}% context
-              </HoverCardTrigger>
-              <HoverCardContent side="top" align="center" className="w-56 text-xs">
-                <div className="font-medium text-foreground">Context window</div>
-                <p className="mt-1 text-muted-foreground">
-                  {context!.used.toLocaleString()} / {context!.max.toLocaleString()} tokens
-                </p>
-              </HoverCardContent>
-            </HoverCard>
+        <div className="min-w-0 flex-1 truncate">
+          {workspace ? (
+            pct !== null ? (
+              <HoverCard openDelay={150}>
+                <HoverCardTrigger
+                  className={cn("truncate", pct >= 80 && "text-amber-600 dark:text-amber-400")}
+                >
+                  {pct}% context
+                </HoverCardTrigger>
+                <HoverCardContent side="top" align="center" className="w-56 rounded-none text-xs">
+                  <div className="font-medium text-foreground">Context window</div>
+                  <p className="mt-1 text-muted-foreground">
+                    {context!.used.toLocaleString()} / {context!.max.toLocaleString()} tokens
+                  </p>
+                </HoverCardContent>
+              </HoverCard>
+            ) : (
+              <span className="truncate">Ready</span>
+            )
           ) : (
-            <span className="truncate">Ready</span>
-          )
-        ) : (
-          <span className="truncate">{workspaceCount} workspaces</span>
-        )}
+            <span className="truncate">{workspaceCount} workspaces</span>
+          )}
+        </div>
+
+        <div className="flex shrink-0 items-center gap-1">
+          {workspace && (
+            <ConfigButton
+              workspaceId={workspace.id}
+              baseUrl={server?.base_url ?? null}
+              onRestarted={onConfigRestarted}
+            />
+          )}
+          <OpencodeStatus
+            baseUrl={server?.base_url ?? null}
+            version={opencodeVersion}
+            workspace={!!workspace}
+            onRestart={() => workspace && void restartServer(workspace.id).then(setServer)}
+          />
+        </div>
       </Segment>
 
-      <Segment basis={layout.right} bordered>
-        <HoverCard openDelay={150}>
-          <HoverCardTrigger className="flex items-center gap-1.5 truncate">
-            <span
-              className={cn(
-                "size-1.5 rounded-full",
-                server ? "bg-emerald-500" : "bg-muted-foreground/40",
-              )}
-            />
-            opencode{opencodeVersion ? ` ${opencodeVersion}` : ""}
-          </HoverCardTrigger>
-          <HoverCardContent side="top" align="end" className="w-64 text-xs">
-            <div className="font-medium text-foreground">OpenCode server</div>
-            {server ? (
-              <>
-                <p className="mt-1 font-mono text-muted-foreground">{server.base_url}</p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="mt-2 h-7 w-full text-xs"
-                  onClick={() => workspace && void restartServer(workspace.id).then(setServer)}
-                >
-                  Restart server
-                </Button>
-              </>
-            ) : (
-              <p className="mt-1 text-muted-foreground">
-                {workspace ? "Not running." : "Open a workspace to start a server."}
-              </p>
-            )}
-          </HoverCardContent>
-        </HoverCard>
-      </Segment>
+      <Segment basis={layout.right} bordered />
     </footer>
+  );
+}
+
+/** Status-bar button that opens the workspace's OpenCode config in a popup. */
+function ConfigButton({
+  workspaceId,
+  baseUrl,
+  onRestarted,
+}: {
+  workspaceId: string;
+  baseUrl: string | null;
+  onRestarted: () => void;
+}) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-5 text-muted-foreground hover:text-foreground"
+          title="OpenCode config"
+        >
+          <Cog className="size-3.5" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent side="top" align="end" className="w-[600px] rounded-none p-0">
+        <div className="h-[70vh] max-h-[620px]">
+          <ConfigView workspaceId={workspaceId} baseUrl={baseUrl} onRestarted={onRestarted} />
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -132,7 +156,7 @@ function Segment({
 }: {
   basis: number | undefined;
   bordered?: boolean;
-  children: React.ReactNode;
+  children?: React.ReactNode;
 }) {
   return (
     <div

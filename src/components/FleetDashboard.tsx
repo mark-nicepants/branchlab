@@ -79,8 +79,9 @@ export function FleetDashboard({ projects, onOpenWorkspace, onAddProject }: Prop
                     {diff &&
                       (diff.files > 0 ? (
                         <>
-                          {diff.files} files <span className="text-primary">+{diff.insertions}</span>{" "}
-                          <span className="text-destructive">−{diff.deletions}</span>
+                          {diff.files} files{" "}
+                          <span className="text-emerald-600 dark:text-emerald-400">+{diff.insertions}</span>{" "}
+                          <span className="text-red-600 dark:text-red-400">−{diff.deletions}</span>
                         </>
                       ) : (
                         <span className="text-muted-foreground">clean</span>

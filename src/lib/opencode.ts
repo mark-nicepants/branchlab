@@ -6,6 +6,8 @@
 
 import type {
   BusEvent,
+  LspStatus,
+  McpStatus,
   MessageWithParts,
   ModelOption,
   Session,
@@ -116,16 +118,42 @@ export class OpencodeClient {
     return this.json("/command");
   }
 
-  /** Configured MCP servers (shape varies; rendered generically). */
-  listMcp(): Promise<Record<string, unknown>> {
-    return this.json("/mcp");
+  /** MCP servers with runtime status (`/mcp` → `{ name: { status, error? } }`). */
+  async listMcp(): Promise<McpStatus[]> {
+    const data = await this.json<Record<string, { status?: string; error?: string }>>("/mcp");
+    return Object.entries(data)
+      .map(([name, v]) => ({ name, status: v.status ?? "unknown", error: v.error }))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  /** Available models, flattened from /config/providers, with the default first. */
-  async listModels(): Promise<{ models: ModelOption[]; defaultLabel?: string }> {
+  /** Connect (enable) an MCP server at runtime. */
+  connectMcp(name: string): Promise<unknown> {
+    return this.json(`/mcp/${encodeURIComponent(name)}/connect`, { method: "POST", body: "{}" });
+  }
+
+  /** Disconnect (disable) an MCP server at runtime. */
+  disconnectMcp(name: string): Promise<unknown> {
+    return this.json(`/mcp/${encodeURIComponent(name)}/disconnect`, { method: "POST", body: "{}" });
+  }
+
+  /** LSP servers with runtime status (`/lsp`). */
+  async listLsp(): Promise<LspStatus[]> {
+    const data = await this.json<{ id?: string; status?: string; state?: string }[]>("/lsp");
+    return (data ?? []).map((l, i) => ({ id: l.id ?? `lsp-${i}`, status: l.status ?? l.state }));
+  }
+
+  /** Configured plugin names, from the effective config's `plugin` array. */
+  async listPlugins(): Promise<string[]> {
+    const cfg = await this.json<{ plugin?: string[] }>("/config");
+    return cfg.plugin ?? [];
+  }
+
+  /** Available models grouped from /config/providers, with the default key. */
+  async listModels(): Promise<{ models: ModelOption[]; defaultKey?: string }> {
     const data = await this.json<{
       providers: {
         id: string;
+        name?: string;
         models: Record<string, { name?: string; limit?: { context?: number } }>;
       }[];
       default: Record<string, string>;
@@ -135,21 +163,22 @@ export class OpencodeClient {
     for (const p of data.providers) {
       for (const [modelID, info] of Object.entries(p.models)) {
         models.push({
+          key: `${p.id}/${modelID}`,
           providerID: p.id,
+          providerName: p.name ?? p.id,
           modelID,
-          label: `${p.id}/${info.name ?? modelID}`,
+          name: info.name ?? modelID,
           contextLimit: info.limit?.context,
         });
       }
     }
+    models.sort((a, b) => a.providerName.localeCompare(b.providerName) || a.name.localeCompare(b.name));
 
     // Default is { providerID: modelID }; surface the first as the preselect.
     const [defProvider, defModel] = Object.entries(data.default)[0] ?? [];
-    const defaultLabel = models.find(
-      (m) => m.providerID === defProvider && m.modelID === defModel,
-    )?.label;
+    const defaultKey = defProvider && defModel ? `${defProvider}/${defModel}` : undefined;
 
-    return { models, defaultLabel };
+    return { models, defaultKey };
   }
 
   /**

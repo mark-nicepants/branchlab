@@ -130,11 +130,30 @@ export interface BusEvent {
 
 /** A selectable model, flattened from /config/providers. */
 export interface ModelOption {
+  /** Stable identity: `${providerID}/${modelID}`. */
+  key: string;
   providerID: string;
+  /** Provider display name, for grouping (e.g. "Anthropic"). */
+  providerName: string;
   modelID: string;
-  label: string;
+  /** Model display name (e.g. "Claude Sonnet 4.6"). */
+  name: string;
   /** Max context window in tokens (model.limit.context), if known. */
   contextLimit?: number;
+}
+
+/** One MCP server's runtime status (from /mcp). */
+export interface McpStatus {
+  name: string;
+  /** "connected" | "failed" | "disabled" | other server-reported state. */
+  status: string;
+  error?: string;
+}
+
+/** One LSP server's runtime status (from /lsp). */
+export interface LspStatus {
+  id: string;
+  status?: string;
 }
 
 /** Context-window usage for the active session. */

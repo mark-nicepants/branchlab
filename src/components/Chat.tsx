@@ -4,13 +4,7 @@ import { OpencodeClient } from "../lib/opencode";
 import type { BusEvent, ContextInfo, ModelOption, Part, Workspace } from "../lib/types";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { ModelSelector } from "./ModelSelector";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
@@ -82,10 +76,10 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
         if (cancelled) return;
         setSessionId(session.id);
 
-        const { models, defaultLabel } = await client.listModels();
+        const { models, defaultKey } = await client.listModels();
         if (cancelled) return;
         setModels(models);
-        setModel(models.find((m) => m.label === defaultLabel) ?? models[0] ?? null);
+        setModel(models.find((m) => m.key === defaultKey) ?? models[0] ?? null);
 
         const history = await client.listMessages(session.id);
         if (cancelled) return;
@@ -246,21 +240,7 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
               </TooltipTrigger>
               <TooltipContent>Attach (soon)</TooltipContent>
             </Tooltip>
-            <Select
-              value={model?.label ?? ""}
-              onValueChange={(v) => setModel(models.find((m) => m.label === v) ?? null)}
-            >
-              <SelectTrigger size="sm" className="h-7 max-w-[280px] border-0 bg-transparent text-xs shadow-none">
-                <SelectValue placeholder="default model" />
-              </SelectTrigger>
-              <SelectContent>
-                {models.map((m) => (
-                  <SelectItem key={m.label} value={m.label} className="text-xs">
-                    {m.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ModelSelector models={models} value={model} onChange={setModel} />
             <div className="ml-auto">
               {busy ? (
                 <Button variant="destructive" size="icon" className="size-7" onClick={() => void abort()}>

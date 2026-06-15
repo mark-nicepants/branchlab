@@ -7,11 +7,14 @@ export interface Preferences {
   terminalApp: string;
   /** macOS app name used for "Open in IDE" (open -a). */
   editorApp: string;
+  /** Model keys (`providerID/modelID`) hidden from the model selector. */
+  disabledModels: string[];
 }
 
 const DEFAULTS: Preferences = {
   terminalApp: "Terminal",
   editorApp: "Visual Studio Code",
+  disabledModels: [],
 };
 
 interface PrefsCtxValue {
