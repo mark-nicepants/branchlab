@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, GitBranch, Plus, Square, Wrench } from "lucide-react";
 import { OpencodeClient } from "../lib/opencode";
-import type { BusEvent, ModelOption, Part, Workspace } from "../lib/types";
+import type { BusEvent, ContextInfo, ModelOption, Part, Workspace } from "../lib/types";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -18,6 +18,7 @@ interface Props {
   workspace: Workspace;
   baseUrl: string;
   onRenamed: (workspaceId: string, name: string) => void;
+  onContext: (info: ContextInfo | null) => void;
 }
 
 interface UiMessage {
@@ -33,7 +34,7 @@ interface UiMessage {
  * user prompt (for an unnamed workspace) it asks opencode's title agent for a
  * name and reports it back via onRenamed.
  */
-export function Chat({ workspace, baseUrl, onRenamed }: Props) {
+export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
   const client = useMemo(() => new OpencodeClient(baseUrl), [baseUrl]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Record<string, UiMessage>>({});
@@ -45,6 +46,9 @@ export function Chat({ workspace, baseUrl, onRenamed }: Props) {
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const nameRequested = useRef(false);
+  // Kept in a ref so the SSE handler (registered once) reads current models.
+  const modelsRef = useRef<ModelOption[]>([]);
+  modelsRef.current = models;
 
   const upsertPart = useCallback((part: Part) => {
     setMessages((prev) => {
@@ -119,6 +123,14 @@ export function Chat({ workspace, baseUrl, onRenamed }: Props) {
               },
             }));
             setOrder((prev) => (prev.includes(info.id) ? prev : [...prev, info.id]));
+
+            // Report context-window usage from the assistant message's tokens.
+            const tk = info.tokens;
+            if (info.role === "assistant" && tk) {
+              const used = (tk.input ?? 0) + (tk.cache?.read ?? 0);
+              const max = modelsRef.current.find((m) => m.modelID === info.modelID)?.contextLimit ?? 0;
+              if (used > 0 && max > 0) onContext({ used, max });
+            }
           }
           break;
         case "session.idle":

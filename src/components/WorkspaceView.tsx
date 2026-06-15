@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Loader2, TriangleAlert } from "lucide-react";
 import { startServer } from "../lib/api";
 import { OpencodeClient } from "../lib/opencode";
-import type { Workspace } from "../lib/types";
+import type { ContextInfo, Workspace } from "../lib/types";
 import { Button } from "@/components/ui/button";
 import { Chat } from "./Chat";
 import { ChangesView } from "./center/ChangesView";
@@ -20,6 +20,7 @@ interface Props {
   viewed: Set<string>;
   onToggleViewed: (path: string) => void;
   onMarkAllViewed: (paths: string[]) => void;
+  onContext: (info: ContextInfo | null) => void;
 }
 
 type State =
@@ -36,6 +37,7 @@ export function WorkspaceView({
   viewed,
   onToggleViewed,
   onMarkAllViewed,
+  onContext,
 }: Props) {
   const [state, setState] = useState<State>({ kind: "starting" });
   const [attempt, setAttempt] = useState(0);
@@ -95,14 +97,19 @@ export function WorkspaceView({
       ) : tab === "changes" ? (
         <ChangesView
           workspaceId={workspace.id}
-          baseBranch={workspace.base_branch}
           focusedFile={focusedFile}
           viewed={viewed}
           onToggleViewed={onToggleViewed}
           onMarkAllViewed={onMarkAllViewed}
         />
       ) : state.kind === "ready" ? (
-        <Chat key={workspace.id} workspace={workspace} baseUrl={state.baseUrl} onRenamed={onRenamed} />
+        <Chat
+          key={workspace.id}
+          workspace={workspace}
+          baseUrl={state.baseUrl}
+          onRenamed={onRenamed}
+          onContext={onContext}
+        />
       ) : state.kind === "error" ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm">
           <TriangleAlert className="size-6 text-destructive" />

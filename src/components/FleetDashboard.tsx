@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
+import { CornerDownLeft, FolderPlus } from "lucide-react";
 import { workspaceDiffStat } from "../lib/api";
 import { workspaceLabel, type DiffStat, type ProjectView, type Workspace } from "../lib/types";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Button } from "@/components/ui/button";
 
 interface Props {
   projects: ProjectView[];
   onOpenWorkspace: (w: Workspace) => void;
+  onAddProject: () => void;
 }
 
 interface Row {
@@ -18,7 +21,7 @@ interface Row {
  * uncommitted-change stats. Server/connection state is intentionally hidden —
  * it's an internal detail.
  */
-export function FleetDashboard({ projects, onOpenWorkspace }: Props) {
+export function FleetDashboard({ projects, onOpenWorkspace, onAddProject }: Props) {
   const rows: Row[] = projects.flatMap((p) =>
     p.workspaces.map((w) => ({ workspace: w, projectName: p.name })),
   );
@@ -48,9 +51,22 @@ export function FleetDashboard({ projects, onOpenWorkspace }: Props) {
 
       <ScrollArea className="flex-1">
         {rows.length === 0 ? (
-          <p className="p-6 text-sm text-muted-foreground">
-            No workspaces yet. Add a project and create a workspace to start a fleet.
-          </p>
+          <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
+            <FolderPlus className="size-10 text-muted-foreground/40" />
+            <div>
+              <p className="text-sm font-medium">No projects yet</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Add a git repository to start your fleet of agent workspaces.
+              </p>
+            </div>
+            <Button onClick={onAddProject} className="gap-2">
+              <FolderPlus className="size-4" /> New project
+            </Button>
+            <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+              <CornerDownLeft className="size-3.5" />
+              or use “New project” at the bottom of the sidebar
+            </p>
+          </div>
         ) : (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3 p-6">
             {rows.map(({ workspace, projectName }) => {

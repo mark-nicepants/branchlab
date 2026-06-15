@@ -1,8 +1,19 @@
-import { useEffect, useState } from "react";
-import { CheckCircle2, Circle, FileDiff, Search } from "lucide-react";
-import { workspaceChanges } from "../../lib/api";
+import { useEffect, useMemo, useState } from "react";
+import {
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Circle,
+  File,
+  FileDiff,
+  Folder,
+  Search,
+} from "lucide-react";
+import { toast } from "sonner";
+import { openExternal, workspaceChanges, workspaceFiles } from "../../lib/api";
 import type { FileChange, Workspace } from "../../lib/types";
 import { Input } from "@/components/ui/input";
+import { usePreferences } from "../PreferencesProvider";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -12,7 +23,7 @@ interface Props {
   onOpenFile: (path: string) => void;
 }
 
-type Mode = "Local" | "Base";
+type Tab = "changes" | "files";
 
 const STATUS_STYLES: Record<string, { letter: string; className: string }> = {
   added: { letter: "A", className: "text-emerald-600 dark:text-emerald-400" },
@@ -22,18 +33,71 @@ const STATUS_STYLES: Record<string, { letter: string; className: string }> = {
   renamed: { letter: "R", className: "text-sky-600 dark:text-sky-400" },
 };
 
-/**
- * Right panel: a compact navigator over the workspace's changed files. Clicking
- * a file opens it in the center "Changes" tab. The full diffs live there.
- */
 export function ChangesPanel({ workspace, viewed, onToggleViewed, onOpenFile }: Props) {
-  const [mode, setMode] = useState<Mode>("Local");
+  const [tab, setTab] = useState<Tab>("changes");
+
+  return (
+    <div className="flex h-full flex-col bg-sidebar">
+      <header className="flex items-center gap-1 border-b border-border px-3">
+        <PanelTab active={tab === "changes"} onClick={() => setTab("changes")}>
+          Changes
+        </PanelTab>
+        <PanelTab active={tab === "files"} onClick={() => setTab("files")}>
+          Files
+        </PanelTab>
+      </header>
+
+      {!workspace ? (
+        <Empty>Select a workspace to see its changes.</Empty>
+      ) : tab === "changes" ? (
+        <ChangesTab workspace={workspace} viewed={viewed} onToggleViewed={onToggleViewed} onOpenFile={onOpenFile} />
+      ) : (
+        <FilesTab workspace={workspace} />
+      )}
+    </div>
+  );
+}
+
+function PanelTab({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "border-b-2 px-2 py-2.5 text-sm",
+        active
+          ? "border-primary font-medium text-foreground"
+          : "border-transparent text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ── Changes tab: the changed-files list ──
+
+function ChangesTab({
+  workspace,
+  viewed,
+  onToggleViewed,
+  onOpenFile,
+}: {
+  workspace: Workspace;
+  viewed: Set<string>;
+  onToggleViewed: (path: string) => void;
+  onOpenFile: (path: string) => void;
+}) {
   const [files, setFiles] = useState<FileChange[]>([]);
   const [filter, setFilter] = useState("");
   const [tick, setTick] = useState(0);
-
-  const hasBase = !!workspace?.base_branch;
-  const against = mode === "Base" ? workspace?.base_branch ?? undefined : undefined;
 
   useEffect(() => {
     const t = setInterval(() => setTick((x) => x + 1), 4000);
@@ -41,75 +105,182 @@ export function ChangesPanel({ workspace, viewed, onToggleViewed, onOpenFile }: 
   }, []);
 
   useEffect(() => {
-    if (!hasBase) setMode("Local");
-  }, [workspace?.id, hasBase]);
-
-  useEffect(() => {
-    if (!workspace) {
-      setFiles([]);
-      return;
-    }
-    workspaceChanges(workspace.id, against).then(setFiles).catch(() => {});
-  }, [workspace?.id, against, tick]);
+    workspaceChanges(workspace.id).then(setFiles).catch(() => {});
+  }, [workspace.id, tick]);
 
   const shown = files.filter((f) => f.path.toLowerCase().includes(filter.toLowerCase()));
 
+  if (files.length === 0) return <Empty>No changes yet</Empty>;
+
   return (
-    <div className="flex h-full flex-col bg-sidebar">
-      <div className="flex items-center gap-4 border-b border-border px-4 py-2.5 text-sm">
-        <span className="font-medium">Changes</span>
-        <span className="text-muted-foreground">Files</span>
-        <span className="text-muted-foreground">History</span>
+    <>
+      <div className="relative px-3 py-2">
+        <Search className="absolute top-1/2 left-5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Filter files…"
+          className="h-7 pl-7 text-xs"
+        />
       </div>
-
-      <div className="flex items-center gap-3 border-b border-border px-4 py-1.5 text-xs">
-        <button
-          className={mode === "Local" ? "font-medium" : "text-muted-foreground"}
-          onClick={() => setMode("Local")}
-        >
-          Local
-        </button>
-        <button
-          className={cn(
-            mode === "Base" ? "font-medium" : "text-muted-foreground",
-            !hasBase && "cursor-not-allowed opacity-40",
-          )}
-          disabled={!hasBase}
-          onClick={() => hasBase && setMode("Base")}
-        >
-          Base
-        </button>
+      <div className="flex-1 overflow-y-auto pb-1">
+        {shown.map((f) => {
+          const slash = f.path.lastIndexOf("/");
+          const dir = slash >= 0 ? f.path.slice(0, slash + 1) : "";
+          const name = slash >= 0 ? f.path.slice(slash + 1) : f.path;
+          const s = STATUS_STYLES[f.status] ?? STATUS_STYLES.modified;
+          return (
+            <div
+              key={f.path}
+              className={cn("flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent", viewed.has(f.path) && "opacity-60")}
+            >
+              <span className={cn("w-3 shrink-0 text-center font-mono text-xs font-semibold", s.className)}>
+                {s.letter}
+              </span>
+              <button className="flex min-w-0 flex-1 text-left" onClick={() => onOpenFile(f.path)} title={f.path}>
+                <span className="min-w-0 flex-1 truncate">
+                  {dir && <span className="text-muted-foreground">{dir}</span>}
+                  {name}
+                </span>
+              </button>
+              <span className="shrink-0 font-mono text-[11px]">
+                {f.insertions > 0 && <span className="text-emerald-600 dark:text-emerald-400">+{f.insertions}</span>}{" "}
+                {f.deletions > 0 && <span className="text-red-600 dark:text-red-400">−{f.deletions}</span>}
+              </span>
+              <button
+                className="shrink-0 text-muted-foreground hover:text-foreground"
+                title={viewed.has(f.path) ? "Mark not viewed" : "Mark viewed"}
+                onClick={() => onToggleViewed(f.path)}
+              >
+                {viewed.has(f.path) ? (
+                  <CheckCircle2 className="size-4 text-emerald-500" />
+                ) : (
+                  <Circle className="size-4" />
+                )}
+              </button>
+            </div>
+          );
+        })}
       </div>
+    </>
+  );
+}
 
-      {!workspace ? (
-        <Empty>Select a workspace to see its changes.</Empty>
-      ) : files.length === 0 ? (
-        <Empty>No changes yet</Empty>
-      ) : (
-        <>
-          <div className="relative px-3 py-2">
-            <Search className="absolute top-1/2 left-5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              placeholder="Filter files…"
-              className="h-7 pl-7 text-xs"
-            />
-          </div>
-          <div className="flex-1 overflow-y-auto pb-1">
-            {shown.map((f) => (
-              <FileRow
-                key={f.path}
-                file={f}
-                viewed={viewed.has(f.path)}
-                onClick={() => onOpenFile(f.path)}
-                onToggleViewed={() => onToggleViewed(f.path)}
-              />
-            ))}
-          </div>
-        </>
-      )}
+// ── Files tab: a browsable file tree ──
+
+interface TreeNode {
+  name: string;
+  path: string;
+  isFile: boolean;
+  children: TreeNode[];
+}
+
+function buildTree(paths: string[]): TreeNode[] {
+  const root: TreeNode = { name: "", path: "", isFile: false, children: [] };
+  for (const p of paths) {
+    const parts = p.split("/");
+    let node = root;
+    parts.forEach((part, i) => {
+      const isFile = i === parts.length - 1;
+      let child = node.children.find((c) => c.name === part);
+      if (!child) {
+        child = { name: part, path: parts.slice(0, i + 1).join("/"), isFile, children: [] };
+        node.children.push(child);
+      }
+      node = child;
+    });
+  }
+  // Folders first, then files; alphabetical within.
+  const sort = (n: TreeNode) => {
+    n.children.sort((a, b) => (a.isFile === b.isFile ? a.name.localeCompare(b.name) : a.isFile ? 1 : -1));
+    n.children.forEach(sort);
+  };
+  sort(root);
+  return root.children;
+}
+
+function FilesTab({ workspace }: { workspace: Workspace }) {
+  const { prefs } = usePreferences();
+  const [paths, setPaths] = useState<string[]>([]);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    workspaceFiles(workspace.id).then(setPaths).catch(() => {});
+  }, [workspace.id]);
+
+  const tree = useMemo(() => buildTree(paths), [paths]);
+
+  function toggle(path: string) {
+    setExpanded((prev) => {
+      const n = new Set(prev);
+      if (n.has(path)) n.delete(path);
+      else n.add(path);
+      return n;
+    });
+  }
+
+  function openFile(path: string) {
+    openExternal(`${workspace.path}/${path}`, prefs.editorApp).catch((e) =>
+      toast.error("Could not open", { description: String(e) }),
+    );
+  }
+
+  if (paths.length === 0) return <Empty>No files.</Empty>;
+
+  return (
+    <div className="flex-1 overflow-auto py-1 text-sm">
+      {tree.map((n) => (
+        <TreeRow key={n.path} node={n} depth={0} expanded={expanded} onToggle={toggle} onOpenFile={openFile} />
+      ))}
     </div>
+  );
+}
+
+function TreeRow({
+  node,
+  depth,
+  expanded,
+  onToggle,
+  onOpenFile,
+}: {
+  node: TreeNode;
+  depth: number;
+  expanded: Set<string>;
+  onToggle: (path: string) => void;
+  onOpenFile: (path: string) => void;
+}) {
+  const isOpen = expanded.has(node.path);
+  return (
+    <>
+      <button
+        className="flex w-full items-center gap-1.5 py-1 pr-2 text-left hover:bg-accent"
+        style={{ paddingLeft: `${depth * 14 + 8}px` }}
+        onClick={() => (node.isFile ? onOpenFile(node.path) : onToggle(node.path))}
+        title={node.path}
+      >
+        {node.isFile ? (
+          <File className="size-3.5 shrink-0 text-muted-foreground" />
+        ) : isOpen ? (
+          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+        )}
+        {!node.isFile && <Folder className="size-3.5 shrink-0 text-muted-foreground" />}
+        <span className="truncate">{node.name}</span>
+      </button>
+      {!node.isFile &&
+        isOpen &&
+        node.children.map((c) => (
+          <TreeRow
+            key={c.path}
+            node={c}
+            depth={depth + 1}
+            expanded={expanded}
+            onToggle={onToggle}
+            onOpenFile={onOpenFile}
+          />
+        ))}
+    </>
   );
 }
 
@@ -118,52 +289,6 @@ function Empty({ children }: { children: React.ReactNode }) {
     <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
       <FileDiff className="size-6 text-muted-foreground/60" />
       <p className="text-sm text-muted-foreground">{children}</p>
-    </div>
-  );
-}
-
-function FileRow({
-  file,
-  viewed,
-  onClick,
-  onToggleViewed,
-}: {
-  file: FileChange;
-  viewed: boolean;
-  onClick: () => void;
-  onToggleViewed: () => void;
-}) {
-  const slash = file.path.lastIndexOf("/");
-  const dir = slash >= 0 ? file.path.slice(0, slash + 1) : "";
-  const name = slash >= 0 ? file.path.slice(slash + 1) : file.path;
-  const s = STATUS_STYLES[file.status] ?? STATUS_STYLES.modified;
-
-  return (
-    <div className={cn("group/file flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent", viewed && "opacity-60")}>
-      <span className={cn("w-3 shrink-0 text-center font-mono text-xs font-semibold", s.className)}>
-        {s.letter}
-      </span>
-      <button className="flex min-w-0 flex-1 items-center text-left" onClick={onClick} title={file.path}>
-        <span className="min-w-0 flex-1 truncate">
-          {dir && <span className="text-muted-foreground">{dir}</span>}
-          {name}
-        </span>
-      </button>
-      <span className="shrink-0 font-mono text-[11px]">
-        {file.insertions > 0 && <span className="text-emerald-600 dark:text-emerald-400">+{file.insertions}</span>}{" "}
-        {file.deletions > 0 && <span className="text-red-600 dark:text-red-400">−{file.deletions}</span>}
-      </span>
-      <button
-        className="shrink-0 text-muted-foreground hover:text-foreground"
-        title={viewed ? "Mark not viewed" : "Mark viewed"}
-        onClick={onToggleViewed}
-      >
-        {viewed ? (
-          <CheckCircle2 className="size-4 text-emerald-500" />
-        ) : (
-          <Circle className="size-4" />
-        )}
-      </button>
     </div>
   );
 }

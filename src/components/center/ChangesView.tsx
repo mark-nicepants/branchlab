@@ -16,30 +16,26 @@ import { cn } from "@/lib/utils";
 
 interface Props {
   workspaceId: string;
-  baseBranch: string | null;
   focusedFile: string | null;
   viewed: Set<string>;
   onToggleViewed: (path: string) => void;
   onMarkAllViewed: (paths: string[]) => void;
 }
 
-type Mode = "Local" | "Base";
 type ViewKind = "unified" | "split";
 
 /**
  * Center "Changes" tab: every changed file's full diff stacked vertically,
  * with per-file Discard / Mark viewed and a top bar (counts, viewed progress,
- * Unified/Split, Local/Base). Sourced from git, polled live.
+ * Unified/Split). Sourced from git (local working tree), polled live.
  */
 export function ChangesView({
   workspaceId,
-  baseBranch,
   focusedFile,
   viewed,
   onToggleViewed,
   onMarkAllViewed,
 }: Props) {
-  const [mode, setMode] = useState<Mode>("Local");
   const [view, setView] = useState<ViewKind>("unified");
   const [files, setFiles] = useState<FileChange[]>([]);
   const [diffs, setDiffs] = useState<Record<string, string>>({});
@@ -47,26 +43,19 @@ export function ChangesView({
   const [tick, setTick] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const hasBase = !!baseBranch;
-  const against = mode === "Base" ? baseBranch ?? undefined : undefined;
-
   useEffect(() => {
     const t = setInterval(() => setTick((x) => x + 1), 4000);
     return () => clearInterval(t);
   }, []);
 
   useEffect(() => {
-    if (!hasBase) setMode("Local");
-  }, [hasBase, workspaceId]);
-
-  useEffect(() => {
     let cancelled = false;
-    workspaceChanges(workspaceId, against)
+    workspaceChanges(workspaceId)
       .then(async (fs) => {
         if (cancelled) return;
         setFiles(fs);
         const entries = await Promise.all(
-          fs.map(async (f) => [f.path, await workspaceFileDiff(workspaceId, f.path, against)] as const),
+          fs.map(async (f) => [f.path, await workspaceFileDiff(workspaceId, f.path)] as const),
         );
         if (!cancelled) setDiffs(Object.fromEntries(entries));
       })
@@ -74,7 +63,7 @@ export function ChangesView({
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, against, tick]);
+  }, [workspaceId, tick]);
 
   useEffect(() => {
     if (!focusedFile) return;
@@ -121,16 +110,6 @@ export function ChangesView({
               <Columns2 className="size-3.5" /> Split
             </Seg>
           </Segmented>
-          {hasBase && (
-            <Segmented>
-              <Seg active={mode === "Local"} onClick={() => setMode("Local")}>
-                Local
-              </Seg>
-              <Seg active={mode === "Base"} onClick={() => setMode("Base")}>
-                Base
-              </Seg>
-            </Segmented>
-          )}
           <Button
             variant="ghost"
             size="sm"

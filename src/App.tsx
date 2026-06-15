@@ -11,7 +11,13 @@ import {
   renameWorkspace,
   touchServer,
 } from "./lib/api";
-import { workspaceLabel, type EnvReport, type ProjectView, type Workspace } from "./lib/types";
+import {
+  workspaceLabel,
+  type ContextInfo,
+  type EnvReport,
+  type ProjectView,
+  type Workspace,
+} from "./lib/types";
 import { useShortcuts } from "./hooks/useShortcuts";
 import { useDesktopBehaviors } from "./hooks/useDesktopBehaviors";
 import { Onboarding } from "./components/Onboarding";
@@ -35,6 +41,7 @@ type Phase =
   | { kind: "blocked"; env: EnvReport };
 
 const LAYOUT_KEY = "branchlab.layout.v1";
+const DEFAULT_LAYOUT: Layout = { left: 18, center: 58, right: 24 };
 
 function App() {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
@@ -46,6 +53,7 @@ function App() {
   const [centerTab, setCenterTab] = useState<CenterTab>("activity");
   const [focusedFile, setFocusedFile] = useState<string | null>(null);
   const [viewedFiles, setViewedFiles] = useState<Set<string>>(new Set());
+  const [context, setContext] = useState<ContextInfo | null>(null);
 
   const toggleViewed = useCallback((path: string) => {
     setViewedFiles((prev) => {
@@ -62,14 +70,15 @@ function App() {
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
 
-  // Persisted panel layout (react-resizable-panels v4: keyed by panel id).
-  const defaultLayout = useMemo<Layout | undefined>(() => {
+  const stored = useMemo<Layout | undefined>(() => {
     try {
       return JSON.parse(localStorage.getItem(LAYOUT_KEY) || "null") ?? undefined;
     } catch {
       return undefined;
     }
   }, []);
+  // Live layout (percentages per panel id) so the status bar segments can align.
+  const [layout, setLayout] = useState<Layout>(stored ?? DEFAULT_LAYOUT);
 
   useDesktopBehaviors();
 
@@ -119,11 +128,20 @@ function App() {
     return () => clearInterval(t);
   }, [selectedId]);
 
-  // Reset center tab / viewed files when switching workspaces.
+  // Reset per-workspace UI state when switching workspaces.
   useEffect(() => {
     setCenterTab("activity");
     setFocusedFile(null);
     setViewedFiles(new Set());
+    setContext(null);
+  }, [selectedId]);
+
+  // Hide the right (Changes) panel in the Fleet view; restore it in a workspace.
+  useEffect(() => {
+    const p = rightRef.current;
+    if (!p) return;
+    if (selectedId) p.expand();
+    else p.collapse();
   }, [selectedId]);
 
   const onRenamed = useCallback(
@@ -134,7 +152,6 @@ function App() {
     [refreshProjects],
   );
 
-  // After a workspace is created (quick "+" or "From branch"), refresh and open it.
   const onWorkspaceCreated = useCallback(
     async (ws: Workspace) => {
       await refreshProjects();
@@ -197,17 +214,20 @@ function App() {
 
       <ResizablePanelGroup
         orientation="horizontal"
-        defaultLayout={defaultLayout}
-        onLayoutChanged={(layout) => localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout))}
+        defaultLayout={stored}
+        onLayoutChanged={(l) => {
+          localStorage.setItem(LAYOUT_KEY, JSON.stringify(l));
+          setLayout(l);
+        }}
         className="min-h-0 flex-1"
       >
         <ResizablePanel
           id="left"
           panelRef={leftRef}
           collapsible
-          collapsedSize={0}
-          minSize={12}
-          defaultSize={18}
+          collapsedSize="0"
+          minSize="14%"
+          defaultSize="18%"
           onResize={(s) => setLeftCollapsed(s.asPercentage === 0)}
         >
           <Sidebar
@@ -224,7 +244,7 @@ function App() {
 
         <ResizableHandle />
 
-        <ResizablePanel id="center" minSize={30}>
+        <ResizablePanel id="center" minSize="30%">
           <main className="h-full min-w-0 overflow-hidden">
             {selected ? (
               <WorkspaceView
@@ -237,9 +257,14 @@ function App() {
                 viewed={viewedFiles}
                 onToggleViewed={toggleViewed}
                 onMarkAllViewed={markAllViewed}
+                onContext={setContext}
               />
             ) : (
-              <FleetDashboard projects={projects} onOpenWorkspace={(w) => setSelectedId(w.id)} />
+              <FleetDashboard
+                projects={projects}
+                onOpenWorkspace={(w) => setSelectedId(w.id)}
+                onAddProject={() => void pickProject()}
+              />
             )}
           </main>
         </ResizablePanel>
@@ -250,9 +275,9 @@ function App() {
           id="right"
           panelRef={rightRef}
           collapsible
-          collapsedSize={0}
-          minSize={16}
-          defaultSize={24}
+          collapsedSize="0"
+          minSize="16%"
+          defaultSize="24%"
           onResize={(s) => setRightCollapsed(s.asPercentage === 0)}
         >
           <ChangesPanel
@@ -267,7 +292,14 @@ function App() {
         </ResizablePanel>
       </ResizablePanelGroup>
 
-      <StatusBar workspace={selected} workspaceCount={allWorkspaces.length} />
+      <StatusBar
+        layout={layout}
+        projectCount={projects.length}
+        workspaceCount={allWorkspaces.length}
+        workspace={selected}
+        context={context}
+        opencodeVersion={phase.env.opencode.version}
+      />
 
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
       {branchModalProject && (

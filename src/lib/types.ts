@@ -121,4 +121,12 @@ export interface ModelOption {
   providerID: string;
   modelID: string;
   label: string;
+  /** Max context window in tokens (model.limit.context), if known. */
+  contextLimit?: number;
+}
+
+/** Context-window usage for the active session. */
+export interface ContextInfo {
+  used: number;
+  max: number;
 }

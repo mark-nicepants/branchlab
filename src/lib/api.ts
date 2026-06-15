@@ -95,6 +95,11 @@ export function discardFile(workspaceId: string, file: string): Promise<void> {
   return invoke<void>("discard_file", { workspaceId, file });
 }
 
+/** All files in a workspace (tracked + untracked) for the file-tree browser. */
+export function workspaceFiles(workspaceId: string): Promise<string[]> {
+  return invoke<string[]>("workspace_files", { workspaceId });
+}
+
 // ── M3: config & internals ──
 
 /** Read the global or project opencode config file. */

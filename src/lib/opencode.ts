@@ -124,7 +124,10 @@ export class OpencodeClient {
   /** Available models, flattened from /config/providers, with the default first. */
   async listModels(): Promise<{ models: ModelOption[]; defaultLabel?: string }> {
     const data = await this.json<{
-      providers: { id: string; models: Record<string, { name?: string }> }[];
+      providers: {
+        id: string;
+        models: Record<string, { name?: string; limit?: { context?: number } }>;
+      }[];
       default: Record<string, string>;
     }>("/config/providers");
 
@@ -135,6 +138,7 @@ export class OpencodeClient {
           providerID: p.id,
           modelID,
           label: `${p.id}/${info.name ?? modelID}`,
+          contextLimit: info.limit?.context,
         });
       }
     }
