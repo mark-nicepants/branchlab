@@ -166,6 +166,23 @@ pub fn file_diff(repo: &str, file: &str, against: &str) -> String {
     git_out(repo, &["diff", "--no-index", "--", "/dev/null", file])
 }
 
+/// All files in the working tree (tracked + untracked, respecting .gitignore),
+/// sorted — for the file-tree browser.
+pub fn list_files(repo: &str) -> Vec<String> {
+    let mut set = std::collections::BTreeSet::new();
+    for args in [
+        &["ls-files"][..],
+        &["ls-files", "--others", "--exclude-standard"][..],
+    ] {
+        for line in git_out(repo, args).lines() {
+            if !line.is_empty() {
+                set.insert(line.to_string());
+            }
+        }
+    }
+    set.into_iter().collect()
+}
+
 /// Discard a file's local changes: restore it to HEAD if tracked, otherwise
 /// remove the untracked/new file from disk.
 pub fn discard_file(repo: &str, file: &str) -> Result<(), String> {

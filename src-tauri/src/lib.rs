@@ -49,6 +49,7 @@ pub fn run() {
             commands::workspace_diff_stat,
             commands::workspace_changes,
             commands::workspace_file_diff,
+            commands::workspace_files,
             commands::discard_file,
             commands::start_server,
             commands::stop_server,

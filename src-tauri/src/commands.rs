@@ -98,6 +98,15 @@ pub fn workspace_file_diff(
     }
 }
 
+/// All files in a workspace (tracked + untracked) for the file-tree browser.
+#[tauri::command]
+pub fn workspace_files(workspace_id: String, registry: State<Registry>) -> Vec<String> {
+    match registry.workspace_path(&workspace_id) {
+        Some(path) => git::list_files(&path),
+        None => vec![],
+    }
+}
+
 /// Discard a file's local changes (restore to HEAD, or delete if untracked).
 #[tauri::command]
 pub fn discard_file(
