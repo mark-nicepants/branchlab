@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { DEFAULT_THEME, THEMES } from "@/lib/themes";
 
-const STORAGE_KEY = "openscope.theme";
+const STORAGE_KEY = "branchlab.theme";
 
 interface ThemeCtxValue {
   theme: string;

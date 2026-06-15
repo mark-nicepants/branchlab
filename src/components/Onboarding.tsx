@@ -10,16 +10,16 @@ interface Props {
 }
 
 /**
- * Shown when a required external tool is missing. OpenScope does not bundle
+ * Shown when a required external tool is missing. BranchLab does not bundle
  * `opencode` in the MVP, so we guide the user to install it.
  */
 export function Onboarding({ env, onRecheck, rechecking }: Props) {
   return (
     <div className="flex h-screen items-center justify-center bg-background text-foreground">
       <div className="w-full max-w-lg rounded-xl border border-border bg-card p-8">
-        <h1 className="text-xl font-semibold">Welcome to OpenScope</h1>
+        <h1 className="text-xl font-semibold">Welcome to BranchLab</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          OpenScope drives the <code className="rounded bg-muted px-1">opencode</code> CLI and uses{" "}
+          BranchLab drives the <code className="rounded bg-muted px-1">opencode</code> CLI and uses{" "}
           <code className="rounded bg-muted px-1">git</code> for worktrees. Let's make sure both are
           installed.
         </p>

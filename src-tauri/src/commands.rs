@@ -1,8 +1,11 @@
 //! Tauri command surface — the IPC boundary the frontend calls.
 
+use std::path::PathBuf;
+
 use tauri::State;
 
-use crate::git::{self, DiffStat};
+use crate::config::{self, ConfigFile};
+use crate::git::{self, DiffStat, FileChange};
 use crate::project::{ProjectView, Registry, Workspace};
 use crate::server::{ServerInfo, ServerManager};
 
@@ -67,6 +70,47 @@ pub fn workspace_diff_stat(workspace_id: String, registry: State<Registry>) -> D
     }
 }
 
+/// Changed files for the diff panel. `against` defaults to HEAD (local working
+/// tree); pass a base branch to compare against it instead.
+#[tauri::command]
+pub fn workspace_changes(
+    workspace_id: String,
+    against: Option<String>,
+    registry: State<Registry>,
+) -> Vec<FileChange> {
+    match registry.workspace_path(&workspace_id) {
+        Some(path) => git::changes(&path, against.as_deref().unwrap_or("HEAD")),
+        None => vec![],
+    }
+}
+
+/// Unified diff for one file in a workspace.
+#[tauri::command]
+pub fn workspace_file_diff(
+    workspace_id: String,
+    file: String,
+    against: Option<String>,
+    registry: State<Registry>,
+) -> String {
+    match registry.workspace_path(&workspace_id) {
+        Some(path) => git::file_diff(&path, &file, against.as_deref().unwrap_or("HEAD")),
+        None => String::new(),
+    }
+}
+
+/// Discard a file's local changes (restore to HEAD, or delete if untracked).
+#[tauri::command]
+pub fn discard_file(
+    workspace_id: String,
+    file: String,
+    registry: State<Registry>,
+) -> Result<(), String> {
+    let repo = registry
+        .workspace_path(&workspace_id)
+        .ok_or("unknown workspace")?;
+    git::discard_file(&repo, &file)
+}
+
 #[tauri::command]
 pub fn start_server(
     workspace_id: String,
@@ -99,6 +143,59 @@ pub fn list_servers(servers: State<ServerManager>) -> Vec<ServerInfo> {
 #[tauri::command]
 pub fn touch_server(workspace_id: String, servers: State<ServerManager>) {
     servers.touch(&workspace_id);
+}
+
+/// Restart a workspace's server (used after editing config to apply it).
+#[tauri::command]
+pub fn restart_server(
+    workspace_id: String,
+    registry: State<Registry>,
+    servers: State<ServerManager>,
+) -> Result<ServerInfo, String> {
+    servers.stop(&workspace_id);
+    let path = registry
+        .workspace_path(&workspace_id)
+        .ok_or_else(|| format!("unknown workspace: {workspace_id}"))?;
+    servers.start(&workspace_id, &path)
+}
+
+// ── Config & internals ──
+
+fn config_dir(
+    scope: &str,
+    workspace_id: Option<String>,
+    registry: &Registry,
+) -> Result<PathBuf, String> {
+    match scope {
+        "global" => Ok(config::global_dir()),
+        "project" => {
+            let id = workspace_id.ok_or("workspace id required for project config")?;
+            let path = registry.workspace_path(&id).ok_or("unknown workspace")?;
+            Ok(PathBuf::from(path))
+        }
+        _ => Err(format!("unknown config scope: {scope}")),
+    }
+}
+
+/// Read the global or project opencode config file.
+#[tauri::command]
+pub fn read_config(
+    scope: String,
+    workspace_id: Option<String>,
+    registry: State<Registry>,
+) -> Result<ConfigFile, String> {
+    Ok(config::read(&config_dir(&scope, workspace_id, &registry)?))
+}
+
+/// Write the global or project opencode config file. Returns the written path.
+#[tauri::command]
+pub fn write_config(
+    scope: String,
+    workspace_id: Option<String>,
+    content: String,
+    registry: State<Registry>,
+) -> Result<String, String> {
+    config::write(&config_dir(&scope, workspace_id, &registry)?, &content)
 }
 
 /// Open the webview inspector (we disable the default right-click menu, so this

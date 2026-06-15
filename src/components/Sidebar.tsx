@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -15,8 +15,14 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
-import { openExternal, removeProject, removeWorkspace, renameWorkspace } from "../lib/api";
-import { workspaceLabel, type ProjectView, type Workspace } from "../lib/types";
+import {
+  openExternal,
+  removeProject,
+  removeWorkspace,
+  renameWorkspace,
+  workspaceDiffStat,
+} from "../lib/api";
+import { workspaceLabel, type DiffStat, type ProjectView, type Workspace } from "../lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -73,6 +79,25 @@ export function Sidebar({
   const [renaming, setRenaming] = useState<Workspace | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [stats, setStats] = useState<Record<string, DiffStat>>({});
+
+  // Poll per-workspace diff stats so the sidebar shows live +/- counts.
+  useEffect(() => {
+    let active = true;
+    const poll = async () => {
+      const ids = projects.flatMap((p) => p.workspaces.map((w) => w.id));
+      const entries = await Promise.all(
+        ids.map(async (id) => [id, await workspaceDiffStat(id)] as const),
+      );
+      if (active) setStats(Object.fromEntries(entries));
+    };
+    void poll();
+    const t = setInterval(() => void poll(), 5000);
+    return () => {
+      active = false;
+      clearInterval(t);
+    };
+  }, [projects]);
 
   const toggleCollapsed = (id: string) =>
     setCollapsed((prev) => {
@@ -122,10 +147,10 @@ export function Sidebar({
   return (
     <aside className="flex h-full w-full flex-col bg-sidebar text-sidebar-foreground">
       <button
-        className="mx-2 mt-2 mb-1 flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-sidebar-accent"
+        className="mx-1 mt-2 mb-1 flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm hover:bg-sidebar-accent"
         onClick={onShowFleet}
       >
-        <LayoutGrid className="size-4" />
+        <LayoutGrid className="size-3.5 shrink-0" />
         Fleet
       </button>
 
@@ -153,7 +178,7 @@ export function Sidebar({
                     {p.name}
                   </span>
                 </button>
-                <span className="flex items-center opacity-0 group-hover/project:opacity-100">
+                <span className="flex items-center text-muted-foreground">
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button variant="ghost" size="icon" className="size-6" onClick={() => onQuickCreate(p)}>
@@ -200,7 +225,7 @@ export function Sidebar({
                   <ContextMenuTrigger asChild>
                     <div
                       className={cn(
-                        "group/ws flex items-center rounded-md",
+                        "group/ws flex items-center rounded-md ring-1 ring-transparent hover:ring-border",
                         w.id === selectedWorkspaceId && "bg-sidebar-accent",
                       )}
                     >
@@ -210,10 +235,21 @@ export function Sidebar({
                       >
                         <span className="size-3.5 shrink-0" />
                         <span className="truncate text-sm">{workspaceLabel(w)}</span>
-                        {w.kind === "Base" && (
-                          <span className="ml-auto shrink-0 text-[10px] uppercase text-muted-foreground">
-                            repo
+                        {stats[w.id]?.files ? (
+                          <span className="ml-auto shrink-0 font-mono text-[10px]">
+                            <span className="text-emerald-600 dark:text-emerald-400">
+                              +{stats[w.id].insertions}
+                            </span>{" "}
+                            <span className="text-red-600 dark:text-red-400">
+                              −{stats[w.id].deletions}
+                            </span>
                           </span>
+                        ) : (
+                          w.kind === "Base" && (
+                            <span className="ml-auto shrink-0 text-[10px] uppercase text-muted-foreground">
+                              repo
+                            </span>
+                          )
                         )}
                       </button>
                       {w.kind === "Worktree" && (

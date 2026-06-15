@@ -101,6 +101,26 @@ export class OpencodeClient {
     }
   }
 
+  /** Effective merged config (read-only view). */
+  getConfig(): Promise<unknown> {
+    return this.json("/config");
+  }
+
+  /** Available agents (build, plan, title, …). */
+  listAgents(): Promise<{ name: string; mode?: string }[]> {
+    return this.json("/agent");
+  }
+
+  /** Available slash commands. */
+  listCommands(): Promise<{ name: string; description?: string }[]> {
+    return this.json("/command");
+  }
+
+  /** Configured MCP servers (shape varies; rendered generically). */
+  listMcp(): Promise<Record<string, unknown>> {
+    return this.json("/mcp");
+  }
+
   /** Available models, flattened from /config/providers, with the default first. */
   async listModels(): Promise<{ models: ModelOption[]; defaultLabel?: string }> {
     const data = await this.json<{

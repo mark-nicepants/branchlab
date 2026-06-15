@@ -117,7 +117,7 @@
     --sidebar-ring: oklch(0.556 0 0);
 }
 
-/* ── OpenScope named themes ──
+/* ── BranchLab named themes ──
    Each theme overrides shadcn's semantic tokens. The ThemeProvider sets
    `data-theme` on <html> (and toggles `.dark` for dark themes). */
 

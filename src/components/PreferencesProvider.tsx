@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useState } from "react";
 
-const STORAGE_KEY = "openscope.prefs";
+const STORAGE_KEY = "branchlab.prefs";
 
 export interface Preferences {
   /** macOS app name used for "Open in terminal" (open -a). */

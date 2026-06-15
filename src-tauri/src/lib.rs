@@ -1,4 +1,5 @@
 mod commands;
+mod config;
 mod env;
 mod git;
 mod project;
@@ -46,11 +47,17 @@ pub fn run() {
             commands::list_workspaces,
             commands::rename_workspace,
             commands::workspace_diff_stat,
+            commands::workspace_changes,
+            commands::workspace_file_diff,
+            commands::discard_file,
             commands::start_server,
             commands::stop_server,
             commands::server_status,
             commands::list_servers,
             commands::touch_server,
+            commands::restart_server,
+            commands::read_config,
+            commands::write_config,
             commands::open_devtools,
             commands::open_external,
         ])

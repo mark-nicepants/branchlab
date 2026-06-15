@@ -1,7 +1,7 @@
 //! ServerManager — owns the lifecycle of `opencode serve` child processes.
 //!
 //! One OpenCode server is bound to a single working directory (its project is
-//! derived from the cwd), so OpenScope runs one server per active workspace.
+//! derived from the cwd), so BranchLab runs one server per active workspace.
 //! We spawn with `--port 0` (let the OS pick a free port) and parse the
 //! "listening on http://host:port" line from stdout to discover the address —
 //! more reliable than racing to claim a port ourselves.

@@ -1,6 +1,6 @@
-//! EnvProbe — detect external tools OpenScope depends on (opencode, git).
+//! EnvProbe — detect external tools BranchLab depends on (opencode, git).
 //!
-//! OpenScope drives a user-installed `opencode` binary and uses `git` for
+//! BranchLab drives a user-installed `opencode` binary and uses `git` for
 //! worktrees. Neither is bundled in the MVP, so on startup we probe PATH,
 //! capture versions, and let the UI render an onboarding screen if something
 //! is missing.

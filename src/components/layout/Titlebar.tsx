@@ -38,7 +38,7 @@ export function Titlebar({
       </div>
 
       <div data-tauri-drag-region className="flex flex-1 items-center justify-center gap-1.5">
-        {project && (
+        {project ? (
           <>
             <span className="text-muted-foreground">{project}</span>
             {branch && (
@@ -48,6 +48,8 @@ export function Titlebar({
               </>
             )}
           </>
+        ) : (
+          <span className="font-medium text-muted-foreground">BranchLab</span>
         )}
       </div>
 

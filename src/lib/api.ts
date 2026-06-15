@@ -4,14 +4,16 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  ConfigFile,
   DiffStat,
   EnvReport,
+  FileChange,
   ProjectView,
   ServerInfo,
   Workspace,
 } from "./types";
 
-/** Probe PATH for the external tools OpenScope depends on (opencode, git). */
+/** Probe PATH for the external tools BranchLab depends on (opencode, git). */
 export function probeEnvironment(): Promise<EnvReport> {
   return invoke<EnvReport>("probe_environment");
 }
@@ -72,6 +74,46 @@ export function renameWorkspace(workspaceId: string, name: string): Promise<void
 
 export function workspaceDiffStat(workspaceId: string): Promise<DiffStat> {
   return invoke<DiffStat>("workspace_diff_stat", { workspaceId });
+}
+
+/** Changed files for the diff panel. `against` defaults to HEAD (local). */
+export function workspaceChanges(workspaceId: string, against?: string): Promise<FileChange[]> {
+  return invoke<FileChange[]>("workspace_changes", { workspaceId, against: against ?? null });
+}
+
+/** Unified diff text for one file. */
+export function workspaceFileDiff(
+  workspaceId: string,
+  file: string,
+  against?: string,
+): Promise<string> {
+  return invoke<string>("workspace_file_diff", { workspaceId, file, against: against ?? null });
+}
+
+/** Discard a file's local changes (restore to HEAD, or delete if untracked). */
+export function discardFile(workspaceId: string, file: string): Promise<void> {
+  return invoke<void>("discard_file", { workspaceId, file });
+}
+
+// ── M3: config & internals ──
+
+/** Read the global or project opencode config file. */
+export function readConfig(scope: "global" | "project", workspaceId?: string): Promise<ConfigFile> {
+  return invoke<ConfigFile>("read_config", { scope, workspaceId: workspaceId ?? null });
+}
+
+/** Write a config file; returns the written path. */
+export function writeConfig(
+  scope: "global" | "project",
+  content: string,
+  workspaceId?: string,
+): Promise<string> {
+  return invoke<string>("write_config", { scope, workspaceId: workspaceId ?? null, content });
+}
+
+/** Restart a workspace's server (to apply config changes). */
+export function restartServer(workspaceId: string): Promise<ServerInfo> {
+  return invoke<ServerInfo>("restart_server", { workspaceId });
 }
 
 /** Info for every running opencode server (drives the fleet dashboard). */

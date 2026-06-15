@@ -5,10 +5,21 @@ import { OpencodeClient } from "../lib/opencode";
 import type { Workspace } from "../lib/types";
 import { Button } from "@/components/ui/button";
 import { Chat } from "./Chat";
+import { ChangesView } from "./center/ChangesView";
+import { ConfigView } from "./center/ConfigView";
+import { cn } from "@/lib/utils";
+
+export type CenterTab = "activity" | "changes" | "config";
 
 interface Props {
   workspace: Workspace;
   onRenamed: (workspaceId: string, name: string) => void;
+  tab: CenterTab;
+  onTabChange: (tab: CenterTab) => void;
+  focusedFile: string | null;
+  viewed: Set<string>;
+  onToggleViewed: (path: string) => void;
+  onMarkAllViewed: (paths: string[]) => void;
 }
 
 type State =
@@ -16,12 +27,16 @@ type State =
   | { kind: "ready"; baseUrl: string }
   | { kind: "error"; message: string };
 
-/**
- * Owns the per-workspace server lifecycle. The server is an internal detail —
- * we surface it only as a brief "Creating workspace…" state and, if it fails,
- * an error with a retry. No start/stop controls.
- */
-export function WorkspaceView({ workspace, onRenamed }: Props) {
+export function WorkspaceView({
+  workspace,
+  onRenamed,
+  tab,
+  onTabChange,
+  focusedFile,
+  viewed,
+  onToggleViewed,
+  onMarkAllViewed,
+}: Props) {
   const [state, setState] = useState<State>({ kind: "starting" });
   const [attempt, setAttempt] = useState(0);
 
@@ -44,7 +59,9 @@ export function WorkspaceView({ workspace, onRenamed }: Props) {
           }
         }
         if (cancelled) return;
-        setState(ok ? { kind: "ready", baseUrl: info.base_url } : { kind: "error", message: "server did not become healthy" });
+        setState(
+          ok ? { kind: "ready", baseUrl: info.base_url } : { kind: "error", message: "server did not become healthy" },
+        );
       } catch (e) {
         if (!cancelled) setState({ kind: "error", message: String(e) });
       }
@@ -57,11 +74,34 @@ export function WorkspaceView({ workspace, onRenamed }: Props) {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center gap-4 border-b border-border px-4 py-2.5 text-sm">
-        <span className="font-medium">Activity</span>
+      <header className="flex items-center gap-1 border-b border-border px-3 text-sm">
+        <Tab active={tab === "activity"} onClick={() => onTabChange("activity")}>
+          Activity
+        </Tab>
+        <Tab active={tab === "changes"} onClick={() => onTabChange("changes")}>
+          Changes
+        </Tab>
+        <Tab active={tab === "config"} onClick={() => onTabChange("config")}>
+          Config
+        </Tab>
       </header>
 
-      {state.kind === "ready" ? (
+      {tab === "config" ? (
+        <ConfigView
+          workspaceId={workspace.id}
+          baseUrl={state.kind === "ready" ? state.baseUrl : null}
+          onRestarted={() => setAttempt((a) => a + 1)}
+        />
+      ) : tab === "changes" ? (
+        <ChangesView
+          workspaceId={workspace.id}
+          baseBranch={workspace.base_branch}
+          focusedFile={focusedFile}
+          viewed={viewed}
+          onToggleViewed={onToggleViewed}
+          onMarkAllViewed={onMarkAllViewed}
+        />
+      ) : state.kind === "ready" ? (
         <Chat key={workspace.id} workspace={workspace} baseUrl={state.baseUrl} onRenamed={onRenamed} />
       ) : state.kind === "error" ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm">
@@ -78,5 +118,29 @@ export function WorkspaceView({ workspace, onRenamed }: Props) {
         </div>
       )}
     </div>
+  );
+}
+
+function Tab({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "border-b-2 px-2 py-2.5 text-sm",
+        active
+          ? "border-primary font-medium text-foreground"
+          : "border-transparent text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {children}
+    </button>
   );
 }

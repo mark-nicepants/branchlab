@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { Check } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Check, ChevronDown } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -32,10 +32,15 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
   const { theme, setTheme, previewTheme, clearPreview } = useTheme();
   const { prefs, setPref } = usePreferences();
   const groups = ["Dark", "Light"] as const;
+  const [themeOpen, setThemeOpen] = useState(false);
+  const currentLabel = THEMES.find((t) => t.id === theme)?.label ?? theme;
 
-  // Revert any hover preview when the dialog closes.
+  // Collapse the picker and revert any hover preview when the dialog closes.
   useEffect(() => {
-    if (!open) clearPreview();
+    if (!open) {
+      setThemeOpen(false);
+      clearPreview();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -50,35 +55,48 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
         <div className="py-1">
           <div className="text-sm font-medium">Theme</div>
           <div className="text-xs text-muted-foreground">
-            Hover to preview, click to apply.
+            {themeOpen ? "Hover to preview, click to apply." : "Choose a color theme."}
           </div>
 
-          <div className="mt-3 grid gap-3" onMouseLeave={clearPreview}>
-            {groups.map((group) => (
-              <div key={group}>
-                <div className="px-1 pb-1 text-[11px] uppercase tracking-wider text-muted-foreground">
-                  {group}
+          <button
+            onClick={() => setThemeOpen((o) => (o ? (clearPreview(), false) : true))}
+            className="mt-3 flex w-full items-center justify-between rounded-md border border-border px-3 py-2 text-sm hover:bg-accent"
+          >
+            <span>{currentLabel}</span>
+            <ChevronDown className={cn("size-4 text-muted-foreground transition-transform", themeOpen && "rotate-180")} />
+          </button>
+
+          {themeOpen && (
+            <div className="mt-2 grid gap-3" onMouseLeave={clearPreview}>
+              {groups.map((group) => (
+                <div key={group}>
+                  <div className="px-1 pb-1 text-[11px] uppercase tracking-wider text-muted-foreground">
+                    {group}
+                  </div>
+                  <div className="grid grid-cols-2 gap-1">
+                    {THEMES.filter((t) => t.group === group).map((t) => (
+                      <button
+                        key={t.id}
+                        onMouseEnter={() => previewTheme(t.id)}
+                        onFocus={() => previewTheme(t.id)}
+                        onClick={() => {
+                          setTheme(t.id);
+                          setThemeOpen(false);
+                        }}
+                        className={cn(
+                          "flex items-center justify-between rounded-md px-2.5 py-1.5 text-sm hover:bg-accent",
+                          theme === t.id && "bg-accent",
+                        )}
+                      >
+                        {t.label}
+                        {theme === t.id && <Check className="size-4 text-primary" />}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <div className="grid grid-cols-2 gap-1">
-                  {THEMES.filter((t) => t.group === group).map((t) => (
-                    <button
-                      key={t.id}
-                      onMouseEnter={() => previewTheme(t.id)}
-                      onFocus={() => previewTheme(t.id)}
-                      onClick={() => setTheme(t.id)}
-                      className={cn(
-                        "flex items-center justify-between rounded-md px-2.5 py-1.5 text-sm hover:bg-accent",
-                        theme === t.id && "bg-accent",
-                      )}
-                    >
-                      {t.label}
-                      {theme === t.id && <Check className="size-4 text-primary" />}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="space-y-3 border-t border-border pt-4">

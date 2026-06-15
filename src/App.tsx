@@ -16,7 +16,7 @@ import { useShortcuts } from "./hooks/useShortcuts";
 import { useDesktopBehaviors } from "./hooks/useDesktopBehaviors";
 import { Onboarding } from "./components/Onboarding";
 import { Sidebar } from "./components/Sidebar";
-import { WorkspaceView } from "./components/WorkspaceView";
+import { WorkspaceView, type CenterTab } from "./components/WorkspaceView";
 import { FleetDashboard } from "./components/FleetDashboard";
 import { NewWorkspaceModal } from "./components/NewWorkspaceModal";
 import { StatusBar } from "./components/StatusBar";
@@ -34,7 +34,7 @@ type Phase =
   | { kind: "ready"; env: EnvReport }
   | { kind: "blocked"; env: EnvReport };
 
-const LAYOUT_KEY = "openscope.layout.v1";
+const LAYOUT_KEY = "branchlab.layout.v1";
 
 function App() {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
@@ -43,6 +43,19 @@ function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [branchModalProject, setBranchModalProject] = useState<ProjectView | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [centerTab, setCenterTab] = useState<CenterTab>("activity");
+  const [focusedFile, setFocusedFile] = useState<string | null>(null);
+  const [viewedFiles, setViewedFiles] = useState<Set<string>>(new Set());
+
+  const toggleViewed = useCallback((path: string) => {
+    setViewedFiles((prev) => {
+      const n = new Set(prev);
+      if (n.has(path)) n.delete(path);
+      else n.add(path);
+      return n;
+    });
+  }, []);
+  const markAllViewed = useCallback((paths: string[]) => setViewedFiles(new Set(paths)), []);
 
   const leftRef = usePanelRef();
   const rightRef = usePanelRef();
@@ -104,6 +117,13 @@ function App() {
     void touchServer(selectedId);
     const t = setInterval(() => void touchServer(selectedId), 60_000);
     return () => clearInterval(t);
+  }, [selectedId]);
+
+  // Reset center tab / viewed files when switching workspaces.
+  useEffect(() => {
+    setCenterTab("activity");
+    setFocusedFile(null);
+    setViewedFiles(new Set());
   }, [selectedId]);
 
   const onRenamed = useCallback(
@@ -207,7 +227,17 @@ function App() {
         <ResizablePanel id="center" minSize={30}>
           <main className="h-full min-w-0 overflow-hidden">
             {selected ? (
-              <WorkspaceView key={selected.id} workspace={selected} onRenamed={onRenamed} />
+              <WorkspaceView
+                key={selected.id}
+                workspace={selected}
+                onRenamed={onRenamed}
+                tab={centerTab}
+                onTabChange={setCenterTab}
+                focusedFile={focusedFile}
+                viewed={viewedFiles}
+                onToggleViewed={toggleViewed}
+                onMarkAllViewed={markAllViewed}
+              />
             ) : (
               <FleetDashboard projects={projects} onOpenWorkspace={(w) => setSelectedId(w.id)} />
             )}
@@ -225,7 +255,15 @@ function App() {
           defaultSize={24}
           onResize={(s) => setRightCollapsed(s.asPercentage === 0)}
         >
-          <ChangesPanel workspace={selected} />
+          <ChangesPanel
+            workspace={selected}
+            viewed={viewedFiles}
+            onToggleViewed={toggleViewed}
+            onOpenFile={(path) => {
+              setCenterTab("changes");
+              setFocusedFile(path);
+            }}
+          />
         </ResizablePanel>
       </ResizablePanelGroup>
 

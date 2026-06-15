@@ -54,6 +54,20 @@ export interface DiffStat {
   deletions: number;
 }
 
+export interface FileChange {
+  path: string;
+  /** "modified" | "added" | "deleted" | "renamed" | "untracked" */
+  status: string;
+  insertions: number;
+  deletions: number;
+}
+
+export interface ConfigFile {
+  path: string;
+  content: string;
+  exists: boolean;
+}
+
 // ── OpenCode HTTP API types (subset we use; from the OpenAPI 3.1 spec) ──
 
 export interface Session {
