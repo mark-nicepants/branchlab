@@ -22,9 +22,9 @@ jobs:
     name: Frontend (typecheck, build, tests)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -47,7 +47,7 @@ jobs:
       run:
         working-directory: src-tauri
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # System libraries Tauri needs to compile on Linux.
       - name: Install Tauri system dependencies
@@ -76,19 +76,23 @@ jobs:
       - name: Formatting (rustfmt)
         run: cargo fmt --all --check
 
-      - name: Lint (clippy)
-        run: cargo clippy --all-targets -- -D warnings
-
+      # Compile the dependency tree once here (with codegen). clippy below then
+      # reuses these artifacts and only re-checks the workspace crate, instead
+      # of recompiling all of Tauri's deps in check mode — so we don't pay the
+      # big compile twice. (Order matters: tests must run before clippy.)
       - name: Unit tests
         run: cargo test --lib
+
+      - name: Lint (clippy)
+        run: cargo clippy --all-targets -- -D warnings
 
   audit-npm:
     name: Security audit (npm)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -104,7 +108,7 @@ jobs:
     name: Security audit (cargo)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install cargo-audit
         uses: taiki-e/install-action@v2
