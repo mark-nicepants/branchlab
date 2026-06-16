@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, GitBranch, Square, Wrench } from "lucide-react";
 import { OpencodeClient } from "../lib/opencode";
-import type { BusEvent, ContextInfo, ModelOption, Part, Workspace } from "../lib/types";
+import type { AgentOption, BusEvent, ContextInfo, ModelOption, Part, Workspace } from "../lib/types";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ModelSelector } from "./ModelSelector";
+import { ModeSelector } from "./ModeSelector";
 import { ThinkingSelector } from "./ThinkingSelector";
 import { cn } from "@/lib/utils";
 
@@ -37,6 +38,9 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
   const [model, setModel] = useState<ModelOption | null>(null);
   // Selected reasoning effort for the active model; null = the model's default.
   const [variant, setVariant] = useState<string | null>(null);
+  // Selected OpenCode agent/mode; null = the server's default agent.
+  const [agent, setAgent] = useState<AgentOption | null>(null);
+  const [agents, setAgents] = useState<AgentOption[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -82,6 +86,14 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
         if (cancelled) return;
         setModels(models);
         setModel(models.find((m) => m.key === defaultKey) ?? models[0] ?? null);
+
+        const agents = await client.listAgents();
+        if (cancelled) return;
+        const primary = agents
+          .filter((a) => a.mode === "primary" && a.name !== "title")
+          .sort((a, b) => a.name.localeCompare(b.name));
+        setAgents(primary);
+        setAgent(primary.find((a) => a.name === "build") ?? primary[0] ?? null);
 
         const history = await client.listMessages(session.id);
         if (cancelled) return;
@@ -173,7 +185,7 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
     }
 
     try {
-      await client.sendPrompt(sessionId, text, model ?? undefined, variant ?? undefined);
+      await client.sendPrompt(sessionId, text, model ?? undefined, variant ?? undefined, agent?.name);
     } catch (e) {
       setError(String(e));
       setBusy(false);
@@ -241,6 +253,7 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
           {/* Controls on top (Polyscope-style), composer below. */}
           <div className="flex items-center gap-1.5 px-2 py-1.5">
             <ModelSelector models={models} value={model} onChange={changeModel} />
+            <ModeSelector agents={agents} value={agent} onChange={setAgent} />
             <ThinkingSelector
               variants={model?.variants ?? []}
               value={variant}

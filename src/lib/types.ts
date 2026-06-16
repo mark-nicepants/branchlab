@@ -163,6 +163,15 @@ export interface LspStatus {
   status?: string;
 }
 
+/** A selectable OpenCode agent / mode. */
+export interface AgentOption {
+  /** Agent name passed to `/session/{id}/prompt_async` as `agent`. */
+  name: string;
+  /** Agent classification: "primary" agents are the user-facing modes. */
+  mode?: string;
+  description?: string;
+}
+
 /** Context-window usage for the active session. */
 export interface ContextInfo {
   used: number;

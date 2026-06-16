@@ -5,6 +5,7 @@
 // Wrapping every REST call here localizes any upstream API drift.
 
 import type {
+  AgentOption,
   BusEvent,
   LspStatus,
   McpStatus,
@@ -46,15 +47,17 @@ export class OpencodeClient {
   /**
    * Send a user prompt. `model` is optional — omitting it uses the server's
    * configured default. `variant` selects the model's reasoning effort (e.g.
-   * "high"); omit it to use the model's default. We use prompt_async and rely
-   * on the SSE stream for the assistant's reply, so the UI stays responsive
-   * while the agent works.
+   * "high"); omit it to use the model's default. `agent` selects the OpenCode
+   * agent/mode (e.g. "build", "plan"); omit it to use the server's default
+   * agent. We use prompt_async and rely on the SSE stream for the assistant's
+   * reply, so the UI stays responsive while the agent works.
    */
   async sendPrompt(
     sessionId: string,
     text: string,
     model?: { providerID: string; modelID: string },
     variant?: string,
+    agent?: string,
   ): Promise<void> {
     await this.json(`/session/${sessionId}/prompt_async`, {
       method: "POST",
@@ -62,6 +65,7 @@ export class OpencodeClient {
         parts: [{ type: "text", text }],
         ...(model ? { model } : {}),
         ...(variant ? { variant } : {}),
+        ...(agent ? { agent } : {}),
       }),
     });
   }
@@ -113,7 +117,7 @@ export class OpencodeClient {
   }
 
   /** Available agents (build, plan, title, …). */
-  listAgents(): Promise<{ name: string; mode?: string }[]> {
+  listAgents(): Promise<AgentOption[]> {
     return this.json("/agent");
   }
 
