@@ -41,7 +41,7 @@ type Phase =
   | { kind: "blocked"; env: EnvReport };
 
 const LAYOUT_KEY = "branchlab.layout.v1";
-const DEFAULT_LAYOUT: Layout = { left: 18, center: 58, right: 24 };
+const DEFAULT_LAYOUT: Layout = { left: 18, center: 82, right: 0 };
 
 function App() {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
@@ -70,11 +70,14 @@ function App() {
   const leftRef = usePanelRef();
   const rightRef = usePanelRef();
   const [leftCollapsed, setLeftCollapsed] = useState(false);
-  const [rightCollapsed, setRightCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(true);
 
   const stored = useMemo<Layout | undefined>(() => {
     try {
-      return JSON.parse(localStorage.getItem(LAYOUT_KEY) || "null") ?? undefined;
+      const saved = JSON.parse(localStorage.getItem(LAYOUT_KEY) || "null");
+      if (!saved) return undefined;
+      // selectedId is never persisted, so we always start in Fleet view — keep right collapsed.
+      return { ...saved, right: 0 };
     } catch {
       return undefined;
     }
