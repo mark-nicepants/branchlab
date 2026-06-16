@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, GitBranch, Square } from "lucide-react";
 import { OpencodeClient } from "../lib/opencode";
-import type { AgentOption, BusEvent, ContextInfo, ModelOption, Part, Workspace } from "../lib/types";
+import type { BusEvent, ContextInfo, ModelOption, Part, Todo, Workspace } from "../lib/types";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector } from "./ModeSelector";
 import { ThinkingSelector } from "./ThinkingSelector";
 import { ChatMessage, PartView } from "./ChatMessage";
+import { TodoButton } from "./TodoButton";
 
 interface Props {
   workspace: Workspace;
@@ -38,10 +39,10 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
   const [model, setModel] = useState<ModelOption | null>(null);
   // Selected reasoning effort for the active model; null = the model's default.
   const [variant, setVariant] = useState<string | null>(null);
-  // Selected OpenCode agent/mode; null = the server's default agent.
-  const [agent, setAgent] = useState<AgentOption | null>(null);
-  const [agents, setAgents] = useState<AgentOption[]>([]);
+  // Selected OpenCode agent/mode; only "build" or "plan".
+  const [agent, setAgent] = useState<string>("build");
   const [input, setInput] = useState("");
+  const [todos, setTodos] = useState<Todo[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -86,14 +87,6 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
         if (cancelled) return;
         setModels(models);
         setModel(models.find((m) => m.key === defaultKey) ?? models[0] ?? null);
-
-        const agents = await client.listAgents();
-        if (cancelled) return;
-        const primary = agents
-          .filter((a) => a.mode === "primary" && a.name !== "title")
-          .sort((a, b) => a.name.localeCompare(b.name));
-        setAgents(primary);
-        setAgent(primary.find((a) => a.name === "build") ?? primary[0] ?? null);
 
         const history = await client.listMessages(session.id);
         if (cancelled) return;
@@ -153,6 +146,17 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
     return unsub;
   }, [client, sessionId, upsertPart]);
 
+  // Poll the session todo list while we have an active session.
+  useEffect(() => {
+    if (!sessionId) return;
+    const fetchTodos = () => {
+      client.listTodos(sessionId).then(setTodos).catch(() => {});
+    };
+    fetchTodos();
+    const t = setInterval(fetchTodos, 2000);
+    return () => clearInterval(t);
+  }, [client, sessionId]);
+
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages, order]);
@@ -176,7 +180,7 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
     }
 
     try {
-      await client.sendPrompt(sessionId, text, model ?? undefined, variant ?? undefined, agent?.name);
+      await client.sendPrompt(sessionId, text, model ?? undefined, variant ?? undefined, agent);
     } catch (e) {
       setError(String(e));
       setBusy(false);
@@ -232,14 +236,15 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
         <div className="mx-auto max-w-4xl rounded-xl border border-border bg-card focus-within:border-muted-foreground/40">
           {/* Controls on top (Polyscope-style), composer below. */}
           <div className="flex items-center gap-1.5 px-2 py-1.5">
+            <ModeSelector value={agent} onChange={setAgent} />
             <ModelSelector models={models} value={model} onChange={changeModel} />
-            <ModeSelector agents={agents} value={agent} onChange={setAgent} />
             <ThinkingSelector
               variants={model?.variants ?? []}
               value={variant}
               onChange={setVariant}
             />
-            <div className="ml-auto">
+            <div className="ml-auto flex items-center gap-1">
+              <TodoButton todos={todos} />
               {busy ? (
                 <Button variant="destructive" size="icon" className="size-7" onClick={() => void abort()}>
                   <Square className="size-3.5" />

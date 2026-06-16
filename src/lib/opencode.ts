@@ -12,6 +12,7 @@ import type {
   MessageWithParts,
   ModelOption,
   Session,
+  Todo,
 } from "./types";
 
 export class OpencodeClient {
@@ -119,6 +120,11 @@ export class OpencodeClient {
   /** Available agents (build, plan, title, …). */
   listAgents(): Promise<AgentOption[]> {
     return this.json("/agent");
+  }
+
+  /** Session todo list. */
+  listTodos(sessionId: string): Promise<Todo[]> {
+    return this.json(`/session/${sessionId}/todo`);
   }
 
   /** Available slash commands. */

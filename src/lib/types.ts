@@ -175,6 +175,14 @@ export interface ModelOption {
   variants: string[];
 }
 
+/** One OpenCode todo item from /session/{id}/todo. */
+export interface Todo {
+  content: string;
+  /** "pending" | "in_progress" | "completed" | "cancelled" */
+  status: string;
+  priority: string;
+}
+
 /** One MCP server's runtime status (from /mcp). */
 export interface McpStatus {
   name: string;

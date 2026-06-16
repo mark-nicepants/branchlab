@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
+import { ChevronRight, Loader2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Part, ToolState } from "../lib/types";
@@ -16,7 +16,7 @@ export function ChatMessage({ role, children }: MessageProps) {
     <div
       className={cn(
         "flex w-full",
-        isUser ? "justify-start" : "justify-end",
+        isUser ? "justify-end" : "justify-start",
       )}
     >
       <div
@@ -46,7 +46,11 @@ export function PartView({ part }: PartViewProps) {
     );
   }
   if (part.type === "reasoning") {
-    return <ReasoningPart text={part.text} />;
+    return (
+      <div className="my-1 text-xs italic text-muted-foreground">
+        {part.text}
+      </div>
+    );
   }
   if (part.type === "tool") {
     return <ToolCallPart part={part} />;
@@ -55,26 +59,6 @@ export function PartView({ part }: PartViewProps) {
     return <FilePart filename={part.filename} url={part.url} />;
   }
   return null;
-}
-
-function ReasoningPart({ text }: { text?: string }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="my-1 rounded-md border border-border/50 bg-muted/40">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground"
-      >
-        {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-        <span>Reasoning</span>
-      </button>
-      {open && (
-        <div className="border-t border-border/50 px-3 py-2 text-xs italic text-muted-foreground">
-          {text}
-        </div>
-      )}
-    </div>
-  );
 }
 
 function FilePart({ filename, url }: { filename?: string; url?: string }) {
@@ -129,10 +113,10 @@ function ToolCallPart({ part }: { part: Part }) {
   const description = toolDescription(part);
 
   return (
-    <div className="my-1 w-full min-w-0 rounded-md border border-border bg-card text-xs">
+    <div className="my-1 w-full min-w-0 text-xs">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="group flex w-full items-center gap-2 px-3 py-2 text-left"
+        className="group flex w-full items-center gap-2 py-1 text-left"
       >
         <span className="flex w-4 items-center justify-center">
           {pending ? (
@@ -146,7 +130,11 @@ function ToolCallPart({ part }: { part: Part }) {
           <span className="min-w-0 truncate text-muted-foreground">{description}</span>
         )}
         <span className="ml-auto shrink-0 opacity-0 transition-opacity group-hover:opacity-100">
-          {open ? <ChevronDown className="size-3.5 text-muted-foreground" /> : <ChevronRight className="size-3.5 text-muted-foreground" />}
+          {open ? (
+            <ChevronRight className="size-3.5 rotate-90 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="size-3.5 text-muted-foreground" />
+          )}
         </span>
       </button>
       {open && <ToolCallDetails part={part} />}
