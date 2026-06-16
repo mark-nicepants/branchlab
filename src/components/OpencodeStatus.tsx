@@ -107,7 +107,7 @@ export function OpencodeStatus({ baseUrl, version, workspace, onRestart }: Props
                         {m.name}
                       </span>
                       <Switch
-                        checked={m.status !== "disabled"}
+                        checked={m.status !== "disabled" && m.status !== "failed" && m.status !== "error"}
                         disabled={busy === m.name}
                         onCheckedChange={(v) => void toggleMcp(m, v)}
                       />

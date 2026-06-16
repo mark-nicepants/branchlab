@@ -9,12 +9,18 @@ export interface Preferences {
   editorApp: string;
   /** Model keys (`providerID/modelID`) hidden from the model selector. */
   disabledModels: string[];
+  /** Last selected model key per workspace (`workspaceId` → `providerID/modelID`). */
+  workspaceModels: Record<string, string>;
+  /** Collapsed state of project stats panels in the sidebar (project id → boolean). */
+  collapsedProjects: Record<string, boolean>;
 }
 
 const DEFAULTS: Preferences = {
   terminalApp: "Terminal",
   editorApp: "Visual Studio Code",
   disabledModels: [],
+  workspaceModels: {},
+  collapsedProjects: {},
 };
 
 interface PrefsCtxValue {

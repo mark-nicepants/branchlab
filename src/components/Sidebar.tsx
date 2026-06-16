@@ -75,10 +75,12 @@ export function Sidebar({
   onNewFromBranch,
   onAddProject,
 }: Props) {
-  const { prefs } = usePreferences();
+  const { prefs, setPref } = usePreferences();
   const [renaming, setRenaming] = useState<Workspace | null>(null);
   const [renameValue, setRenameValue] = useState("");
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [collapsed, setCollapsed] = useState<Set<string>>(
+    () => new Set(Object.entries(prefs.collapsedProjects).filter(([, v]) => v).map(([k]) => k)),
+  );
   const [stats, setStats] = useState<Record<string, DiffStat>>({});
 
   // Poll per-workspace diff stats so the sidebar shows live +/- counts.
@@ -104,6 +106,10 @@ export function Sidebar({
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
+      const collapsedRecord: Record<string, boolean> = { ...prefs.collapsedProjects };
+      if (next.has(id)) collapsedRecord[id] = true;
+      else delete collapsedRecord[id];
+      setPref("collapsedProjects", collapsedRecord);
       return next;
     });
 

@@ -9,6 +9,7 @@ import { ModeSelector } from "./ModeSelector";
 import { ThinkingSelector } from "./ThinkingSelector";
 import { ChatMessage, PartView } from "./ChatMessage";
 import { TodoButton } from "./TodoButton";
+import { usePreferences } from "./PreferencesProvider";
 
 interface Props {
   workspace: Workspace;
@@ -31,6 +32,7 @@ interface UiMessage {
  * name and reports it back via onRenamed.
  */
 export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
+  const { prefs, setPref } = usePreferences();
   const client = useMemo(() => new OpencodeClient(baseUrl), [baseUrl]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Record<string, UiMessage>>({});
@@ -86,12 +88,29 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
         const { models, defaultKey } = await client.listModels();
         if (cancelled) return;
         setModels(models);
-        setModel(models.find((m) => m.key === defaultKey) ?? models[0] ?? null);
+
+        // Restore the workspace's last selected model, or fall back to default.
+        const savedKey = prefs.workspaceModels[workspace.id];
+        const initialModel =
+          models.find((m) => m.key === savedKey) ??
+          models.find((m) => m.key === defaultKey) ??
+          models[0] ??
+          null;
+        setModel(initialModel);
 
         const history = await client.listMessages(session.id);
         if (cancelled) return;
         for (const m of history) {
           for (const p of m.parts) upsertPart({ ...p, messageID: m.info.id });
+        }
+
+        // Report context usage from the most recent assistant message in history.
+        const lastAssistant = [...history].reverse().find((m) => m.info.role === "assistant");
+        const tk = lastAssistant?.info.tokens;
+        if (tk) {
+          const used = (tk.input ?? 0) + (tk.cache?.read ?? 0);
+          const max = models.find((m) => m.key === savedKey)?.contextLimit ?? 0;
+          if (used > 0 && max > 0) onContext({ used, max });
         }
       } catch (e) {
         if (!cancelled) setError(String(e));
@@ -193,9 +212,11 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
   }
 
   // Switch model and drop the reasoning effort if the new model can't honor it.
+  // Persist the selected model per workspace.
   function changeModel(next: ModelOption) {
     setModel(next);
     setVariant((v) => (v && next.variants.includes(v) ? v : null));
+    setPref("workspaceModels", { ...prefs.workspaceModels, [workspace.id]: next.key });
   }
 
   return (

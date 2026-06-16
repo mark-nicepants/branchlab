@@ -95,6 +95,13 @@ export interface MessageInfo {
   id: string;
   role: MessageRole;
   sessionID: string;
+  /** Token usage for this message (assistant messages may include this). */
+  tokens?: {
+    input?: number;
+    output?: number;
+    reasoning?: number;
+    cache?: { read?: number; write?: number };
+  };
 }
 
 /** A part of a message. We render `text`; other kinds get a one-line summary. */

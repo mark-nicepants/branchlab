@@ -69,12 +69,12 @@ export function ModelSelector({ models, value, onChange }: Props) {
         </PopoverTrigger>
         <PopoverContent align="start" side="top" className="w-[300px] p-0">
           <Command>
-            <div className="flex items-center gap-1 border-b border-border pr-1.5">
+            <div className="flex items-center gap-1 border-b border-border pl-3 pr-1.5">
               <CommandInput placeholder="Search models" className="h-9" />
               <Button
                 variant="ghost"
                 size="icon"
-                className="size-7 shrink-0 text-muted-foreground"
+                className="-mr-1 size-7 shrink-0 text-muted-foreground"
                 title="Manage models"
                 onClick={() => {
                   setOpen(false);
@@ -84,7 +84,7 @@ export function ModelSelector({ models, value, onChange }: Props) {
                 <SlidersHorizontal className="size-3.5" />
               </Button>
             </div>
-            <CommandList>
+            <CommandList className="pb-2">
               <CommandEmpty>No models found.</CommandEmpty>
               {groups.map(([provider, list]) => (
                 <CommandGroup key={provider} heading={provider}>

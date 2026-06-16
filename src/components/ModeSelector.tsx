@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, ChevronsUpDown } from "lucide-react";
+import { ChevronsUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -42,7 +42,6 @@ export function ModeSelector({ value, onChange }: Props) {
           {MODES.map((m) => (
             <DropdownMenuRadioItem key={m} value={m}>
               <span className="flex flex-1 items-center capitalize">{m}</span>
-              {value === m && <Check className="size-4" />}
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>

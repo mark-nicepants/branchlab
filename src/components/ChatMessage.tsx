@@ -24,7 +24,7 @@ export function ChatMessage({ role, children }: MessageProps) {
           "max-w-[85%] select-text text-sm",
           isUser
             ? "self-start rounded-2xl rounded-tl-sm border border-border bg-card px-4 py-2.5"
-            : "rounded-2xl rounded-tr-sm px-1 py-1 text-foreground",
+            : "w-full rounded-2xl rounded-tr-sm px-1 py-1 text-foreground",
         )}
       >
         {children}
@@ -100,8 +100,7 @@ function toolDescription(part: Part): string {
     if (file) return file;
   }
   if (part.tool === "bash") {
-    const cmd = typeof input?.command === "string" ? input.command : part.state?.title;
-    if (cmd) return cmd;
+    return part.state?.title ?? "";
   }
   return part.state?.title ?? "";
 }
@@ -113,16 +112,16 @@ function ToolCallPart({ part }: { part: Part }) {
   const description = toolDescription(part);
 
   return (
-    <div className="my-1 w-full min-w-0 text-xs">
+    <div className="my-1 -ml-6 w-[calc(100%+1.5rem)] min-w-0 text-sm">
       <button
         onClick={() => setOpen((v) => !v)}
         className="group flex w-full items-center gap-2 py-1 text-left"
       >
-        <span className="flex w-4 items-center justify-center">
+        <span className="flex w-6 items-center justify-center">
           {pending ? (
-            <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+            <Loader2 className="size-4 animate-spin text-muted-foreground" />
           ) : (
-            <span className="size-3.5" />
+            <span className="size-4" />
           )}
         </span>
         <span className="shrink-0 font-medium">{label}</span>
@@ -131,9 +130,9 @@ function ToolCallPart({ part }: { part: Part }) {
         )}
         <span className="ml-auto shrink-0 opacity-0 transition-opacity group-hover:opacity-100">
           {open ? (
-            <ChevronRight className="size-3.5 rotate-90 text-muted-foreground" />
+            <ChevronRight className="size-4 rotate-90 text-muted-foreground" />
           ) : (
-            <ChevronRight className="size-3.5 text-muted-foreground" />
+            <ChevronRight className="size-4 text-muted-foreground" />
           )}
         </span>
       </button>
