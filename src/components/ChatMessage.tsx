@@ -24,7 +24,7 @@ export function ChatMessage({ role, children }: MessageProps) {
           "max-w-[85%] select-text text-sm",
           isUser
             ? "self-start rounded-2xl rounded-tl-sm border border-border bg-card px-4 py-2.5"
-            : "w-full rounded-2xl rounded-tr-sm px-1 py-1 text-foreground",
+            : "w-full rounded-2xl rounded-tr-sm px-0 py-1 text-foreground",
         )}
       >
         {children}
@@ -40,14 +40,14 @@ interface PartViewProps {
 export function PartView({ part }: PartViewProps) {
   if (part.type === "text") {
     return (
-      <div className="markdown-content">
+      <div className="markdown-content pl-9">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{part.text || ""}</ReactMarkdown>
       </div>
     );
   }
   if (part.type === "reasoning") {
     return (
-      <div className="my-1 text-xs italic text-muted-foreground">
+      <div className="my-1 pl-9 text-xs italic text-muted-foreground">
         {part.text}
       </div>
     );
@@ -112,12 +112,12 @@ function ToolCallPart({ part }: { part: Part }) {
   const description = toolDescription(part);
 
   return (
-    <div className="my-1 -ml-6 w-[calc(100%+1.5rem)] min-w-0 text-sm">
+    <div className="my-1 w-full min-w-0 text-sm">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="group flex w-full items-center gap-2 py-1 text-left"
+        className="group flex w-full items-center gap-0 py-1 text-left"
       >
-        <span className="flex w-6 items-center justify-center">
+        <span className="flex w-9 items-center justify-center">
           {pending ? (
             <Loader2 className="size-4 animate-spin text-muted-foreground" />
           ) : (
@@ -126,7 +126,7 @@ function ToolCallPart({ part }: { part: Part }) {
         </span>
         <span className="shrink-0 font-medium">{label}</span>
         {description && (
-          <span className="min-w-0 truncate text-muted-foreground">{description}</span>
+          <span className="min-w-0 truncate pl-2 text-muted-foreground">{description}</span>
         )}
         <span className="ml-auto shrink-0 opacity-0 transition-opacity group-hover:opacity-100">
           {open ? (
