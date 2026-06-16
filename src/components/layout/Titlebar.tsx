@@ -34,7 +34,7 @@ export function Titlebar({
   return (
     <header
       data-tauri-drag-region
-      className="flex h-9 shrink-0 items-center justify-between border-b border-border bg-sidebar pr-2 pl-[78px] text-sm"
+      className="flex h-10 shrink-0 items-center justify-between border-b border-border bg-sidebar pr-2 pl-[78px] text-sm"
     >
       <div className="flex items-center gap-0.5">
         <PanelToggle active={!leftCollapsed} onClick={onToggleLeft} side="left" hint="Toggle sidebar  ⌘B" />
