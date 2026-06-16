@@ -111,9 +111,35 @@ export interface Part {
     | "step-finish"
     | string;
   text?: string;
-  // tool parts carry a tool name + state; kept loose for the MVP summary.
+  /** Tool name for tool parts (e.g. "edit", "bash", "read"). */
   tool?: string;
-  state?: { status?: string };
+  /** Runtime state of a tool call. */
+  state?: ToolState;
+  /** Filename for file parts. */
+  filename?: string;
+  /** URL/path for file parts. */
+  url?: string;
+  /** Description for subtask parts. */
+  description?: string;
+  /** Agent name for subtask parts. */
+  agent?: string;
+}
+
+/** Runtime state of a tool call part. */
+export interface ToolState {
+  status?: "pending" | "running" | "completed" | "error" | string;
+  /** Tool arguments. */
+  input?: Record<string, unknown>;
+  /** Tool result text (when completed). */
+  output?: string;
+  /** Human-readable title while running or after completion. */
+  title?: string;
+  /** Error message when status is error. */
+  error?: string;
+  /** Raw pending representation. */
+  raw?: string;
+  /** Timing metadata. */
+  time?: { start?: number; end?: number };
 }
 
 export interface MessageWithParts {

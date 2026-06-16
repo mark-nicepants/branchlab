@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, GitBranch, Square, Wrench } from "lucide-react";
+import { ArrowUp, GitBranch, Square } from "lucide-react";
 import { OpencodeClient } from "../lib/opencode";
 import type { AgentOption, BusEvent, ContextInfo, ModelOption, Part, Workspace } from "../lib/types";
 import { Button } from "@/components/ui/button";
@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector } from "./ModeSelector";
 import { ThinkingSelector } from "./ThinkingSelector";
-import { cn } from "@/lib/utils";
+import { ChatMessage, PartView } from "./ChatMessage";
 
 interface Props {
   workspace: Workspace;
@@ -164,17 +164,8 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
     setError(null);
     setBusy(true);
 
-    const tempId = `local-${order.length}`;
-    setMessages((prev) => ({
-      ...prev,
-      [tempId]: {
-        id: tempId,
-        role: "user",
-        partsById: { p: { id: "p", messageID: tempId, sessionID: sessionId, type: "text", text } },
-        order: ["p"],
-      },
-    }));
-    setOrder((prev) => [...prev, tempId]);
+    // Note: we do not optimistically render the user message. OpenCode echoes
+    // it back via SSE as a real message, so adding it here would duplicate it.
 
     // First interaction → let the title agent name the workspace (background).
     if (!workspace.name && !nameRequested.current) {
@@ -221,28 +212,17 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
               Send a prompt to begin.
             </p>
           )}
-          {order.map((mid) => {
-            const m = messages[mid];
-            if (!m) return null;
-            return (
-              <div key={mid} className="flex flex-col gap-1">
-                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
-                  {m.role}
-                </div>
-                <div
-                  className={cn(
-                    "select-text text-sm",
-                    m.role === "user" &&
-                      "self-start rounded-lg border border-border bg-card px-3 py-2",
-                  )}
-                >
+            {order.map((mid) => {
+              const m = messages[mid];
+              if (!m) return null;
+              return (
+                <ChatMessage key={mid} role={m.role}>
                   {m.order.map((pid) => (
                     <PartView key={pid} part={m.partsById[pid]} />
                   ))}
-                </div>
-              </div>
-            );
-          })}
+                </ChatMessage>
+              );
+            })}
           {busy && <p className="text-xs text-muted-foreground">● working…</p>}
           {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
@@ -295,17 +275,4 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
   );
 }
 
-function PartView({ part }: { part: Part | undefined }) {
-  if (!part) return null;
-  if (part.type === "text") return <div className="whitespace-pre-wrap break-words">{part.text}</div>;
-  if (part.type === "reasoning")
-    return <div className="whitespace-pre-wrap italic text-muted-foreground">{part.text}</div>;
-  if (part.type === "tool")
-    return (
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Wrench className="size-3" /> {part.tool ?? "tool"}
-        {part.state?.status ? ` · ${part.state.status}` : ""}
-      </div>
-    );
-  return null;
-}
+
