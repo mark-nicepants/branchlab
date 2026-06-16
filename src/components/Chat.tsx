@@ -268,7 +268,7 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
-        <div className="mx-auto flex max-w-4xl flex-col gap-5 p-5">
+        <div className="mx-auto flex max-w-4xl flex-col gap-2 p-5">
           {workspace.base_branch && workspace.branch && (
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <GitBranch className="size-3.5" />

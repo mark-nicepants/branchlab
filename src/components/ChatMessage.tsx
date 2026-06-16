@@ -155,10 +155,10 @@ function ToolCallPart({ part }: { part: Part }) {
   const description = toolDescription(part);
 
   return (
-    <div className="my-1 w-full min-w-0 text-sm">
+    <div className="w-full min-w-0 text-sm">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="group flex w-full flex-col items-start py-1 text-left"
+        className="group flex w-full flex-col items-start py-0.5 text-left"
       >
         <div className="flex w-full items-center gap-2">
           <span className="shrink-0 font-medium">{label}</span>
