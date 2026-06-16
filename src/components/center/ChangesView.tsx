@@ -10,7 +10,8 @@ import {
 } from "lucide-react";
 import { discardFile, workspaceChanges, workspaceFileDiff } from "../../lib/api";
 import type { FileChange } from "../../lib/types";
-import { parseDiff, splitRows, type DiffHunk, type DiffLineType } from "@/lib/diff";
+import { parseDiff } from "@/lib/diff";
+import { UnifiedDiff, SplitDiff } from "../DiffBody";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -218,75 +219,7 @@ function DiffFile({
           )}
         </Button>
       </div>
-      {open && (view === "unified" ? <UnifiedBody hunks={hunks} /> : <SplitBody hunks={hunks} />)}
-    </div>
-  );
-}
-
-function bgFor(type: DiffLineType): string {
-  if (type === "add") return "bg-emerald-500/10";
-  if (type === "del") return "bg-red-500/10";
-  return "";
-}
-const sign = (t: DiffLineType) => (t === "add" ? "+" : t === "del" ? "−" : " ");
-
-const GUTTER = "w-10 shrink-0 select-none px-1 text-right text-muted-foreground/50";
-const CODE = "min-w-0 flex-1 select-text whitespace-pre-wrap break-words px-1";
-
-function UnifiedBody({ hunks }: { hunks: DiffHunk[] }) {
-  return (
-    <div className="font-mono text-[12px] leading-[1.5]">
-      {hunks.map((h, i) => (
-        <div key={i}>
-          <div className="bg-muted/40 px-2 py-0.5 text-sky-600 dark:text-sky-400">{h.header}</div>
-          {h.lines.map((l, j) => (
-            <div key={j} className={cn("flex", bgFor(l.type))}>
-              <span className={GUTTER}>{l.oldNo ?? ""}</span>
-              <span className={GUTTER}>{l.newNo ?? ""}</span>
-              <span className="w-4 shrink-0 select-none text-center text-muted-foreground/60">
-                {sign(l.type)}
-              </span>
-              <span className={CODE}>{l.text || " "}</span>
-            </div>
-          ))}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function SplitBody({ hunks }: { hunks: DiffHunk[] }) {
-  return (
-    <div className="font-mono text-[12px] leading-[1.5]">
-      {hunks.map((h, i) => (
-        <div key={i}>
-          <div className="bg-muted/40 px-2 py-0.5 text-sky-600 dark:text-sky-400">{h.header}</div>
-          {splitRows(h).map((r, j) => (
-            <div key={j} className="flex">
-              <SplitSide line={r.left} which="old" />
-              <span className="w-px shrink-0 bg-border" />
-              <SplitSide line={r.right} which="new" />
-            </div>
-          ))}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function SplitSide({
-  line,
-  which,
-}: {
-  line: import("@/lib/diff").DiffLine | null;
-  which: "old" | "new";
-}) {
-  if (!line) return <div className="flex-1 bg-muted/20" />;
-  const no = which === "old" ? line.oldNo : line.newNo;
-  return (
-    <div className={cn("flex min-w-0 flex-1", bgFor(line.type))}>
-      <span className={GUTTER}>{no ?? ""}</span>
-      <span className={CODE}>{line.text || " "}</span>
+      {open && (view === "unified" ? <UnifiedDiff hunks={hunks} /> : <SplitDiff hunks={hunks} />)}
     </div>
   );
 }

@@ -25,6 +25,15 @@ interface UiMessage {
   order: string[];
 }
 
+/** Two todo lists are equal when they have the same contents and statuses in order. */
+function sameTodoList(a: Todo[], b: Todo[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].content !== b[i].content || a[i].status !== b[i].status) return false;
+  }
+  return true;
+}
+
 /**
  * Minimal streaming chat for one workspace. Renders assistant text as it
  * streams over SSE; tool/reasoning parts get a one-line summary. On the first
@@ -47,6 +56,11 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
   // Image attachments pasted from the clipboard, sent alongside the next prompt.
   const [attachments, setAttachments] = useState<{ id: string; mime: string; url: string; filename: string }[]>([]);
   const [todos, setTodos] = useState<Todo[]>([]);
+  // Snapshot of a fully-completed todo list dismissed by the user starting a
+  // new turn. Polling hides this exact list until the assistant produces a
+  // different one (compared by content+status).
+  // Setter-only — the value is read inside the setter callback below.
+  const [, setDismissedTodos] = useState<Todo[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -100,11 +114,37 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
           null;
         setModel(initialModel);
 
+        // Restore the workspace's last reasoning-effort variant, if the model
+        // still supports it.
+        const savedVariant = prefs.workspaceVariants[workspace.id];
+        if (savedVariant && initialModel?.variants.includes(savedVariant)) {
+          setVariant(savedVariant);
+        }
+
         const history = await client.listMessages(session.id);
         if (cancelled) return;
+        // Build the message map directly from history so each message keeps
+        // its correct role. (Going through upsertPart would default every
+        // history message to "assistant".)
+        const loadedMessages: Record<string, UiMessage> = {};
+        const loadedOrder: string[] = [];
         for (const m of history) {
-          for (const p of m.parts) upsertPart({ ...p, messageID: m.info.id });
+          const ui: UiMessage = {
+            id: m.info.id,
+            role: m.info.role,
+            partsById: {},
+            order: [],
+          };
+          for (const p of m.parts) {
+            const part = { ...p, messageID: m.info.id };
+            ui.partsById[p.id] = part;
+            ui.order.push(p.id);
+          }
+          loadedMessages[m.info.id] = ui;
+          loadedOrder.push(m.info.id);
         }
+        setMessages(loadedMessages);
+        setOrder(loadedOrder);
 
         // Report context usage from the most recent assistant message in history.
         const lastAssistant = [...history].reverse().find((m) => m.info.role === "assistant");
@@ -171,7 +211,22 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
   useEffect(() => {
     if (!sessionId) return;
     const fetchTodos = () => {
-      client.listTodos(sessionId).then(setTodos).catch(() => {});
+      client
+        .listTodos(sessionId)
+        .then((list) => {
+          // If the polled list matches a previously-dismissed snapshot
+          // (everything completed when the user sent a new turn), keep it
+          // hidden until the assistant produces a different list.
+          setDismissedTodos((dismissed) => {
+            if (dismissed && sameTodoList(list, dismissed)) {
+              setTodos([]);
+              return dismissed;
+            }
+            setTodos(list);
+            return null;
+          });
+        })
+        .catch(() => {});
     };
     fetchTodos();
     const t = setInterval(fetchTodos, 2000);
@@ -190,6 +245,13 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
     setAttachments([]);
     setError(null);
     setBusy(true);
+
+    // If every current todo is completed, treat the new turn as a fresh start
+    // and hide them from the badge until the assistant produces a new list.
+    if (todos.length > 0 && todos.every((t) => t.status === "completed")) {
+      setDismissedTodos(todos);
+      setTodos([]);
+    }
 
     // Note: we do not optimistically render the user message. OpenCode echoes
     // it back via SSE as a real message, so adding it here would duplicate it.
@@ -261,8 +323,18 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
   // Persist the selected model per workspace.
   function changeModel(next: ModelOption) {
     setModel(next);
-    setVariant((v) => (v && next.variants.includes(v) ? v : null));
+    setVariant((v) => {
+      const keep = v && next.variants.includes(v) ? v : null;
+      setPref("workspaceVariants", { ...prefs.workspaceVariants, [workspace.id]: keep ?? "" });
+      return keep;
+    });
     setPref("workspaceModels", { ...prefs.workspaceModels, [workspace.id]: next.key });
+  }
+
+  // Persist the selected reasoning-effort variant per workspace.
+  function changeVariant(next: string | null) {
+    setVariant(next);
+    setPref("workspaceVariants", { ...prefs.workspaceVariants, [workspace.id]: next ?? "" });
   }
 
   return (
@@ -308,7 +380,7 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
             <ThinkingSelector
               variants={model?.variants ?? []}
               value={variant}
-              onChange={setVariant}
+              onChange={changeVariant}
             />
             <div className="ml-auto flex items-center gap-1">
               <TodoButton todos={todos} />

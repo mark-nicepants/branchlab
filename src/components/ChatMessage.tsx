@@ -4,14 +4,29 @@ import remarkGfm from "remark-gfm";
 import { useState } from "react";
 import type { Part, ToolState } from "../lib/types";
 import { cn } from "@/lib/utils";
+import { usePreferences, type ChatDensity } from "./PreferencesProvider";
+import { parseDiff } from "@/lib/diff";
+import { UnifiedDiff } from "./DiffBody";
 
 interface MessageProps {
   role: "user" | "assistant";
   children: React.ReactNode;
 }
 
+// Single source of truth for vertical spacing of message bubbles. Each density
+// pairs an assistant-bubble class with a user-bubble class so adjacent
+// messages always contribute uniform breathing room regardless of contents.
+// Add new modes here; everything else flows from prefs.chatDensity.
+const DENSITY: Record<ChatDensity, { assistant: string; user: string }> = {
+  tight: { assistant: "py-1", user: "my-1 py-2" },
+  loose: { assistant: "py-3", user: "my-3 py-2.5" },
+  roomy: { assistant: "py-5", user: "my-5 py-3" },
+};
+
 export function ChatMessage({ role, children }: MessageProps) {
+  const { prefs } = usePreferences();
   const isUser = role === "user";
+  const d = DENSITY[prefs.chatDensity] ?? DENSITY.loose;
   return (
     <div
       className={cn(
@@ -23,8 +38,8 @@ export function ChatMessage({ role, children }: MessageProps) {
         className={cn(
           "max-w-[85%] select-text text-sm",
           isUser
-            ? "my-2 self-start rounded-2xl rounded-tl-sm border border-border bg-card px-4 py-2.5"
-            : "w-full rounded-2xl rounded-tr-sm px-0 py-1.5 text-foreground",
+            ? cn("self-start rounded-2xl rounded-tl-sm border border-border bg-card px-4", d.user)
+            : cn("w-full rounded-2xl rounded-tr-sm px-0 text-foreground", d.assistant),
         )}
       >
         {children}
@@ -184,14 +199,62 @@ function ToolCallPart({ part }: { part: Part }) {
   );
 }
 
+// Synthesize a unified diff from raw old/new strings so the existing diff
+// renderer can display Edit/Write tool calls. No context lines — the whole
+// old block shows as `−` and the whole new block as `+`, which matches the
+// shape of an Edit's single-block replacement.
+function synthesizeDiff(oldText: string, newText: string): string {
+  const oldLines = oldText === "" ? [] : oldText.split("\n");
+  const newLines = newText === "" ? [] : newText.split("\n");
+  const header = `@@ -1,${oldLines.length} +1,${newLines.length} @@`;
+  const parts = [header];
+  if (oldLines.length) parts.push(oldLines.map((l) => `-${l}`).join("\n"));
+  if (newLines.length) parts.push(newLines.map((l) => `+${l}`).join("\n"));
+  return parts.join("\n");
+}
+
+function asString(v: unknown): string | undefined {
+  return typeof v === "string" ? v : undefined;
+}
+
 function ToolCallDetails({ part }: { part: Part }) {
   const state = part.state;
   if (!state) return null;
+  const input = state.input ?? {};
 
-  const inputEntries = state.input ? Object.entries(state.input) : [];
+  // Edit: show oldString → newString as a unified diff.
+  if (part.tool === "edit") {
+    const oldStr =
+      asString(input.oldString) ?? asString((input as Record<string, unknown>).old_string) ?? "";
+    const newStr =
+      asString(input.newString) ?? asString((input as Record<string, unknown>).new_string) ?? "";
+    if (oldStr || newStr) {
+      const hunks = parseDiff(synthesizeDiff(oldStr, newStr));
+      return (
+        <div className="overflow-hidden rounded border border-border">
+          <UnifiedDiff hunks={hunks} />
+        </div>
+      );
+    }
+  }
 
+  // Write: show the whole new file as additions.
+  if (part.tool === "write") {
+    const content = asString(input.content) ?? "";
+    if (content) {
+      const hunks = parseDiff(synthesizeDiff("", content));
+      return (
+        <div className="overflow-hidden rounded border border-border">
+          <UnifiedDiff hunks={hunks} />
+        </div>
+      );
+    }
+  }
+
+  // Generic fallback: input key/value table, then output / error / status.
+  const inputEntries = Object.entries(input);
   return (
-    <div className="border-t border-border px-3 py-2">
+    <div className="rounded border border-border px-3 py-2">
       {inputEntries.length > 0 && (
         <div className="mb-2 space-y-1">
           {inputEntries.map(([key, value]) => (
@@ -209,9 +272,7 @@ function ToolCallDetails({ part }: { part: Part }) {
           {state.output}
         </pre>
       )}
-      {state.error && (
-        <div className="mt-2 text-destructive">{state.error}</div>
-      )}
+      {state.error && <div className="mt-2 text-destructive">{state.error}</div>}
       {state.status && (
         <div className="mt-2 text-[11px] text-muted-foreground">Status: {state.status}</div>
       )}

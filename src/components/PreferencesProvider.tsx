@@ -11,16 +11,24 @@ export interface Preferences {
   disabledModels: string[];
   /** Last selected model key per workspace (`workspaceId` → `providerID/modelID`). */
   workspaceModels: Record<string, string>;
+  /** Last selected reasoning-effort variant per workspace (`workspaceId` → variant name, or "" for default). */
+  workspaceVariants: Record<string, string>;
   /** Collapsed state of project stats panels in the sidebar (project id → boolean). */
   collapsedProjects: Record<string, boolean>;
+  /** Vertical spacing density for chat messages. */
+  chatDensity: ChatDensity;
 }
+
+export type ChatDensity = "tight" | "loose" | "roomy";
 
 const DEFAULTS: Preferences = {
   terminalApp: "Terminal",
   editorApp: "Visual Studio Code",
   disabledModels: [],
   workspaceModels: {},
+  workspaceVariants: {},
   collapsedProjects: {},
+  chatDensity: "loose",
 };
 
 interface PrefsCtxValue {
