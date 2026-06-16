@@ -122,3 +122,16 @@ existing `read_file` / `workspace_files` commands as the template:
 - **Node version:** Vite 8 / Vitest 4 require Node 20.19+ or 22.12+ (Node 18 is
   unsupported — the build/test commands will fail on it). If `node -v` shows 18,
   use a newer Node (e.g. Homebrew `node@22`) on your `PATH`.
+
+## OpenCode API notes
+
+- **Model reasoning effort** is exposed per-model in `/config/providers` as the
+  `variants` object. Its keys (e.g. `low`, `medium`, `high`, `xhigh`, `max` for
+  Claude Opus 4.8) are sent to `/session/{id}/prompt_async` as the top-level
+  `variant` string. Omitting `variant` uses the model's default. Not all models
+  expose variants; render the selector only when `variants.length > 0` and
+  reset the selection when switching to a model that doesn't support it.
+- **Agents / modes** are listed by `/agent` but are not the same as the model's
+  reasoning effort. Avoid confusing the two in the UI.
+- **Model keys** are stable as `${providerID}/${modelID}`; persist these, not
+  display names, when remembering per-workspace settings.

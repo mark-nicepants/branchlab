@@ -45,19 +45,23 @@ export class OpencodeClient {
 
   /**
    * Send a user prompt. `model` is optional — omitting it uses the server's
-   * configured default. We use prompt_async and rely on the SSE stream for the
-   * assistant's reply, so the UI stays responsive while the agent works.
+   * configured default. `variant` selects the model's reasoning effort (e.g.
+   * "high"); omit it to use the model's default. We use prompt_async and rely
+   * on the SSE stream for the assistant's reply, so the UI stays responsive
+   * while the agent works.
    */
   async sendPrompt(
     sessionId: string,
     text: string,
     model?: { providerID: string; modelID: string },
+    variant?: string,
   ): Promise<void> {
     await this.json(`/session/${sessionId}/prompt_async`, {
       method: "POST",
       body: JSON.stringify({
         parts: [{ type: "text", text }],
         ...(model ? { model } : {}),
+        ...(variant ? { variant } : {}),
       }),
     });
   }
@@ -154,7 +158,15 @@ export class OpencodeClient {
       providers: {
         id: string;
         name?: string;
-        models: Record<string, { name?: string; limit?: { context?: number } }>;
+        models: Record<
+          string,
+          {
+            name?: string;
+            limit?: { context?: number };
+            // Reasoning-effort variants, keyed by name (e.g. "low", "high").
+            variants?: Record<string, unknown>;
+          }
+        >;
       }[];
       default: Record<string, string>;
     }>("/config/providers");
@@ -169,6 +181,7 @@ export class OpencodeClient {
           modelID,
           name: info.name ?? modelID,
           contextLimit: info.limit?.context,
+          variants: info.variants ? Object.keys(info.variants) : [],
         });
       }
     }

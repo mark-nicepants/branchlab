@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, GitBranch, Plus, Square, Wrench } from "lucide-react";
+import { ArrowUp, GitBranch, Square, Wrench } from "lucide-react";
 import { OpencodeClient } from "../lib/opencode";
 import type { BusEvent, ContextInfo, ModelOption, Part, Workspace } from "../lib/types";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ModelSelector } from "./ModelSelector";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { ThinkingSelector } from "./ThinkingSelector";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -35,6 +35,8 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
   const [order, setOrder] = useState<string[]>([]);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [model, setModel] = useState<ModelOption | null>(null);
+  // Selected reasoning effort for the active model; null = the model's default.
+  const [variant, setVariant] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -171,7 +173,7 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
     }
 
     try {
-      await client.sendPrompt(sessionId, text, model ?? undefined);
+      await client.sendPrompt(sessionId, text, model ?? undefined, variant ?? undefined);
     } catch (e) {
       setError(String(e));
       setBusy(false);
@@ -181,6 +183,12 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
   async function abort() {
     if (sessionId) await client.abort(sessionId).catch(() => {});
     setBusy(false);
+  }
+
+  // Switch model and drop the reasoning effort if the new model can't honor it.
+  function changeModel(next: ModelOption) {
+    setModel(next);
+    setVariant((v) => (v && next.variants.includes(v) ? v : null));
   }
 
   return (
@@ -232,15 +240,12 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
         <div className="mx-auto max-w-4xl rounded-xl border border-border bg-card focus-within:border-muted-foreground/40">
           {/* Controls on top (Polyscope-style), composer below. */}
           <div className="flex items-center gap-1.5 px-2 py-1.5">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" className="size-6 text-muted-foreground" disabled>
-                  <Plus className="size-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Attach (soon)</TooltipContent>
-            </Tooltip>
-            <ModelSelector models={models} value={model} onChange={setModel} />
+            <ModelSelector models={models} value={model} onChange={changeModel} />
+            <ThinkingSelector
+              variants={model?.variants ?? []}
+              value={variant}
+              onChange={setVariant}
+            />
             <div className="ml-auto">
               {busy ? (
                 <Button variant="destructive" size="icon" className="size-7" onClick={() => void abort()}>
