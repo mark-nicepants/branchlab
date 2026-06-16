@@ -13,14 +13,16 @@ interface MessageProps {
   children: React.ReactNode;
 }
 
-// Single source of truth for vertical spacing of message bubbles. Each density
-// pairs an assistant-bubble class with a user-bubble class so adjacent
-// messages always contribute uniform breathing room regardless of contents.
-// Add new modes here; everything else flows from prefs.chatDensity.
-const DENSITY: Record<ChatDensity, { assistant: string; user: string }> = {
-  tight: { assistant: "py-1", user: "my-1 py-2" },
-  loose: { assistant: "py-3", user: "my-3 py-2.5" },
-  roomy: { assistant: "py-5", user: "my-5 py-3" },
+// Single source of truth for vertical spacing. Each density supplies:
+//  - assistant: padding for an assistant bubble (between-message spacing).
+//  - user: margin + padding for a user bubble (between-message spacing).
+//  - gap: spacing between parts WITHIN one message (text/reasoning/tool/file).
+// Everything else flows from prefs.chatDensity; individual parts must not add
+// their own vertical margins or they'll double up.
+const DENSITY: Record<ChatDensity, { assistant: string; user: string; gap: string }> = {
+  tight: { assistant: "py-1", user: "my-1 py-2", gap: "gap-1" },
+  loose: { assistant: "py-3", user: "my-3 py-2.5", gap: "gap-2" },
+  roomy: { assistant: "py-5", user: "my-5 py-3", gap: "gap-3" },
 };
 
 export function ChatMessage({ role, children }: MessageProps) {
@@ -36,7 +38,8 @@ export function ChatMessage({ role, children }: MessageProps) {
     >
       <div
         className={cn(
-          "max-w-[85%] select-text text-sm",
+          "flex max-w-[85%] flex-col select-text text-sm",
+          d.gap,
           isUser
             ? cn("self-start rounded-2xl rounded-tl-sm border border-border bg-card px-4", d.user)
             : cn("w-full rounded-2xl rounded-tr-sm px-0 text-foreground", d.assistant),
@@ -62,7 +65,7 @@ export function PartView({ part }: PartViewProps) {
   }
   if (part.type === "reasoning") {
     return (
-      <div className="my-1 text-xs italic text-muted-foreground">
+      <div className="text-xs italic text-muted-foreground">
         {part.text}
       </div>
     );
@@ -85,7 +88,7 @@ function FilePart({ filename, url, mime }: { filename?: string; url?: string; mi
       <>
         <button
           onClick={() => setOpen(true)}
-          className="my-1 block h-[100px] w-[100px] overflow-hidden rounded-md border border-border bg-muted hover:ring-2 hover:ring-primary/50"
+          className="block h-[100px] w-[100px] overflow-hidden rounded-md border border-border bg-muted hover:ring-2 hover:ring-primary/50"
         >
           <img
             src={url}
@@ -120,7 +123,7 @@ function FilePart({ filename, url, mime }: { filename?: string; url?: string; mi
   }
 
   return (
-    <div className="my-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
       <span>📎</span>
       <span className="truncate">{filename ?? url ?? "file"}</span>
     </div>
