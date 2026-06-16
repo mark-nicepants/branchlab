@@ -149,6 +149,26 @@ export interface ToolState {
   raw?: string;
   /** Timing metadata. */
   time?: { start?: number; end?: number };
+  /**
+   * Tool-specific extras. Edit/Write set:
+   *  - `diff`: full unified diff of the change (use over synthesized diffs).
+   *  - `diagnostics`: { [absPath]: LspDiagnostic[] } LSP results post-edit.
+   *  - `filediff`: `{ file, patch }`, `truncated`: boolean.
+   */
+  metadata?: Record<string, unknown>;
+}
+
+/** Subset of an LSP Diagnostic we render. */
+export interface LspDiagnostic {
+  range: {
+    start: { line: number; character: number };
+    end: { line: number; character: number };
+  };
+  /** LSP severity: 1=error, 2=warning, 3=info, 4=hint. */
+  severity?: 1 | 2 | 3 | 4;
+  message: string;
+  source?: string;
+  code?: string | number;
 }
 
 export interface MessageWithParts {

@@ -2,7 +2,7 @@ import { ChevronRight, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useState } from "react";
-import type { Part, ToolState } from "../lib/types";
+import type { LspDiagnostic, Part, ToolState } from "../lib/types";
 import { cn } from "@/lib/utils";
 import { usePreferences, type ChatDensity } from "./PreferencesProvider";
 import { parseDiff } from "@/lib/diff";
@@ -199,10 +199,8 @@ function ToolCallPart({ part }: { part: Part }) {
   );
 }
 
-// Synthesize a unified diff from raw old/new strings so the existing diff
-// renderer can display Edit/Write tool calls. No context lines — the whole
-// old block shows as `−` and the whole new block as `+`, which matches the
-// shape of an Edit's single-block replacement.
+// Synthesize a unified diff from raw old/new strings, used as a fallback when
+// the tool's metadata.diff isn't available yet (e.g. while running).
 function synthesizeDiff(oldText: string, newText: string): string {
   const oldLines = oldText === "" ? [] : oldText.split("\n");
   const newLines = newText === "" ? [] : newText.split("\n");
@@ -217,38 +215,82 @@ function asString(v: unknown): string | undefined {
   return typeof v === "string" ? v : undefined;
 }
 
+/** Flatten the per-file diagnostics map into a list with relative paths. */
+function collectDiagnostics(
+  metadata: Record<string, unknown> | undefined,
+): { path: string; diag: LspDiagnostic }[] {
+  const raw = metadata?.diagnostics;
+  if (!raw || typeof raw !== "object") return [];
+  const out: { path: string; diag: LspDiagnostic }[] = [];
+  for (const [path, list] of Object.entries(raw as Record<string, unknown>)) {
+    if (!Array.isArray(list)) continue;
+    for (const d of list as LspDiagnostic[]) out.push({ path, diag: d });
+  }
+  return out;
+}
+
+function severityLabel(s?: number): string {
+  if (s === 1) return "ERROR";
+  if (s === 2) return "WARN";
+  if (s === 3) return "INFO";
+  if (s === 4) return "HINT";
+  return "MSG";
+}
+
 function ToolCallDetails({ part }: { part: Part }) {
   const state = part.state;
   if (!state) return null;
   const input = state.input ?? {};
+  const metadata = state.metadata;
 
-  // Edit: show oldString → newString as a unified diff.
-  if (part.tool === "edit") {
-    const oldStr =
-      asString(input.oldString) ?? asString((input as Record<string, unknown>).old_string) ?? "";
-    const newStr =
-      asString(input.newString) ?? asString((input as Record<string, unknown>).new_string) ?? "";
-    if (oldStr || newStr) {
-      const hunks = parseDiff(synthesizeDiff(oldStr, newStr));
-      return (
-        <div className="overflow-hidden rounded border border-border">
-          <UnifiedDiff hunks={hunks} />
-        </div>
-      );
+  // Edit/Write: render the real unified diff from metadata (preferred), or a
+  // synthesized one as a fallback. LSP diagnostics from the post-edit run
+  // appear in a red callout below the diff when present.
+  if (part.tool === "edit" || part.tool === "write") {
+    const realDiff = asString(metadata?.diff);
+    let diff = realDiff;
+    if (!diff) {
+      if (part.tool === "edit") {
+        const oldStr =
+          asString(input.oldString) ?? asString((input as Record<string, unknown>).old_string) ?? "";
+        const newStr =
+          asString(input.newString) ?? asString((input as Record<string, unknown>).new_string) ?? "";
+        if (oldStr || newStr) diff = synthesizeDiff(oldStr, newStr);
+      } else {
+        const content = asString(input.content) ?? "";
+        if (content) diff = synthesizeDiff("", content);
+      }
     }
-  }
+    const diagnostics = collectDiagnostics(metadata);
 
-  // Write: show the whole new file as additions.
-  if (part.tool === "write") {
-    const content = asString(input.content) ?? "";
-    if (content) {
-      const hunks = parseDiff(synthesizeDiff("", content));
-      return (
-        <div className="overflow-hidden rounded border border-border">
-          <UnifiedDiff hunks={hunks} />
-        </div>
-      );
-    }
+    return (
+      <div className="overflow-hidden rounded border border-border">
+        {diff && <UnifiedDiff hunks={parseDiff(diff)} />}
+        {diagnostics.length > 0 && (
+          <div className="border-t border-destructive/30 bg-destructive/10 p-2 font-mono text-[12px] leading-[1.5]">
+            {diagnostics.map(({ path, diag }, i) => (
+              <div key={i} className="text-destructive">
+                <span className="font-semibold">{severityLabel(diag.severity)}</span>{" "}
+                <span>
+                  [{diag.range.start.line + 1}:{diag.range.start.character + 1}]
+                </span>{" "}
+                <span className="text-foreground/90">{diag.message}</span>
+                {diag.source && (
+                  <span className="ml-1 text-muted-foreground">({diag.source})</span>
+                )}
+                {/* Path footnote when diagnostics span multiple files. */}
+                {diagnostics.some((d) => d.path !== path) && (
+                  <div className="pl-4 text-[11px] text-muted-foreground">{path}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        {state.error && (
+          <div className="border-t border-border p-2 text-destructive">{state.error}</div>
+        )}
+      </div>
+    );
   }
 
   // Generic fallback: input key/value table, then output / error / status.
