@@ -11,6 +11,11 @@ export const THEMES: ThemeDef[] = [
   { id: "one-dark", label: "One Dark", group: "Dark" },
   { id: "tokyo-night", label: "Tokyo Night", group: "Dark" },
   { id: "catppuccin-mocha", label: "Catppuccin Mocha", group: "Dark" },
+  { id: "dracula", label: "Dracula", group: "Dark" },
+  { id: "nord", label: "Nord", group: "Dark" },
+  { id: "github-dark", label: "GitHub Dark", group: "Dark" },
+  { id: "gruvbox-dark", label: "Gruvbox Dark", group: "Dark" },
+  { id: "rose-pine", label: "Rosé Pine", group: "Dark" },
   { id: "light", label: "Light", group: "Light" },
 ];
 
