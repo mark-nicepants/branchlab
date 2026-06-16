@@ -59,11 +59,18 @@ export class OpencodeClient {
     model?: { providerID: string; modelID: string },
     variant?: string,
     agent?: string,
+    attachments?: { mime: string; url: string; filename?: string }[],
   ): Promise<void> {
+    const fileParts = (attachments ?? []).map((a) => ({
+      type: "file" as const,
+      mime: a.mime,
+      url: a.url,
+      ...(a.filename ? { filename: a.filename } : {}),
+    }));
     await this.json(`/session/${sessionId}/prompt_async`, {
       method: "POST",
       body: JSON.stringify({
-        parts: [{ type: "text", text }],
+        parts: [...fileParts, ...(text ? [{ type: "text", text }] : [])],
         ...(model ? { model } : {}),
         ...(variant ? { variant } : {}),
         ...(agent ? { agent } : {}),

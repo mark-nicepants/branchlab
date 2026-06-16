@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, GitBranch, Square } from "lucide-react";
+import { ArrowUp, GitBranch, Square, X } from "lucide-react";
 import { OpencodeClient } from "../lib/opencode";
 import type { BusEvent, ContextInfo, ModelOption, Part, Todo, Workspace } from "../lib/types";
 import { Button } from "@/components/ui/button";
@@ -44,6 +44,8 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
   // Selected OpenCode agent/mode; only "build" or "plan".
   const [agent, setAgent] = useState<string>("build");
   const [input, setInput] = useState("");
+  // Image attachments pasted from the clipboard, sent alongside the next prompt.
+  const [attachments, setAttachments] = useState<{ id: string; mime: string; url: string; filename: string }[]>([]);
   const [todos, setTodos] = useState<Todo[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -182,8 +184,10 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
 
   async function send() {
     const text = input.trim();
-    if (!text || !sessionId || busy) return;
+    if ((!text && attachments.length === 0) || !sessionId || busy) return;
+    const sentAttachments = attachments;
     setInput("");
+    setAttachments([]);
     setError(null);
     setBusy(true);
 
@@ -191,7 +195,7 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
     // it back via SSE as a real message, so adding it here would duplicate it.
 
     // First interaction → let the title agent name the workspace (background).
-    if (!workspace.name && !nameRequested.current) {
+    if (!workspace.name && text && !nameRequested.current) {
       nameRequested.current = true;
       void client
         .generateName(text, model ?? undefined)
@@ -199,11 +203,53 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
     }
 
     try {
-      await client.sendPrompt(sessionId, text, model ?? undefined, variant ?? undefined, agent);
+      await client.sendPrompt(
+        sessionId,
+        text,
+        model ?? undefined,
+        variant ?? undefined,
+        agent,
+        sentAttachments.map((a) => ({ mime: a.mime, url: a.url, filename: a.filename })),
+      );
     } catch (e) {
       setError(String(e));
       setBusy(false);
     }
+  }
+
+  // Intercept image items from the clipboard. Each item is read as a data URL
+  // (a base64-encoded image inline), which is what opencode's FilePartInput
+  // expects for the `url` field. Non-image clipboard contents fall through to
+  // the textarea's default paste behavior (text).
+  function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const items = Array.from(e.clipboardData?.items ?? []).filter((it) =>
+      it.type.startsWith("image/"),
+    );
+    if (items.length === 0) return;
+    e.preventDefault();
+    for (const item of items) {
+      const blob = item.getAsFile();
+      if (!blob) continue;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const url = reader.result as string;
+        const ext = blob.type.split("/")[1] ?? "png";
+        setAttachments((prev) => [
+          ...prev,
+          {
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            mime: blob.type,
+            url,
+            filename: blob.name || `pasted-${Date.now()}.${ext}`,
+          },
+        ]);
+      };
+      reader.readAsDataURL(blob);
+    }
+  }
+
+  function removeAttachment(id: string) {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
   }
 
   async function abort() {
@@ -276,23 +322,45 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
                   variant="ghost"
                   className="size-7 text-primary hover:bg-primary/10 disabled:text-muted-foreground/40 disabled:hover:bg-transparent"
                   onClick={() => void send()}
-                  disabled={!input.trim() || !sessionId}
+                  disabled={(!input.trim() && attachments.length === 0) || !sessionId}
                 >
                   <ArrowUp className="size-4" />
                 </Button>
               )}
             </div>
           </div>
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2 px-2 pb-1.5">
+              {attachments.map((a) => (
+                <div key={a.id} className="group relative">
+                  <img
+                    src={a.url}
+                    alt={a.filename}
+                    className="size-16 rounded border border-border object-cover"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeAttachment(a.id)}
+                    className="absolute -right-1.5 -top-1.5 flex size-4 items-center justify-center rounded-full border border-border bg-background text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+                    aria-label="Remove attachment"
+                  >
+                    <X className="size-2.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <Textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onPaste={handlePaste}
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
                 void send();
               }
             }}
-            placeholder="Ask the agent…  (⌘/Ctrl+Enter to send)"
+            placeholder="Ask the agent…  (⌘/Ctrl+Enter to send, paste images to attach)"
             className="min-h-[80px] resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
           />
         </div>
