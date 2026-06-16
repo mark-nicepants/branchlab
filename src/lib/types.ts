@@ -126,6 +126,8 @@ export interface Part {
   filename?: string;
   /** URL/path for file parts. */
   url?: string;
+  /** MIME type for file parts. */
+  mime?: string;
   /** Description for subtask parts. */
   description?: string;
   /** Agent name for subtask parts. */

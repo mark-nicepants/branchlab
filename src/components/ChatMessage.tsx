@@ -1,7 +1,7 @@
-import { useState } from "react";
-import { ChevronRight, Loader2 } from "lucide-react";
+import { ChevronRight, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useState } from "react";
 import type { Part, ToolState } from "../lib/types";
 import { cn } from "@/lib/utils";
 
@@ -40,14 +40,14 @@ interface PartViewProps {
 export function PartView({ part }: PartViewProps) {
   if (part.type === "text") {
     return (
-      <div className="markdown-content pl-9">
+      <div className="markdown-content">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{part.text || ""}</ReactMarkdown>
       </div>
     );
   }
   if (part.type === "reasoning") {
     return (
-      <div className="my-1 pl-9 text-xs italic text-muted-foreground">
+      <div className="my-1 text-xs italic text-muted-foreground">
         {part.text}
       </div>
     );
@@ -56,15 +56,58 @@ export function PartView({ part }: PartViewProps) {
     return <ToolCallPart part={part} />;
   }
   if (part.type === "file") {
-    return <FilePart filename={part.filename} url={part.url} />;
+    return <FilePart filename={part.filename} url={part.url} mime={part.mime} />;
   }
   return null;
 }
 
-function FilePart({ filename, url }: { filename?: string; url?: string }) {
+function FilePart({ filename, url, mime }: { filename?: string; url?: string; mime?: string }) {
+  const isImage = mime?.startsWith("image/") ?? false;
+  const [open, setOpen] = useState(false);
+
+  if (isImage && url) {
+    return (
+      <>
+        <button
+          onClick={() => setOpen(true)}
+          className="my-1 block h-[100px] w-[100px] overflow-hidden rounded-md border border-border bg-muted hover:ring-2 hover:ring-primary/50"
+        >
+          <img
+            src={url}
+            alt={filename ?? "image"}
+            className="h-full w-full object-cover"
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen(true);
+            }}
+          />
+        </button>
+        {open && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+            onClick={() => setOpen(false)}
+          >
+            <button
+              onClick={() => setOpen(false)}
+              className="absolute top-4 right-4 rounded-full bg-background/80 p-2 text-foreground hover:bg-background"
+            >
+              <X className="size-5" />
+            </button>
+            <img
+              src={url}
+              alt={filename ?? "image"}
+              className="max-h-full max-w-full rounded-md object-contain"
+            />
+          </div>
+        )}
+      </>
+    );
+  }
+
   return (
-    <div className="my-1 text-xs text-muted-foreground">
-      📎 {filename ?? url ?? "file"}
+    <div className="my-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+      <span>📎</span>
+      <span className="truncate">{filename ?? url ?? "file"}</span>
     </div>
   );
 }
@@ -115,26 +158,26 @@ function ToolCallPart({ part }: { part: Part }) {
     <div className="my-1 w-full min-w-0 text-sm">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="group flex w-full items-center gap-0 py-1 text-left"
+        className="group flex w-full flex-col items-start py-1 text-left"
       >
-        <span className="flex w-9 items-center justify-center">
-          {pending ? (
-            <Loader2 className="size-4 animate-spin text-muted-foreground" />
-          ) : (
-            <span className="size-4" />
+        <div className="flex w-full items-center gap-2">
+          <span className="shrink-0 font-medium">{label}</span>
+          {description && (
+            <span className="min-w-0 truncate text-muted-foreground">{description}</span>
           )}
-        </span>
-        <span className="shrink-0 font-medium">{label}</span>
-        {description && (
-          <span className="min-w-0 truncate pl-2 text-muted-foreground">{description}</span>
+          <span className="ml-auto shrink-0 opacity-0 transition-opacity group-hover:opacity-100">
+            {open ? (
+              <ChevronRight className="size-4 rotate-90 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="size-4 text-muted-foreground" />
+            )}
+          </span>
+        </div>
+        {pending && (
+          <div className="mt-1 h-0.5 w-full overflow-hidden rounded-full bg-muted">
+            <div className="h-full w-1/3 animate-[shimmer_1s_infinite] bg-primary/70" />
+          </div>
         )}
-        <span className="ml-auto shrink-0 opacity-0 transition-opacity group-hover:opacity-100">
-          {open ? (
-            <ChevronRight className="size-4 rotate-90 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="size-4 text-muted-foreground" />
-          )}
-        </span>
       </button>
       {open && <ToolCallDetails part={part} />}
     </div>
