@@ -19,10 +19,14 @@ interface MessageProps {
 //  - gap: spacing between parts WITHIN one message (text/reasoning/tool/file).
 // Everything else flows from prefs.chatDensity; individual parts must not add
 // their own vertical margins or they'll double up.
+// `gap` is set to 2× the bubble's py so spacing between parts inside one
+// message matches the spacing between two adjacent messages (where each side
+// contributes its py). That keeps the rhythm visually uniform regardless of
+// whether the next item is in the same message or a new one.
 const DENSITY: Record<ChatDensity, { assistant: string; user: string; gap: string }> = {
-  tight: { assistant: "py-1", user: "my-1 py-2", gap: "gap-1" },
-  loose: { assistant: "py-3", user: "my-3 py-2.5", gap: "gap-2" },
-  roomy: { assistant: "py-5", user: "my-5 py-3", gap: "gap-3" },
+  tight: { assistant: "py-1", user: "my-1 py-2", gap: "gap-2" },
+  loose: { assistant: "py-3", user: "my-3 py-2.5", gap: "gap-6" },
+  roomy: { assistant: "py-5", user: "my-5 py-3", gap: "gap-10" },
 };
 
 export function ChatMessage({ role, children }: MessageProps) {

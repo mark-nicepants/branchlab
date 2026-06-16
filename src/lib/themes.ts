@@ -17,6 +17,10 @@ export const THEMES: ThemeDef[] = [
   { id: "gruvbox-dark", label: "Gruvbox Dark", group: "Dark" },
   { id: "rose-pine", label: "Rosé Pine", group: "Dark" },
   { id: "light", label: "Light", group: "Light" },
+  { id: "github-light", label: "GitHub Light", group: "Light" },
+  { id: "solarized-light", label: "Solarized Light", group: "Light" },
+  { id: "catppuccin-latte", label: "Catppuccin Latte", group: "Light" },
+  { id: "rose-pine-dawn", label: "Rosé Pine Dawn", group: "Light" },
 ];
 
 export const DEFAULT_THEME = "default-dark";
