@@ -23,8 +23,8 @@ export function ChatMessage({ role, children }: MessageProps) {
         className={cn(
           "max-w-[85%] select-text text-sm",
           isUser
-            ? "self-start rounded-2xl rounded-tl-sm border border-border bg-card px-4 py-2.5"
-            : "w-full rounded-2xl rounded-tr-sm px-0 py-1 text-foreground",
+            ? "my-2 self-start rounded-2xl rounded-tl-sm border border-border bg-card px-4 py-2.5"
+            : "w-full rounded-2xl rounded-tr-sm px-0 py-1.5 text-foreground",
         )}
       >
         {children}
