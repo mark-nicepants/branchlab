@@ -11,6 +11,7 @@ import {
   MoreVertical,
   Pencil,
   Plus,
+  Settings,
   Terminal,
   Trash2,
 } from "lucide-react";
@@ -63,6 +64,7 @@ interface Props {
   onQuickCreate: (project: ProjectView) => void;
   onNewFromBranch: (project: ProjectView) => void;
   onAddProject: () => void;
+  onOpenSettings: (project: ProjectView) => void;
 }
 
 export function Sidebar({
@@ -74,6 +76,7 @@ export function Sidebar({
   onQuickCreate,
   onNewFromBranch,
   onAddProject,
+  onOpenSettings,
 }: Props) {
   const { prefs, setPref } = usePreferences();
   const [renaming, setRenaming] = useState<Workspace | null>(null);
@@ -213,6 +216,9 @@ export function Sidebar({
                           </DropdownMenuItem>
                         </DropdownMenuSubContent>
                       </DropdownMenuSub>
+                      <DropdownMenuItem onClick={() => onOpenSettings(p)}>
+                        <Settings className="size-4" /> Project settings
+                      </DropdownMenuItem>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem
                         variant="destructive"

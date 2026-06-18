@@ -25,6 +25,7 @@ import { Sidebar } from "./components/Sidebar";
 import { WorkspaceView, type CenterTab } from "./components/WorkspaceView";
 import { FleetDashboard } from "./components/FleetDashboard";
 import { NewWorkspaceModal } from "./components/NewWorkspaceModal";
+import { ProjectSettingsDialog } from "./components/ProjectSettingsDialog";
 import { StatusBar } from "./components/StatusBar";
 import { Titlebar } from "./components/layout/Titlebar";
 import { ChangesPanel } from "./components/layout/ChangesPanel";
@@ -50,6 +51,7 @@ function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [branchModalProject, setBranchModalProject] = useState<ProjectView | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsProject, setSettingsProject] = useState<ProjectView | null>(null);
   const [centerTab, setCenterTab] = useState<CenterTab>("activity");
   const [focusedFile, setFocusedFile] = useState<string | null>(null);
   const [viewerFile, setViewerFile] = useState<string | null>(null);
@@ -255,6 +257,7 @@ function App() {
             onQuickCreate={(p) => void quickCreate(p)}
             onNewFromBranch={setBranchModalProject}
             onAddProject={() => void pickProject()}
+            onOpenSettings={setSettingsProject}
           />
         </ResizablePanel>
 
@@ -262,10 +265,11 @@ function App() {
 
         <ResizablePanel id="center" minSize="30%">
           <main className="h-full min-w-0 overflow-hidden">
-            {selected ? (
+            {selected && selectedProject ? (
               <WorkspaceView
                 key={selected.id}
                 workspace={selected}
+                project={selectedProject}
                 onRenamed={onRenamed}
                 tab={centerTab}
                 onTabChange={setCenterTab}
@@ -319,7 +323,6 @@ function App() {
         workspace={selected}
         context={context}
         opencodeVersion={phase.env.opencode.version}
-        onConfigRestarted={() => setReloadNonce((n) => n + 1)}
       />
 
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
@@ -328,6 +331,19 @@ function App() {
           project={branchModalProject}
           onClose={() => setBranchModalProject(null)}
           onCreated={(ws) => void onWorkspaceCreated(ws)}
+        />
+      )}
+      {settingsProject && (
+        <ProjectSettingsDialog
+          project={settingsProject}
+          open
+          onOpenChange={(open) => !open && setSettingsProject(null)}
+          onUpdated={(updated) => {
+            setProjects((prev) => prev.map((p) => (p.id === updated.id ? { ...updated, workspaces: p.workspaces } : p)));
+            setSettingsProject((current) => (current?.id === updated.id ? { ...updated, workspaces: current.workspaces } : current));
+          }}
+          workspaceId={selected?.id ?? settingsProject.workspaces[0]?.id ?? ""}
+          onConfigRestarted={() => setReloadNonce((n) => n + 1)}
         />
       )}
     </div>

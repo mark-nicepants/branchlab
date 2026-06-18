@@ -23,6 +23,8 @@ export interface Workspace {
   name: string | null;
   /** Branch this workspace was forked from (for the "Branched X from Y" line). */
   base_branch: string | null;
+  /** Prompt sent to the AI once the workspace server is ready. */
+  init_prompt: string | null;
 }
 
 /** Human label for a workspace: explicit name, else branch, else a fallback. */
@@ -35,6 +37,23 @@ export interface Project {
   name: string;
   root_path: string;
   default_branch: string | null;
+  default_model_key: string | null;
+  prompts: ProjectPrompts;
+}
+
+export interface ProjectPrompts {
+  init_workspace: string | null;
+  commit: string | null;
+  merge: string | null;
+  push: string | null;
+  create_pr: string | null;
+}
+
+export interface ProjectUpdate {
+  name?: string;
+  default_branch?: string;
+  default_model_key?: string | null;
+  prompts?: ProjectPrompts;
 }
 
 // `ProjectView` flattens Project fields + a workspaces array.
@@ -46,6 +65,29 @@ export interface ServerInfo {
   workspace_id: string;
   base_url: string;
   port: number;
+}
+
+export interface RemoteInfo {
+  name: string;
+  url: string;
+}
+
+export interface MergeResult {
+  branch: string;
+  base: string;
+  summary: string;
+}
+
+export interface PushResult {
+  branch: string;
+  remote: string;
+  output: string;
+}
+
+export interface PrResult {
+  branch: string;
+  base: string;
+  url: string;
 }
 
 export interface DiffStat {

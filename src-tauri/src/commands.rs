@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use tauri::State;
 
 use crate::config::{self, ConfigFile};
-use crate::git::{self, DiffStat, FileChange, FileContent};
+use crate::git::{self, DiffStat, FileChange, FileContent, RemoteInfo};
 use crate::project::{ProjectView, Registry, Workspace};
 use crate::server::{ServerInfo, ServerManager};
 
@@ -35,9 +35,27 @@ pub fn list_branches(project_id: String, registry: State<Registry>) -> Result<Ve
 pub fn create_workspace(
     project_id: String,
     base: Option<String>,
+    init_prompt: Option<String>,
     registry: State<Registry>,
 ) -> Result<Workspace, String> {
-    registry.create_workspace(&project_id, base)
+    registry.create_workspace(&project_id, base, init_prompt)
+}
+
+#[tauri::command]
+pub fn update_project(
+    project_id: String,
+    update: crate::project::ProjectUpdate,
+    registry: State<Registry>,
+) -> Result<ProjectView, String> {
+    registry.update_project(&project_id, update)
+}
+
+#[tauri::command]
+pub fn get_project_prompts(
+    project_id: String,
+    registry: State<Registry>,
+) -> Result<crate::project::ProjectPrompts, String> {
+    registry.prompts(&project_id)
 }
 
 /// Remove a worktree workspace: stop its server first, then remove the worktree.
@@ -115,6 +133,80 @@ pub fn read_file(workspace_id: String, file: String, registry: State<Registry>) 
 pub fn discard_file(workspace_id: String, file: String, registry: State<Registry>) -> Result<(), String> {
     let repo = registry.workspace_path(&workspace_id).ok_or("unknown workspace")?;
     git::discard_file(&repo, &file)
+}
+
+// ── Workspace lifecycle: commit, merge, push, PR ──
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MergeResult {
+    pub branch: String,
+    pub base: String,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PushResult {
+    pub branch: String,
+    pub remote: String,
+    pub output: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PrResult {
+    pub branch: String,
+    pub base: String,
+    pub url: String,
+}
+
+fn resolve_workspace_branch(
+    registry: &Registry,
+    workspace_id: &str,
+) -> Result<(Workspace, String, String, String), String> {
+    let (ws, root) = registry.workspace_with_root(workspace_id).ok_or("unknown workspace")?;
+    let branch = ws.branch.clone().ok_or("workspace has no branch")?;
+    let base = ws.base_branch.clone().unwrap_or_else(|| "main".to_string());
+    Ok((ws, root, branch, base))
+}
+
+/// Commit all changes in the workspace. Fails if there is nothing staged.
+#[tauri::command]
+pub fn commit_workspace(workspace_id: String, message: String, registry: State<Registry>) -> Result<String, String> {
+    let path = registry.workspace_path(&workspace_id).ok_or("unknown workspace")?;
+    git::commit_all(&path, &message)
+}
+
+/// Merge the workspace branch into its base branch in the parent repo.
+#[tauri::command]
+pub fn merge_workspace(workspace_id: String, registry: State<Registry>) -> Result<MergeResult, String> {
+    let (_ws, root, branch, base) = resolve_workspace_branch(&registry, &workspace_id)?;
+    let summary = git::merge_into_base(&root, &branch, &base)?;
+    Ok(MergeResult { branch, base, summary })
+}
+
+/// Push the workspace branch to `origin`.
+#[tauri::command]
+pub fn push_workspace(workspace_id: String, registry: State<Registry>) -> Result<PushResult, String> {
+    let (_ws, root, branch, _base) = resolve_workspace_branch(&registry, &workspace_id)?;
+    git::push_branch(&root, "origin", &branch).map(|output| PushResult { branch, remote: "origin".to_string(), output })
+}
+
+/// Push the branch and open a GitHub PR. Uses `gh`; must be installed and authenticated.
+#[tauri::command]
+pub fn create_workspace_pr(
+    workspace_id: String,
+    title: String,
+    body: String,
+    registry: State<Registry>,
+) -> Result<PrResult, String> {
+    let (_ws, root, branch, base) = resolve_workspace_branch(&registry, &workspace_id)?;
+    let url = git::create_pull_request(&root, &branch, &base, &title, &body)?;
+    Ok(PrResult { branch, base, url })
+}
+
+#[tauri::command]
+pub fn list_remotes(workspace_id: String, registry: State<Registry>) -> Result<Vec<RemoteInfo>, String> {
+    let root = registry.workspace_project_root(&workspace_id).ok_or("unknown workspace")?;
+    git::list_remotes(&root)
 }
 
 #[tauri::command]

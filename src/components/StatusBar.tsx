@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { Cog } from "lucide-react";
 import type { Layout } from "react-resizable-panels";
 import { restartServer, serverStatus } from "../lib/api";
 import type { ContextInfo, ServerInfo, Workspace } from "../lib/types";
@@ -8,10 +7,7 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/ui/hover-card";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Button } from "@/components/ui/button";
 import { OpencodeStatus } from "./OpencodeStatus";
-import { ConfigView } from "./center/ConfigView";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -21,15 +17,15 @@ interface Props {
   workspace: Workspace | null;
   context: ContextInfo | null;
   opencodeVersion: string | null;
-  /** Called after the config panel restarts the server, to force a reconnect. */
-  onConfigRestarted: () => void;
+  /** Kept for API compatibility; config restart is now handled by ProjectSettingsDialog. */
+  onConfigRestarted?: () => void;
 }
 
 /**
  * Three-segment status bar whose widths track the resizable panel layout, so
  * each panel "owns" its slice. Left = sidebar summary, center = active
- * workspace (context window) plus the OpenCode config + server controls,
- * right-aligned under the center panel. Hovering a segment opens a richer card.
+ * workspace (context window) and server controls. Right is empty under the
+ * changes panel. Hovering a segment opens a richer card.
  */
 export function StatusBar({
   layout,
@@ -38,7 +34,6 @@ export function StatusBar({
   workspace,
   context,
   opencodeVersion,
-  onConfigRestarted,
 }: Props) {
   const [server, setServer] = useState<ServerInfo | null>(null);
 
@@ -97,13 +92,6 @@ export function StatusBar({
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
-          {workspace && (
-            <ConfigButton
-              workspaceId={workspace.id}
-              baseUrl={server?.base_url ?? null}
-              onRestarted={onConfigRestarted}
-            />
-          )}
           <OpencodeStatus
             baseUrl={server?.base_url ?? null}
             version={opencodeVersion}
@@ -115,37 +103,6 @@ export function StatusBar({
 
       <Segment basis={layout.right} bordered />
     </footer>
-  );
-}
-
-/** Status-bar button that opens the workspace's OpenCode config in a popup. */
-function ConfigButton({
-  workspaceId,
-  baseUrl,
-  onRestarted,
-}: {
-  workspaceId: string;
-  baseUrl: string | null;
-  onRestarted: () => void;
-}) {
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-5 text-muted-foreground hover:text-foreground"
-          title="OpenCode config"
-        >
-          <Cog className="size-3.5" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent side="top" align="end" className="w-[600px] rounded-none p-0">
-        <div className="h-[70vh] max-h-[620px]">
-          <ConfigView workspaceId={workspaceId} baseUrl={baseUrl} onRestarted={onRestarted} />
-        </div>
-      </PopoverContent>
-    </Popover>
   );
 }
 

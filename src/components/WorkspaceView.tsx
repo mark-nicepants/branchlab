@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { Loader2, TriangleAlert, X } from "lucide-react";
 import { startServer } from "../lib/api";
 import { OpencodeClient } from "../lib/opencode";
-import type { ContextInfo, Workspace } from "../lib/types";
+import type { ContextInfo, ProjectView, Workspace } from "../lib/types";
 import { Button } from "@/components/ui/button";
-import { Chat } from "./Chat";
+import { Chat, type WorkspaceAction } from "./Chat";
+import { CommitButton } from "./CommitButton";
 import { ChangesView } from "./center/ChangesView";
 import { FileView } from "./center/FileView";
 import { cn } from "@/lib/utils";
@@ -13,6 +14,7 @@ export type CenterTab = "activity" | "changes" | "file";
 
 interface Props {
   workspace: Workspace;
+  project: ProjectView;
   onRenamed: (workspaceId: string, name: string) => void;
   tab: CenterTab;
   onTabChange: (tab: CenterTab) => void;
@@ -34,6 +36,7 @@ type State =
 
 export function WorkspaceView({
   workspace,
+  project,
   onRenamed,
   tab,
   onTabChange,
@@ -81,6 +84,12 @@ export function WorkspaceView({
     };
   }, [workspace.id, attempt, reloadNonce]);
 
+  const dispatchAction = (action: WorkspaceAction) => {
+    const el = document.getElementById("workspace-actions");
+    if (!el) return;
+    el.dispatchEvent(new CustomEvent("workspace-action", { detail: action }));
+  };
+
   return (
     <div className="flex h-full flex-col">
       <header className="flex shrink-0 items-center gap-1 border-b border-border px-3 text-sm">
@@ -111,6 +120,11 @@ export function WorkspaceView({
             </span>
           </Tab>
         )}
+        <div className="ml-auto">
+          {workspace.kind === "Worktree" && state.kind === "ready" && (
+            <CommitButton workspace={workspace} project={project} onAction={dispatchAction} />
+          )}
+        </div>
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col">
@@ -131,6 +145,7 @@ export function WorkspaceView({
             baseUrl={state.baseUrl}
             onRenamed={onRenamed}
             onContext={onContext}
+            onAction={dispatchAction}
           />
         ) : state.kind === "error" ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm">
@@ -147,6 +162,7 @@ export function WorkspaceView({
           </div>
         )}
       </div>
+      <div id="workspace-actions" className="hidden" />
     </div>
   );
 }

@@ -9,7 +9,13 @@ import type {
   EnvReport,
   FileChange,
   FileContent,
+  MergeResult,
+  PrResult,
+  ProjectPrompts,
+  ProjectUpdate,
   ProjectView,
+  PushResult,
+  RemoteInfo,
   ServerInfo,
   Workspace,
 } from "./types";
@@ -53,10 +59,29 @@ export function listBranches(projectId: string): Promise<string[]> {
 
 /**
  * Create a workspace (a worktree on a generated branch codename). Omit `base`
- * to fork from the repo's current branch. Returns the new workspace.
+ * to fork from the repo's current branch. `initPrompt` is sent to the AI once
+ * the workspace server is ready.
  */
-export function createWorkspace(projectId: string, base?: string): Promise<Workspace> {
-  return invoke<Workspace>("create_workspace", { projectId, base: base ?? null });
+export function createWorkspace(
+  projectId: string,
+  base?: string,
+  initPrompt?: string,
+): Promise<Workspace> {
+  return invoke<Workspace>("create_workspace", {
+    projectId,
+    base: base ?? null,
+    initPrompt: initPrompt ?? null,
+  });
+}
+
+/** Update project metadata, prompts, and default model. */
+export function updateProject(projectId: string, update: ProjectUpdate): Promise<ProjectView> {
+  return invoke<ProjectView>("update_project", { projectId, update });
+}
+
+/** Get a project's configured prompts. */
+export function getProjectPrompts(projectId: string): Promise<ProjectPrompts> {
+  return invoke<ProjectPrompts>("get_project_prompts", { projectId });
 }
 
 /** Remove a worktree workspace (stops its server first). */
@@ -104,6 +129,31 @@ export function workspaceFiles(workspaceId: string): Promise<string[]> {
 /** Read a workspace file's contents for the in-app viewer. */
 export function readFile(workspaceId: string, file: string): Promise<FileContent> {
   return invoke<FileContent>("read_file", { workspaceId, file });
+}
+
+/** Commit all changes in a workspace. */
+export function commitWorkspace(workspaceId: string, message: string): Promise<string> {
+  return invoke<string>("commit_workspace", { workspaceId, message });
+}
+
+/** Merge the workspace branch into its base branch. */
+export function mergeWorkspace(workspaceId: string): Promise<MergeResult> {
+  return invoke<MergeResult>("merge_workspace", { workspaceId });
+}
+
+/** Push the workspace branch to origin. */
+export function pushWorkspace(workspaceId: string): Promise<PushResult> {
+  return invoke<PushResult>("push_workspace", { workspaceId });
+}
+
+/** Push the branch and create a GitHub PR (requires `gh`). */
+export function createWorkspacePr(workspaceId: string, title: string, body: string): Promise<PrResult> {
+  return invoke<PrResult>("create_workspace_pr", { workspaceId, title, body });
+}
+
+/** List git remotes for a workspace's project root. */
+export function listRemotes(workspaceId: string): Promise<RemoteInfo[]> {
+  return invoke<RemoteInfo[]>("list_remotes", { workspaceId });
 }
 
 // ── M3: config & internals ──

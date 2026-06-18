@@ -21,6 +21,29 @@ pub struct Project {
     pub name: String,
     pub root_path: String,
     pub default_branch: Option<String>,
+    pub default_model_key: Option<String>,
+    pub prompts: ProjectPrompts,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectPrompts {
+    pub init_workspace: Option<String>,
+    pub commit: Option<String>,
+    pub merge: Option<String>,
+    pub push: Option<String>,
+    pub create_pr: Option<String>,
+}
+
+impl Default for ProjectPrompts {
+    fn default() -> Self {
+        Self {
+            init_workspace: Some("Set up the new workspace.".into()),
+            commit: Some("Stage all changes in this workspace with git add -A, then commit with a clear, concise conventional commit message that summarizes the diff. Do not push.".into()),
+            merge: Some("Merge this workspace's branch into the base/main branch of the repository. First run the git commands from this workspace directory. Then switch to the base branch in the parent repository, merge this workspace's branch into it, and push the result to origin. Confirm the merge succeeded.".into()),
+            push: Some("Push the current workspace branch to the origin remote. Confirm the remote and branch name.".into()),
+            create_pr: Some("Push the current workspace branch to origin and open a GitHub pull request against the base branch using gh pr create. Use a clear title and description based on the changes.".into()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -45,6 +68,17 @@ pub struct Workspace {
     /// Branch this workspace was forked from (for the "Branched X from Y" line).
     #[serde(default)]
     pub base_branch: Option<String>,
+    /// Optional prompt sent to the AI once the workspace server is ready.
+    #[serde(default)]
+    pub init_prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProjectUpdate {
+    pub name: Option<String>,
+    pub default_branch: Option<String>,
+    pub default_model_key: Option<String>,
+    pub prompts: Option<ProjectPrompts>,
 }
 
 /// A project together with its workspaces — the shape the UI consumes.
@@ -59,6 +93,30 @@ pub struct ProjectView {
 struct RegistryData {
     projects: Vec<Project>,
     workspaces: Vec<Workspace>,
+}
+
+fn default_branch_for(repo: &Path) -> Option<String> {
+    // 1. symbolic ref (e.g. refs/remotes/origin/HEAD -> origin/main)
+    if let Ok(out) = std::process::Command::new("git")
+        .args(["symbolic-ref", "refs/remotes/origin/HEAD", "--short"])
+        .current_dir(repo)
+        .output()
+    {
+        if out.status.success() {
+            let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if let Some(b) = branch.strip_prefix("origin/") {
+                return Some(b.to_string());
+            }
+        }
+    }
+    // 2. known primary branches
+    for candidate in ["main", "master", "develop"] {
+        if git::has_branch(repo.to_str().unwrap_or(""), candidate) {
+            return Some(candidate.to_string());
+        }
+    }
+    // 3. fall back to current branch
+    current_branch(repo)
 }
 
 pub struct Registry {
@@ -102,7 +160,9 @@ impl Registry {
                 id: id.clone(),
                 name,
                 root_path: root.clone(),
-                default_branch: current_branch(&canonical),
+                default_branch: default_branch_for(&canonical),
+                default_model_key: None,
+                prompts: ProjectPrompts::default(),
             });
             data.workspaces.push(Workspace {
                 id: format!("{id}-base"),
@@ -112,6 +172,7 @@ impl Registry {
                 branch: current_branch(&canonical),
                 name: None,
                 base_branch: None,
+                init_prompt: None,
             });
             self.persist(&data);
         }
@@ -125,6 +186,32 @@ impl Registry {
             w.name = Some(name.to_string());
         }
         self.persist(&data);
+    }
+
+    /// Update a project's metadata and prompts.
+    pub fn update_project(&self, project_id: &str, update: ProjectUpdate) -> Result<ProjectView, String> {
+        let mut data = self.data.lock().unwrap();
+        let project = data.projects.iter_mut().find(|p| p.id == project_id).ok_or("unknown project")?;
+        if let Some(name) = update.name {
+            project.name = name;
+        }
+        if let Some(default_branch) = update.default_branch {
+            project.default_branch = Some(default_branch);
+        }
+        if let Some(default_model_key) = update.default_model_key {
+            project.default_model_key = Some(default_model_key);
+        }
+        if let Some(prompts) = update.prompts {
+            project.prompts = prompts;
+        }
+        self.persist(&data);
+        Ok(self.view_of(&data, project_id))
+    }
+
+    pub fn prompts(&self, project_id: &str) -> Result<ProjectPrompts, String> {
+        let data = self.data.lock().unwrap();
+        let project = data.projects.iter().find(|p| p.id == project_id).ok_or("unknown project")?;
+        Ok(project.prompts.clone())
     }
 
     pub fn remove_project(&self, project_id: &str) {
@@ -142,6 +229,29 @@ impl Registry {
     pub fn workspace_path(&self, workspace_id: &str) -> Option<String> {
         let data = self.data.lock().unwrap();
         data.workspaces.iter().find(|w| w.id == workspace_id).map(|w| w.path.clone())
+    }
+
+    /// Resolve a workspace's project root. For base workspaces this is the
+    /// workspace itself; for worktrees it is the parent repo root.
+    pub fn workspace_project_root(&self, workspace_id: &str) -> Option<String> {
+        let data = self.data.lock().unwrap();
+        let ws = data.workspaces.iter().find(|w| w.id == workspace_id)?;
+        if ws.kind == WorkspaceKind::Base {
+            return Some(ws.path.clone());
+        }
+        data.projects.iter().find(|p| p.id == ws.project_id).map(|p| p.root_path.clone())
+    }
+
+    /// Get the workspace and its project root together (used by merge/push).
+    pub fn workspace_with_root(&self, workspace_id: &str) -> Option<(Workspace, String)> {
+        let data = self.data.lock().unwrap();
+        let ws = data.workspaces.iter().find(|w| w.id == workspace_id)?.clone();
+        let root = if ws.kind == WorkspaceKind::Base {
+            ws.path.clone()
+        } else {
+            data.projects.iter().find(|p| p.id == ws.project_id)?.root_path.clone()
+        };
+        Some((ws, root))
     }
 
     /// All workspaces across all projects (for the fleet dashboard).
@@ -162,7 +272,12 @@ impl Registry {
     /// Create a workspace: a worktree on a freshly generated branch codename
     /// (e.g. `bubbly-cheetah`) forked off `base` (or the repo's current branch
     /// when `base` is None). Returns the new workspace.
-    pub fn create_workspace(&self, project_id: &str, base: Option<String>) -> Result<Workspace, String> {
+    pub fn create_workspace(
+        &self,
+        project_id: &str,
+        base: Option<String>,
+        init_prompt: Option<String>,
+    ) -> Result<Workspace, String> {
         let root = self.repo_root(project_id).ok_or("unknown project")?;
         let base = match base {
             Some(b) if !b.is_empty() => b,
@@ -184,6 +299,7 @@ impl Registry {
             branch: Some(branch),
             name: None,
             base_branch: Some(base),
+            init_prompt,
         };
         let mut data = self.data.lock().unwrap();
         data.workspaces.push(ws.clone());

@@ -38,6 +38,27 @@ fn git_out(repo: &str, args: &[&str]) -> String {
         .unwrap_or_default()
 }
 
+/// Run git, returning stdout even on success but also treating "nothing to commit" as success.
+fn git_allow_empty(repo: &str, args: &[&str]) -> Result<String, String> {
+    let out =
+        Command::new("git").args(args).current_dir(repo).output().map_err(|e| format!("git failed to run: {e}"))?;
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    if !out.status.success() && !stderr.contains("nothing to commit") && !stdout.contains("nothing to commit") {
+        return Err(format!("{stdout}\n{stderr}").trim().to_string());
+    }
+    Ok(if stdout.is_empty() { stderr } else { stdout })
+}
+
+/// Check whether a branch exists locally or on any remote.
+pub fn has_branch(repo: &str, branch: &str) -> bool {
+    let out = git_out(repo, &["branch", "-a", "--list", branch, "--format=%(refname:short)"]);
+    out.lines().any(|l| {
+        let l = l.trim();
+        l == branch || l.strip_prefix("origin/").is_some_and(|b| b == branch)
+    })
+}
+
 /// Local branches, current branch first.
 pub fn list_branches(repo: &str) -> Result<Vec<String>, String> {
     let out = git(repo, &["branch", "--format=%(refname:short)"])?;
@@ -250,6 +271,113 @@ pub fn discard_file(repo: &str, file: &str) -> Result<(), String> {
 /// Sanitize a branch name into a single safe path segment (feature/x -> feature-x).
 pub fn sanitize_branch(branch: &str) -> String {
     branch.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' }).collect()
+}
+
+/// Status of a git remote for `push`/`pr` checks.
+#[derive(Debug, Clone, Serialize)]
+pub struct RemoteInfo {
+    pub name: String,
+    pub url: String,
+}
+
+/// List configured remotes with their URLs.
+pub fn list_remotes(repo: &str) -> Result<Vec<RemoteInfo>, String> {
+    let out = git(repo, &["remote", "-v"])?;
+    let mut seen = std::collections::HashSet::new();
+    let mut remotes = Vec::new();
+    for line in out.lines() {
+        let mut parts = line.split_whitespace();
+        let Some(name) = parts.next() else { continue };
+        let Some(url) = parts.next() else { continue };
+        if !seen.insert(name.to_string()) {
+            continue;
+        }
+        remotes.push(RemoteInfo { name: name.to_string(), url: url.to_string() });
+    }
+    Ok(remotes)
+}
+
+/// Current branch in a repo.
+pub fn current_branch(repo: &str) -> Result<String, String> {
+    let out = git(repo, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    let branch = out.trim().to_string();
+    if branch.is_empty() {
+        return Err("not on a branch".into());
+    }
+    Ok(branch)
+}
+
+/// Stage all changes and commit with the supplied message.
+pub fn commit_all(repo: &str, message: &str) -> Result<String, String> {
+    git(repo, &["add", "-A"])?;
+    let out = git_allow_empty(repo, &["commit", "-m", message])?;
+    if out.contains("nothing to commit") {
+        return Err("nothing to commit".into());
+    }
+    Ok(out)
+}
+
+/// Merge this branch into the base branch using `git checkout base && git merge branch`.
+/// Returns a description of the result (fast-forward or merge commit).
+pub fn merge_into_base(repo: &str, branch: &str, base: &str) -> Result<String, String> {
+    // Stash any dirty state in the base worktree before switching.
+    let stash = git(repo, &["stash", "push", "-u", "-m", "branchlab-auto-stash"]).ok();
+    // Save where we are so we can return after the merge.
+    let original = current_branch(repo)?;
+
+    git(repo, &["checkout", base]).inspect_err(|_| {
+        if stash.is_some() {
+            let _ = git(repo, &["stash", "pop"]);
+        }
+    })?;
+
+    let result = git(repo, &["merge", "--no-edit", branch]).map_err(|e| {
+        let _ = git(repo, &["checkout", &original]);
+        if stash.is_some() {
+            let _ = git(repo, &["stash", "pop"]);
+        }
+        format!("merge failed: {e}")
+    })?;
+
+    // Switch back to the original branch and restore stashed changes.
+    let _ = git(repo, &["checkout", &original]);
+    if stash.is_some() {
+        let _ = git(repo, &["stash", "pop"]);
+    }
+
+    let summary = if result.contains("Fast-forward") {
+        format!("Fast-forward merged `{branch}` into `{base}`.")
+    } else {
+        format!("Merged `{branch}` into `{base}`.")
+    };
+    Ok(summary)
+}
+
+/// Push `branch` to `remote`. The remote is assumed to exist (typically `origin`).
+pub fn push_branch(repo: &str, remote: &str, branch: &str) -> Result<String, String> {
+    let out = git(repo, &["push", "-u", remote, branch])?;
+    Ok(out)
+}
+
+/// Create a pull request with `gh pr create`. Fills title/body and returns the PR URL.
+/// Requires the `gh` CLI and a logged-in user.
+pub fn create_pull_request(repo: &str, branch: &str, base: &str, title: &str, body: &str) -> Result<String, String> {
+    let out = git(repo, &["-c", "credential.helper=", "-c", "core.quotepath=false", "push", "-u", "origin", branch])?;
+    if !out.contains("error") && !out.contains("fatal:") {
+        // Continue even if push output is empty/ok.
+    }
+
+    let pr_out = Command::new("gh")
+        .args(["pr", "create", "--base", base, "--head", branch, "--title", title, "--body", body])
+        .current_dir(repo)
+        .output()
+        .map_err(|e| format!("gh failed to run: {e}"))?;
+    if !pr_out.status.success() {
+        let err = String::from_utf8_lossy(&pr_out.stderr).trim().to_string();
+        return Err(format!("gh pr create failed: {err}"));
+    }
+    let url = String::from_utf8_lossy(&pr_out.stdout).trim().to_string();
+    Ok(url)
 }
 
 #[cfg(test)]

@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector } from "./ModeSelector";
 import { ThinkingSelector } from "./ThinkingSelector";
-import { ChatMessage, PartView } from "./ChatMessage";
+import { ChatMessage, PartView, SystemMessageView } from "./ChatMessage";
 import { TodoButton } from "./TodoButton";
 import { usePreferences } from "./PreferencesProvider";
 
@@ -16,6 +16,7 @@ interface Props {
   baseUrl: string;
   onRenamed: (workspaceId: string, name: string) => void;
   onContext: (info: ContextInfo | null) => void;
+  onAction?: (action: WorkspaceAction) => void;
 }
 
 interface UiMessage {
@@ -24,6 +25,26 @@ interface UiMessage {
   partsById: Record<string, Part>;
   order: string[];
 }
+
+/** Local-only system notice inserted for workspace lifecycle actions. */
+export interface SystemMessage {
+  id: string;
+  content: string;
+  kind: "info" | "success" | "error";
+  align?: "left" | "center";
+}
+
+/** Lifecycle actions exposed to the parent by Chat. */
+export type WorkspaceAction =
+  | { kind: "commit"; message?: string; prompt: string; display: string; onFinish?: OnFinishAction }
+  | { kind: "merge"; prompt: string; display: string; onFinish?: OnFinishAction }
+  | { kind: "push"; prompt: string; display: string; onFinish?: OnFinishAction }
+  | { kind: "pr"; title?: string; body?: string; prompt: string; display: string; onFinish?: OnFinishAction };
+
+/** Action presented to the user after a lifecycle action completes. */
+export type OnFinishAction =
+  | { kind: "remove_workspace"; message: string }
+  | { kind: "try_again"; message: string };
 
 /** Two todo lists are equal when they have the same contents and statuses in order. */
 function sameTodoList(a: Todo[], b: Todo[]): boolean {
@@ -40,8 +61,8 @@ function sameTodoList(a: Todo[], b: Todo[]): boolean {
  * user prompt (for an unnamed workspace) it asks opencode's title agent for a
  * name and reports it back via onRenamed.
  */
-export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
-  const { prefs, setPref } = usePreferences();
+export function Chat({ workspace, baseUrl, onRenamed, onContext, onAction }: Props) {
+  const { prefs, setWorkspacePref } = usePreferences();
   const client = useMemo(() => new OpencodeClient(baseUrl), [baseUrl]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Record<string, UiMessage>>({});
@@ -52,7 +73,7 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
   const [variant, setVariant] = useState<string | null>(null);
   // Selected OpenCode agent/mode; only "build" or "plan".
   const [agent, setAgent] = useState<string>("build");
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(prefs.workspace[workspace.id]?.inputText ?? "");
   // Image attachments pasted from the clipboard, sent alongside the next prompt.
   const [attachments, setAttachments] = useState<{ id: string; mime: string; url: string; filename: string }[]>([]);
   const [todos, setTodos] = useState<Todo[]>([]);
@@ -63,11 +84,89 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
   const [, setDismissedTodos] = useState<Todo[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [systemMessages, setSystemMessages] = useState<SystemMessage[]>([]);
+  const [pendingOnFinish, setPendingOnFinish] = useState<OnFinishAction | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const nameRequested = useRef(false);
+  // Tracks whether we are currently running a lifecycle action so we can detect
+  // when the assistant goes idle and present the follow-up UI.
+  const lifecycleBusy = useRef(false);
+  // Set to true if any tool error or session error occurs during a lifecycle action.
+  const lifecycleError = useRef(false);
   // Kept in a ref so the SSE handler (registered once) reads current models.
   const modelsRef = useRef<ModelOption[]>([]);
   modelsRef.current = models;
+  // Tracks whether the workspace init prompt has already been sent.
+  const initPromptSent = useRef(false);
+  // Mirror the composer draft so we can persist it on unmount without causing
+  // a context update (and therefore global re-render) on every keystroke.
+  const inputRef = useRef(input);
+  inputRef.current = input;
+
+  const clearSystemMessages = useCallback(() => setSystemMessages([]), []);
+
+  // Clear transient lifecycle notices when the workspace changes.
+  useEffect(() => {
+    clearSystemMessages();
+  }, [workspace.id, clearSystemMessages]);
+
+  // Lifecycle actions come from the workspace header buttons. We send the
+  // technical prompt to the AI but surface a friendly message in the chat.
+  useEffect(() => {
+    if (!onAction) return;
+    const handler = (e: Event) => {
+      const action = (e as CustomEvent<WorkspaceAction>).detail;
+      if (!sessionId || busy) return;
+      setSystemMessages((prev) => [
+        ...prev,
+        {
+          id: `sys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          content: action.display,
+          kind: "info",
+          align: "left",
+        },
+      ]);
+      lifecycleBusy.current = true;
+      lifecycleError.current = false;
+      setBusy(true);
+      setError(null);
+      if (action.onFinish) {
+        setPendingOnFinish(action.onFinish);
+      }
+      void client.sendPrompt(
+        sessionId,
+        action.prompt,
+        model ?? undefined,
+        variant ?? undefined,
+        agent,
+        [],
+      );
+    };
+    const el = document.getElementById("workspace-actions");
+    el?.addEventListener("workspace-action", handler);
+    return () => el?.removeEventListener("workspace-action", handler);
+  }, [onAction, sessionId, busy, client, model, variant, agent]);
+
+  // When the assistant finishes a lifecycle action, show the configured
+  // follow-up message. Success/failure is inferred from tool/session errors
+  // that occurred while the action was running.
+  useEffect(() => {
+    if (!lifecycleBusy.current || busy) return;
+    lifecycleBusy.current = false;
+    const action = pendingOnFinish;
+    if (!action) return;
+    setPendingOnFinish(null);
+    const kind = lifecycleError.current ? "error" : "success";
+    setSystemMessages((prev) => [
+      ...prev,
+      {
+        id: `sys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        content: action.message,
+        kind,
+        align: "left",
+      },
+    ]);
+  }, [busy, pendingOnFinish]);
 
   const upsertPart = useCallback((part: Part) => {
     setMessages((prev) => {
@@ -97,7 +196,7 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
     (async () => {
       try {
         const sessions = await client.listSessions();
-        const savedId = prefs.workspaceSessions[workspace.id];
+        const savedId = prefs.workspace[workspace.id]?.sessionId;
 
         // Reuse the persisted session only if the server still knows about it.
         let session: Session | undefined = savedId
@@ -111,7 +210,7 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
         // base workspace's session.
         if (!session) {
           session = await client.createSession();
-          setPref("workspaceSessions", { ...prefs.workspaceSessions, [workspace.id]: session.id });
+          setWorkspacePref(workspace.id, { sessionId: session.id });
         }
 
         if (cancelled) return;
@@ -122,7 +221,7 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
         setModels(models);
 
         // Restore the workspace's last selected model, or fall back to default.
-        const savedKey = prefs.workspaceModels[workspace.id];
+        const savedKey = prefs.workspace[workspace.id]?.modelKey;
         const initialModel =
           models.find((m) => m.key === savedKey) ??
           models.find((m) => m.key === defaultKey) ??
@@ -132,7 +231,7 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
 
         // Restore the workspace's last reasoning-effort variant, if the model
         // still supports it.
-        const savedVariant = prefs.workspaceVariants[workspace.id];
+        const savedVariant = prefs.workspace[workspace.id]?.variant;
         if (savedVariant && initialModel?.variants.includes(savedVariant)) {
           setVariant(savedVariant);
         }
@@ -162,6 +261,25 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
         setMessages(loadedMessages);
         setOrder(loadedOrder);
 
+        // Send the workspace init prompt once after the session is ready.
+        const initPrompt = workspace.init_prompt?.trim();
+        if (initPrompt && !initPromptSent.current && !cancelled) {
+          initPromptSent.current = true;
+          setSystemMessages((prev) => [
+            ...prev,
+            {
+              id: `sys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              content: "Initializing workspace…",
+              kind: "info",
+              align: "left",
+            },
+          ]);
+          lifecycleBusy.current = true;
+          lifecycleError.current = false;
+          setBusy(true);
+          void client.sendPrompt(session.id, initPrompt, model ?? undefined, variant ?? undefined, agent, []);
+        }
+
         // Report context usage from the most recent assistant message in history.
         const lastAssistant = [...history].reverse().find((m) => m.info.role === "assistant");
         const tk = lastAssistant?.info.tokens;
@@ -185,9 +303,14 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
       const props = e.properties as Record<string, any>;
       if (props?.sessionID && props.sessionID !== sessionId) return;
       switch (e.type) {
-        case "message.part.updated":
-          upsertPart(props.part as Part);
+        case "message.part.updated": {
+          const part = props.part as Part;
+          if (lifecycleBusy.current && part.type === "tool" && part.state?.status === "error") {
+            lifecycleError.current = true;
+          }
+          upsertPart(part);
           break;
+        }
         case "message.updated":
           if (props.info) {
             const info = props.info;
@@ -215,6 +338,9 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
           setBusy(false);
           break;
         case "session.error":
+          if (lifecycleBusy.current) {
+            lifecycleError.current = true;
+          }
           setError(JSON.stringify(props.error));
           setBusy(false);
           break;
@@ -259,6 +385,7 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
     const sentAttachments = attachments;
     setInput("");
     setAttachments([]);
+    saveDraft("");
     setError(null);
     setBusy(true);
 
@@ -339,19 +466,27 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
   // Persist the selected model per workspace.
   function changeModel(next: ModelOption) {
     setModel(next);
-    setVariant((v) => {
-      const keep = v && next.variants.includes(v) ? v : null;
-      setPref("workspaceVariants", { ...prefs.workspaceVariants, [workspace.id]: keep ?? "" });
-      return keep;
-    });
-    setPref("workspaceModels", { ...prefs.workspaceModels, [workspace.id]: next.key });
+    const keep = variant && next.variants.includes(variant) ? variant : null;
+    setVariant(keep);
+    setWorkspacePref(workspace.id, { modelKey: next.key, variant: keep ?? "" });
   }
 
   // Persist the selected reasoning-effort variant per workspace.
   function changeVariant(next: string | null) {
     setVariant(next);
-    setPref("workspaceVariants", { ...prefs.workspaceVariants, [workspace.id]: next ?? "" });
+    setWorkspacePref(workspace.id, { variant: next ?? "" });
   }
+
+  // Preserve the composer draft per workspace, but don't update the global
+  // preference context on every keystroke — that re-renders the whole UI.
+  // Save only when the prompt is sent or the component unmounts.
+  const saveDraft = useCallback((text: string) => {
+    setWorkspacePref(workspace.id, { inputText: text });
+  }, [workspace.id, setWorkspacePref]);
+
+  useEffect(() => {
+    return () => saveDraft(inputRef.current);
+  }, [saveDraft]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -371,17 +506,20 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
               Send a prompt to begin.
             </p>
           )}
-            {order.map((mid) => {
-              const m = messages[mid];
-              if (!m) return null;
-              return (
-                <ChatMessage key={mid} role={m.role}>
-                  {m.order.map((pid) => (
-                    <PartView key={pid} part={m.partsById[pid]} />
-                  ))}
-                </ChatMessage>
-              );
-            })}
+          {order.map((mid) => {
+            const m = messages[mid];
+            if (!m) return null;
+            return (
+              <ChatMessage key={mid} role={m.role}>
+                {m.order.map((pid) => (
+                  <PartView key={pid} part={m.partsById[pid]} />
+                ))}
+              </ChatMessage>
+            );
+          })}
+          {systemMessages.map((sys) => (
+            <SystemMessageView key={sys.id} message={sys} />
+          ))}
           {busy && <p className="text-xs text-muted-foreground">● working…</p>}
           {error && <p className="text-xs text-destructive">{error}</p>}
         </div>

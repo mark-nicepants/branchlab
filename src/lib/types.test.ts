@@ -10,6 +10,7 @@ function ws(overrides: Partial<Workspace>): Workspace {
     branch: null,
     name: null,
     base_branch: null,
+    init_prompt: null,
     ...overrides,
   };
 }

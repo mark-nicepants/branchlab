@@ -55,6 +55,33 @@ export function ChatMessage({ role, children }: MessageProps) {
   );
 }
 
+export interface SystemMessageProps {
+  message: { id: string; content: string; kind: "info" | "success" | "error"; align?: "left" | "center" };
+}
+
+export function SystemMessageView({ message }: SystemMessageProps) {
+  const { prefs } = usePreferences();
+  const d = DENSITY[prefs.chatDensity] ?? DENSITY.loose;
+  const kindStyles = {
+    info: "border-border bg-muted/50 text-muted-foreground",
+    success: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+    error: "border-destructive/30 bg-destructive/10 text-destructive",
+  };
+  const justify = message.align === "left" ? "justify-start" : "justify-center";
+  return (
+    <div className={cn("flex w-full", justify, d.assistant)}>
+      <div
+        className={cn(
+          "max-w-[85%] rounded-lg border px-3 py-1.5 text-xs",
+          kindStyles[message.kind],
+        )}
+      >
+        {message.content}
+      </div>
+    </div>
+  );
+}
+
 interface PartViewProps {
   part: Part;
 }
