@@ -21,7 +21,7 @@ const DEFAULT_INIT_WORKSPACE: &str = "Set up the new workspace.";
 const DEFAULT_COMMIT: &str = "Stage all changes in this workspace with git add -A, then commit with a clear, concise conventional commit message that summarizes the diff. Do not push.";
 const DEFAULT_MERGE: &str = "Merge this workspace's branch into the base/main branch of the repository. First run the git commands from this workspace directory. Then switch to the base branch in the parent repository, merge this workspace's branch into it, and push the result to origin. Confirm the merge succeeded.";
 const DEFAULT_PUSH: &str =
-    "Push the current workspace branch to the origin remote. Confirm the remote and branch name.";
+    "First, check the git diff to see what has changed in this workspace. If there is no clear branch name, invent one that fits the changes (e.g. feature/xxx, tech/xxx, fix/xxx, refactor/xxx, or similar). Then stage the logical changes with git add, commit with a clear conventional commit message, and push the branch to the origin remote. Confirm the remote and branch name.";
 const DEFAULT_CREATE_PR: &str = "Push the current workspace branch to origin and open a GitHub pull request against the base branch using gh pr create. Use a clear title and description based on the changes.";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
