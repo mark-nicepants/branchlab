@@ -457,11 +457,11 @@
   .composer-shadow {
     box-shadow:
       0 0 0 1px color-mix(in oklab, var(--foreground) 6%, transparent),
-      0 8px 30px -6px color-mix(in oklab, var(--foreground) 16%, transparent);
+      0 2px 8px -3px color-mix(in oklab, var(--foreground) 8%, transparent);
   }
   .composer-shadow:focus-within {
     box-shadow:
       0 0 0 1px color-mix(in oklab, var(--foreground) 10%, transparent),
-      0 12px 40px -8px color-mix(in oklab, var(--foreground) 22%, transparent);
+      0 4px 12px -3px color-mix(in oklab, var(--foreground) 12%, transparent);
   }
 }
