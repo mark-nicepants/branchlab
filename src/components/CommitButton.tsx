@@ -121,7 +121,7 @@ export function CommitButton({ workspace, project, onAction }: Props) {
       </div>
 
       <Dialog open={prOpen} onOpenChange={setPrOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="w-full max-w-md">
           <DialogHeader>
             <DialogTitle>Open pull request</DialogTitle>
             <DialogDescription>
