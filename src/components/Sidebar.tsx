@@ -160,7 +160,7 @@ export function Sidebar({
                   ) : (
                     <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
                   )}
-                  <span className="truncate text-[13px] font-semibold uppercase tracking-wide" title={p.name}>
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-semibold uppercase tracking-wide" title={p.name}>
                     {p.name}
                   </span>
                 </button>
@@ -214,7 +214,7 @@ export function Sidebar({
                   <ContextMenuTrigger asChild>
                     <div
                       className={cn(
-                        "group/ws flex items-center hover:bg-sidebar-accent",
+                        "group/ws flex min-w-0 items-center hover:bg-sidebar-accent",
                         w.id === selectedWorkspaceId && "bg-sidebar-accent",
                       )}
                     >
