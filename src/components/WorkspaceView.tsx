@@ -52,6 +52,7 @@ export function WorkspaceView({
 }: Props) {
   const [state, setState] = useState<State>({ kind: "starting" });
   const [attempt, setAttempt] = useState(0);
+  const [pendingAction, setPendingAction] = useState<WorkspaceAction | null>(null);
 
   useCancellableEffect(
     async (cancelled) => {
@@ -79,12 +80,6 @@ export function WorkspaceView({
     },
     [workspace.id, attempt, reloadNonce],
   );
-
-  const dispatchAction = (action: WorkspaceAction) => {
-    const el = document.getElementById("workspace-actions");
-    if (!el) return;
-    el.dispatchEvent(new CustomEvent("workspace-action", { detail: action }));
-  };
 
   return (
     <div className="flex h-full flex-col">
@@ -118,7 +113,7 @@ export function WorkspaceView({
         )}
         <div className="ml-auto">
           {workspace.kind === "Worktree" && state.kind === "ready" && (
-            <CommitButton workspace={workspace} project={project} onAction={dispatchAction} />
+            <CommitButton workspace={workspace} project={project} onAction={setPendingAction} />
           )}
         </div>
       </header>
@@ -141,7 +136,8 @@ export function WorkspaceView({
             baseUrl={state.baseUrl}
             onRenamed={onRenamed}
             onContext={onContext}
-            onAction={dispatchAction}
+            pendingAction={pendingAction}
+            onActionConsumed={() => setPendingAction(null)}
           />
         ) : state.kind === "error" ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm">
@@ -158,7 +154,6 @@ export function WorkspaceView({
           </div>
         )}
       </div>
-      <div id="workspace-actions" className="hidden" />
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, GitBranch, Square, X } from "lucide-react";
 import { OpencodeClient } from "../lib/opencode";
-import type { BusEvent, ContextInfo, ModelOption, Part, Session, Todo, Workspace } from "../lib/types";
+import type { BusEvent, ContextInfo, ModelOption, Part, Session, Workspace } from "../lib/types";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ModelSelector } from "./ModelSelector";
@@ -10,14 +10,17 @@ import { ThinkingSelector } from "./ThinkingSelector";
 import { ChatMessage, PartView, SystemMessageView } from "./ChatMessage";
 import { TodoButton } from "./TodoButton";
 import { usePreferences } from "./PreferencesProvider";
-import { useInterval } from "../hooks/useInterval";
+import { useTodos } from "../hooks/useTodos";
+import { useClipboardImages } from "../hooks/useClipboardImages";
 
 interface Props {
   workspace: Workspace;
   baseUrl: string;
   onRenamed: (workspaceId: string, name: string) => void;
   onContext: (info: ContextInfo | null) => void;
-  onAction?: (action: WorkspaceAction) => void;
+  /** A workspace lifecycle action to run; Chat fires it then calls onActionConsumed. */
+  pendingAction: WorkspaceAction | null;
+  onActionConsumed: () => void;
 }
 
 interface UiMessage {
@@ -47,22 +50,20 @@ export type OnFinishAction =
   | { kind: "remove_workspace"; message: string }
   | { kind: "try_again"; message: string };
 
-/** Two todo lists are equal when they have the same contents and statuses in order. */
-function sameTodoList(a: Todo[], b: Todo[]): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i].content !== b[i].content || a[i].status !== b[i].status) return false;
-  }
-  return true;
-}
-
 /**
  * Minimal streaming chat for one workspace. Renders assistant text as it
  * streams over SSE; tool/reasoning parts get a one-line summary. On the first
  * user prompt (for an unnamed workspace) it asks opencode's title agent for a
  * name and reports it back via onRenamed.
  */
-export function Chat({ workspace, baseUrl, onRenamed, onContext, onAction }: Props) {
+export function Chat({
+  workspace,
+  baseUrl,
+  onRenamed,
+  onContext,
+  pendingAction,
+  onActionConsumed,
+}: Props) {
   const { prefs, setWorkspacePref } = usePreferences();
   const client = useMemo(() => new OpencodeClient(baseUrl), [baseUrl]);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -75,14 +76,9 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext, onAction }: Pro
   // Selected OpenCode agent/mode; only "build" or "plan".
   const [agent, setAgent] = useState<string>("build");
   const [input, setInput] = useState(prefs.workspace[workspace.id]?.inputText ?? "");
-  // Image attachments pasted from the clipboard, sent alongside the next prompt.
-  const [attachments, setAttachments] = useState<{ id: string; mime: string; url: string; filename: string }[]>([]);
-  const [todos, setTodos] = useState<Todo[]>([]);
-  // Snapshot of a fully-completed todo list dismissed by the user starting a
-  // new turn. Polling hides this exact list until the assistant produces a
-  // different one (compared by content+status).
-  // Setter-only — the value is read inside the setter callback below.
-  const [, setDismissedTodos] = useState<Todo[] | null>(null);
+  const { todos, dismissIfAllCompleted } = useTodos(client, sessionId);
+  const { attachments, handlePaste, remove: removeAttachment, clear: clearAttachments } =
+    useClipboardImages();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [systemMessages, setSystemMessages] = useState<SystemMessage[]>([]);
@@ -111,42 +107,25 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext, onAction }: Pro
     clearSystemMessages();
   }, [workspace.id, clearSystemMessages]);
 
-  // Lifecycle actions come from the workspace header buttons. We send the
-  // technical prompt to the AI but surface a friendly message in the chat.
+  // Lifecycle actions come from the workspace header buttons via the
+  // `pendingAction` prop. We send the technical prompt to the AI but surface
+  // a friendly message in the chat. The parent clears pendingAction once we
+  // call onActionConsumed.
   useEffect(() => {
-    if (!onAction) return;
-    const handler = (e: Event) => {
-      const action = (e as CustomEvent<WorkspaceAction>).detail;
-      if (!sessionId || busy) return;
-      setSystemMessages((prev) => [
-        ...prev,
-        {
-          id: `sys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          content: action.display,
-          kind: "info",
-          align: "left",
-        },
-      ]);
-      lifecycleBusy.current = true;
-      lifecycleError.current = false;
-      setBusy(true);
-      setError(null);
-      if (action.onFinish) {
-        setPendingOnFinish(action.onFinish);
-      }
-      void client.sendPrompt(
-        sessionId,
-        action.prompt,
-        model ?? undefined,
-        variant ?? undefined,
-        agent,
-        [],
-      );
-    };
-    const el = document.getElementById("workspace-actions");
-    el?.addEventListener("workspace-action", handler);
-    return () => el?.removeEventListener("workspace-action", handler);
-  }, [onAction, sessionId, busy, client, model, variant, agent]);
+    if (!pendingAction || !sessionId || busy) return;
+    const action = pendingAction;
+    setSystemMessages((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), content: action.display, kind: "info", align: "left" },
+    ]);
+    lifecycleBusy.current = true;
+    lifecycleError.current = false;
+    setBusy(true);
+    setError(null);
+    if (action.onFinish) setPendingOnFinish(action.onFinish);
+    void client.sendPrompt(sessionId, action.prompt, model ?? undefined, variant ?? undefined, agent, []);
+    onActionConsumed();
+  }, [pendingAction, sessionId, busy, client, model, variant, agent, onActionConsumed]);
 
   // When the assistant finishes a lifecycle action, show the configured
   // follow-up message. Success/failure is inferred from tool/session errors
@@ -161,7 +140,7 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext, onAction }: Pro
     setSystemMessages((prev) => [
       ...prev,
       {
-        id: `sys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: crypto.randomUUID(),
         content: action.message,
         kind,
         align: "left",
@@ -269,7 +248,7 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext, onAction }: Pro
           setSystemMessages((prev) => [
             ...prev,
             {
-              id: `sys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              id: crypto.randomUUID(),
               content: "Initializing workspace…",
               kind: "info",
               align: "left",
@@ -350,31 +329,6 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext, onAction }: Pro
     return unsub;
   }, [client, sessionId, upsertPart]);
 
-  // Poll the session todo list while we have an active session.
-  const fetchTodos = useCallback(() => {
-    if (!sessionId) return;
-    client
-      .listTodos(sessionId)
-      .then((list) => {
-        // If the polled list matches a previously-dismissed snapshot
-        // (everything completed when the user sent a new turn), keep it
-        // hidden until the assistant produces a different list.
-        setDismissedTodos((dismissed) => {
-          if (dismissed && sameTodoList(list, dismissed)) {
-            setTodos([]);
-            return dismissed;
-          }
-          setTodos(list);
-          return null;
-        });
-      })
-      .catch(() => {});
-  }, [client, sessionId]);
-  useEffect(() => {
-    fetchTodos();
-  }, [fetchTodos]);
-  useInterval(fetchTodos, sessionId ? 2000 : null);
-
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages, order]);
@@ -384,17 +338,14 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext, onAction }: Pro
     if ((!text && attachments.length === 0) || !sessionId || busy) return;
     const sentAttachments = attachments;
     setInput("");
-    setAttachments([]);
+    clearAttachments();
     saveDraft("");
     setError(null);
     setBusy(true);
 
     // If every current todo is completed, treat the new turn as a fresh start
     // and hide them from the badge until the assistant produces a new list.
-    if (todos.length > 0 && todos.every((t) => t.status === "completed")) {
-      setDismissedTodos(todos);
-      setTodos([]);
-    }
+    dismissIfAllCompleted();
 
     // Note: we do not optimistically render the user message. OpenCode echoes
     // it back via SSE as a real message, so adding it here would duplicate it.
@@ -420,41 +371,6 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext, onAction }: Pro
       setError(String(e));
       setBusy(false);
     }
-  }
-
-  // Intercept image items from the clipboard. Each item is read as a data URL
-  // (a base64-encoded image inline), which is what opencode's FilePartInput
-  // expects for the `url` field. Non-image clipboard contents fall through to
-  // the textarea's default paste behavior (text).
-  function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
-    const items = Array.from(e.clipboardData?.items ?? []).filter((it) =>
-      it.type.startsWith("image/"),
-    );
-    if (items.length === 0) return;
-    e.preventDefault();
-    for (const item of items) {
-      const blob = item.getAsFile();
-      if (!blob) continue;
-      const reader = new FileReader();
-      reader.onload = () => {
-        const url = reader.result as string;
-        const ext = blob.type.split("/")[1] ?? "png";
-        setAttachments((prev) => [
-          ...prev,
-          {
-            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            mime: blob.type,
-            url,
-            filename: blob.name || `pasted-${Date.now()}.${ext}`,
-          },
-        ]);
-      };
-      reader.readAsDataURL(blob);
-    }
-  }
-
-  function removeAttachment(id: string) {
-    setAttachments((prev) => prev.filter((a) => a.id !== id));
   }
 
   async function abort() {
