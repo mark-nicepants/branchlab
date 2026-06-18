@@ -5,7 +5,7 @@ import { useState } from "react";
 import type { LspDiagnostic, Part, ToolState } from "../lib/types";
 import { cn } from "@/lib/utils";
 import { usePreferences, type ChatDensity } from "./PreferencesProvider";
-import { parseDiff } from "@/lib/diff";
+import { parseDiff, synthesizeDiff } from "@/lib/diff";
 import { UnifiedDiff } from "./DiffBody";
 
 interface MessageProps {
@@ -231,18 +231,6 @@ function ToolCallPart({ part }: { part: Part }) {
       {open && <ToolCallDetails part={part} />}
     </div>
   );
-}
-
-// Synthesize a unified diff from raw old/new strings, used as a fallback when
-// the tool's metadata.diff isn't available yet (e.g. while running).
-function synthesizeDiff(oldText: string, newText: string): string {
-  const oldLines = oldText === "" ? [] : oldText.split("\n");
-  const newLines = newText === "" ? [] : newText.split("\n");
-  const header = `@@ -1,${oldLines.length} +1,${newLines.length} @@`;
-  const parts = [header];
-  if (oldLines.length) parts.push(oldLines.map((l) => `-${l}`).join("\n"));
-  if (newLines.length) parts.push(newLines.map((l) => `+${l}`).join("\n"));
-  return parts.join("\n");
 }
 
 function asString(v: unknown): string | undefined {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseDiff, splitRows } from "./diff";
+import { parseDiff, splitRows, synthesizeDiff } from "./diff";
 
 const SAMPLE = `diff --git a/foo.txt b/foo.txt
 index 0000000..1111111 100644
@@ -78,5 +78,26 @@ describe("splitRows", () => {
     expect(rows[0]).toMatchObject({ left: { type: "del" }, right: { type: "add" } });
     expect(rows[1].left).toBeNull();
     expect(rows[1].right?.type).toBe("add");
+  });
+});
+
+describe("synthesizeDiff", () => {
+  it("emits a parseable diff with del then add lines", () => {
+    const diff = synthesizeDiff("foo\nbar", "foo\nbaz");
+    const [hunk] = parseDiff(diff);
+    expect(hunk.lines.map((l) => l.type)).toEqual(["del", "del", "add", "add"]);
+  });
+
+  it("treats empty old text as a pure addition", () => {
+    const diff = synthesizeDiff("", "new\nfile");
+    const [hunk] = parseDiff(diff);
+    expect(hunk.lines.every((l) => l.type === "add")).toBe(true);
+    expect(hunk.lines).toHaveLength(2);
+  });
+
+  it("treats empty new text as a pure deletion", () => {
+    const diff = synthesizeDiff("gone", "");
+    const [hunk] = parseDiff(diff);
+    expect(hunk.lines.every((l) => l.type === "del")).toBe(true);
   });
 });

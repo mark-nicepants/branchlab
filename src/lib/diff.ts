@@ -79,3 +79,18 @@ export function splitRows(hunk: DiffHunk): SplitRow[] {
   flush();
   return rows;
 }
+
+/**
+ * Build a synthetic unified-diff string from raw old/new text. Used as a
+ * fallback when a tool's metadata.diff isn't available yet (e.g. while the
+ * edit is still running) so the chat can still show something useful.
+ */
+export function synthesizeDiff(oldText: string, newText: string): string {
+  const oldLines = oldText === "" ? [] : oldText.split("\n");
+  const newLines = newText === "" ? [] : newText.split("\n");
+  const header = `@@ -1,${oldLines.length} +1,${newLines.length} @@`;
+  const parts = [header];
+  if (oldLines.length) parts.push(oldLines.map((l) => `-${l}`).join("\n"));
+  if (newLines.length) parts.push(newLines.map((l) => `+${l}`).join("\n"));
+  return parts.join("\n");
+}

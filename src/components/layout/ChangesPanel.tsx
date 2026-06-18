@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/empty-state";
 import { TabBarItem } from "@/components/ui/tab-bar";
 import { fileStatus } from "@/lib/status";
+import { buildTree, type TreeNode } from "@/lib/tree";
 import { useWorkspaceData } from "../../hooks/useWorkspaceData";
 import { usePreferences } from "../PreferencesProvider";
 import { cn } from "@/lib/utils";
@@ -136,37 +137,6 @@ function ChangesTab({
 }
 
 // ── Files tab: a browsable file tree ──
-
-interface TreeNode {
-  name: string;
-  path: string;
-  isFile: boolean;
-  children: TreeNode[];
-}
-
-function buildTree(paths: string[]): TreeNode[] {
-  const root: TreeNode = { name: "", path: "", isFile: false, children: [] };
-  for (const p of paths) {
-    const parts = p.split("/");
-    let node = root;
-    parts.forEach((part, i) => {
-      const isFile = i === parts.length - 1;
-      let child = node.children.find((c) => c.name === part);
-      if (!child) {
-        child = { name: part, path: parts.slice(0, i + 1).join("/"), isFile, children: [] };
-        node.children.push(child);
-      }
-      node = child;
-    });
-  }
-  // Folders first, then files; alphabetical within.
-  const sort = (n: TreeNode) => {
-    n.children.sort((a, b) => (a.isFile === b.isFile ? a.name.localeCompare(b.name) : a.isFile ? 1 : -1));
-    n.children.forEach(sort);
-  };
-  sort(root);
-  return root.children;
-}
 
 function FilesTab({ workspace, onViewFile }: { workspace: Workspace; onViewFile: (path: string) => void }) {
   const { prefs } = usePreferences();
