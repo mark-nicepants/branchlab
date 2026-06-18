@@ -9,6 +9,17 @@ use crate::git::{self, DiffStat, FileChange, FileContent, RemoteInfo};
 use crate::project::{ProjectView, Registry, Workspace};
 use crate::server::{ServerInfo, ServerManager};
 
+/// Look up a workspace path, returning a uniform "unknown workspace" error.
+/// Used by every command that takes a workspace_id and operates on its path.
+fn with_workspace_path<T>(
+    registry: &Registry,
+    workspace_id: &str,
+    f: impl FnOnce(&str) -> Result<T, String>,
+) -> Result<T, String> {
+    let path = registry.workspace_path(workspace_id).ok_or("unknown workspace")?;
+    f(&path)
+}
+
 #[tauri::command]
 pub fn add_project(path: String, registry: State<Registry>) -> Result<ProjectView, String> {
     registry.add_project(&path)
@@ -124,15 +135,13 @@ pub fn workspace_files(workspace_id: String, registry: State<Registry>) -> Vec<S
 /// Read a file's contents from a workspace for the in-app viewer.
 #[tauri::command]
 pub fn read_file(workspace_id: String, file: String, registry: State<Registry>) -> Result<FileContent, String> {
-    let repo = registry.workspace_path(&workspace_id).ok_or("unknown workspace")?;
-    git::read_file(&repo, &file)
+    with_workspace_path(&registry, &workspace_id, |repo| git::read_file(repo, &file))
 }
 
 /// Discard a file's local changes (restore to HEAD, or delete if untracked).
 #[tauri::command]
 pub fn discard_file(workspace_id: String, file: String, registry: State<Registry>) -> Result<(), String> {
-    let repo = registry.workspace_path(&workspace_id).ok_or("unknown workspace")?;
-    git::discard_file(&repo, &file)
+    with_workspace_path(&registry, &workspace_id, |repo| git::discard_file(repo, &file))
 }
 
 // ── Workspace lifecycle: commit, merge, push, PR ──
@@ -171,8 +180,7 @@ fn resolve_workspace_branch(
 /// Commit all changes in the workspace. Fails if there is nothing staged.
 #[tauri::command]
 pub fn commit_workspace(workspace_id: String, message: String, registry: State<Registry>) -> Result<String, String> {
-    let path = registry.workspace_path(&workspace_id).ok_or("unknown workspace")?;
-    git::commit_all(&path, &message)
+    with_workspace_path(&registry, &workspace_id, |path| git::commit_all(path, &message))
 }
 
 /// Merge the workspace branch into its base branch in the parent repo.
@@ -215,8 +223,7 @@ pub fn start_server(
     registry: State<Registry>,
     servers: State<ServerManager>,
 ) -> Result<ServerInfo, String> {
-    let path = registry.workspace_path(&workspace_id).ok_or_else(|| format!("unknown workspace: {workspace_id}"))?;
-    servers.start(&workspace_id, &path)
+    with_workspace_path(&registry, &workspace_id, |path| servers.start(&workspace_id, path))
 }
 
 #[tauri::command]
@@ -249,8 +256,7 @@ pub fn restart_server(
     servers: State<ServerManager>,
 ) -> Result<ServerInfo, String> {
     servers.stop(&workspace_id);
-    let path = registry.workspace_path(&workspace_id).ok_or_else(|| format!("unknown workspace: {workspace_id}"))?;
-    servers.start(&workspace_id, &path)
+    with_workspace_path(&registry, &workspace_id, |path| servers.start(&workspace_id, path))
 }
 
 // ── Config & internals ──
@@ -260,8 +266,7 @@ fn config_dir(scope: &str, workspace_id: Option<String>, registry: &Registry) ->
         "global" => Ok(config::global_dir()),
         "project" => {
             let id = workspace_id.ok_or("workspace id required for project config")?;
-            let path = registry.workspace_path(&id).ok_or("unknown workspace")?;
-            Ok(PathBuf::from(path))
+            with_workspace_path(registry, &id, |path| Ok(PathBuf::from(path)))
         }
         _ => Err(format!("unknown config scope: {scope}")),
     }
@@ -299,6 +304,8 @@ pub fn open_devtools(window: tauri::WebviewWindow) {
 /// Open a path in an external app. `app` is a macOS application name for
 /// `open -a` (e.g. "Terminal", "Visual Studio Code"); omit it to reveal the
 /// path in Finder. (Windows/Linux equivalents land with the portability pass.)
+// macOS-only: shells out to `open`. Needs `#[cfg(target_os = "macos")]` plus
+// Windows/Linux branches before this can ship cross-platform.
 #[tauri::command]
 pub fn open_external(path: String, app: Option<String>) -> Result<(), String> {
     use std::process::Command;

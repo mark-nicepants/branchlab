@@ -224,4 +224,20 @@ mod tests {
         assert_eq!(url, "http://127.0.0.1:47391");
         assert_eq!(parse_port(&url), Some(47391));
     }
+
+    #[test]
+    fn parse_listening_url_ignores_lines_without_http() {
+        assert_eq!(parse_listening_url("starting opencode..."), None);
+    }
+
+    #[test]
+    fn parse_listening_url_trims_trailing_punctuation() {
+        let url = parse_listening_url("listening on http://127.0.0.1:1234.").unwrap();
+        assert_eq!(url, "http://127.0.0.1:1234");
+    }
+
+    #[test]
+    fn parse_port_returns_none_when_missing() {
+        assert_eq!(parse_port("http://127.0.0.1"), None);
+    }
 }

@@ -15,6 +15,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::git;
 
+// Default lifecycle prompts seeded into every new project. Users can override
+// them per-project via the settings dialog.
+const DEFAULT_INIT_WORKSPACE: &str = "Set up the new workspace.";
+const DEFAULT_COMMIT: &str = "Stage all changes in this workspace with git add -A, then commit with a clear, concise conventional commit message that summarizes the diff. Do not push.";
+const DEFAULT_MERGE: &str = "Merge this workspace's branch into the base/main branch of the repository. First run the git commands from this workspace directory. Then switch to the base branch in the parent repository, merge this workspace's branch into it, and push the result to origin. Confirm the merge succeeded.";
+const DEFAULT_PUSH: &str =
+    "Push the current workspace branch to the origin remote. Confirm the remote and branch name.";
+const DEFAULT_CREATE_PR: &str = "Push the current workspace branch to origin and open a GitHub pull request against the base branch using gh pr create. Use a clear title and description based on the changes.";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
     pub id: String,
@@ -37,11 +46,11 @@ pub struct ProjectPrompts {
 impl Default for ProjectPrompts {
     fn default() -> Self {
         Self {
-            init_workspace: Some("Set up the new workspace.".into()),
-            commit: Some("Stage all changes in this workspace with git add -A, then commit with a clear, concise conventional commit message that summarizes the diff. Do not push.".into()),
-            merge: Some("Merge this workspace's branch into the base/main branch of the repository. First run the git commands from this workspace directory. Then switch to the base branch in the parent repository, merge this workspace's branch into it, and push the result to origin. Confirm the merge succeeded.".into()),
-            push: Some("Push the current workspace branch to the origin remote. Confirm the remote and branch name.".into()),
-            create_pr: Some("Push the current workspace branch to origin and open a GitHub pull request against the base branch using gh pr create. Use a clear title and description based on the changes.".into()),
+            init_workspace: Some(DEFAULT_INIT_WORKSPACE.into()),
+            commit: Some(DEFAULT_COMMIT.into()),
+            merge: Some(DEFAULT_MERGE.into()),
+            push: Some(DEFAULT_PUSH.into()),
+            create_pr: Some(DEFAULT_CREATE_PR.into()),
         }
     }
 }
@@ -385,4 +394,31 @@ fn current_branch(path: &Path) -> Option<String> {
     }
     let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (!branch.is_empty()).then_some(branch)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn id_for_is_stable_for_a_path() {
+        let a = id_for("/Users/me/repo");
+        let b = id_for("/Users/me/repo");
+        assert_eq!(a, b);
+        assert_eq!(a.len(), 16);
+    }
+
+    #[test]
+    fn id_for_differs_between_paths() {
+        assert_ne!(id_for("/a"), id_for("/b"));
+    }
+
+    #[test]
+    fn unique_codename_skips_existing() {
+        // Block every codename the generator could produce (it's adj-animal,
+        // bounded), so the function must fall back to the suffix form.
+        let blocked = (0..1000).map(|_| generate_codename()).collect::<Vec<_>>();
+        let name = unique_codename(&blocked);
+        assert!(!blocked.iter().any(|b| b == &name));
+    }
 }
