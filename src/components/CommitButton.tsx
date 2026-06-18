@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Check, ChevronDown, GitPullRequest, Upload } from "lucide-react";
 import { toast } from "sonner";
-import type { ProjectPrompts, ProjectView, Workspace } from "../lib/types";
+import type { ProjectView, Workspace } from "../lib/types";
 import type { WorkspaceAction } from "./Chat";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,20 +28,12 @@ interface Props {
   onAction: (action: WorkspaceAction) => void;
 }
 
-const DEFAULT_PROMPTS: Required<ProjectPrompts> = {
-  init_workspace: "Set up the new workspace.",
-  commit: "Stage all changes in this workspace with git add -A, then commit with a clear, concise conventional commit message that summarizes the diff. Do not push.",
-  merge: "Merge this workspace's branch into the base/main branch of the repository. First run the git commands from this workspace directory. Then switch to the base branch in the parent repository, merge this workspace's branch into it, and push the result to origin. Confirm the merge succeeded.",
-  push: "Push the current workspace branch to the origin remote. Confirm the remote and branch name.",
-  create_pr: "Push the current workspace branch to origin and open a GitHub pull request against the base branch using gh pr create. Use a clear title and description based on the changes.",
-};
-
-const DISPLAY: Record<Exclude<keyof ProjectPrompts, "init_workspace">, string> = {
+const DISPLAY = {
   commit: "Committing changes…",
   merge: "Merging workspace into main…",
   push: "Pushing branch to GitHub…",
   create_pr: "Opening pull request on GitHub…",
-};
+} as const;
 
 export function CommitButton({ workspace, project, onAction }: Props) {
   const [prOpen, setPrOpen] = useState(false);
@@ -53,7 +45,7 @@ export function CommitButton({ workspace, project, onAction }: Props) {
   const base = workspace.base_branch ?? "main";
 
   function send(kind: "commit" | "merge" | "push") {
-    const prompt = (prompts[kind] ?? DEFAULT_PROMPTS[kind]) || "";
+    const prompt = prompts[kind] ?? "";
     const display = DISPLAY[kind];
     onAction({
       kind,
@@ -69,7 +61,7 @@ export function CommitButton({ workspace, project, onAction }: Props) {
       toast.error("Enter a PR title");
       return;
     }
-    const prompt = (prompts.create_pr ?? DEFAULT_PROMPTS.create_pr) || "";
+    const prompt = prompts.create_pr ?? "";
     const display = DISPLAY.create_pr;
     const promptWithInputs = `${prompt} Use PR title: "${t}"${body.trim() ? ` and description: """${body.trim()}"""` : ""}.`;
     onAction({
