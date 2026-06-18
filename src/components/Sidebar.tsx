@@ -160,11 +160,11 @@ export function Sidebar({
                   ) : (
                     <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
                   )}
-                  <span className="truncate text-[13px] font-semibold uppercase tracking-wide">
+                  <span className="truncate text-[13px] font-semibold uppercase tracking-wide" title={p.name}>
                     {p.name}
                   </span>
                 </button>
-                <span className="flex items-center text-muted-foreground">
+                <span className="flex shrink-0 items-center text-muted-foreground">
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button variant="ghost" size="icon" className="size-6" onClick={() => onQuickCreate(p)}>
@@ -214,7 +214,7 @@ export function Sidebar({
                   <ContextMenuTrigger asChild>
                     <div
                       className={cn(
-                        "group/ws flex items-center rounded-md ring-1 ring-transparent hover:ring-border",
+                        "group/ws flex items-center hover:bg-sidebar-accent",
                         w.id === selectedWorkspaceId && "bg-sidebar-accent",
                       )}
                     >
@@ -223,7 +223,7 @@ export function Sidebar({
                         onClick={() => onSelectWorkspace(w)}
                       >
                         <span className="size-3.5 shrink-0" />
-                        <span className="truncate text-sm">{workspaceLabel(w)}</span>
+                        <span className="truncate text-sm" title={workspaceLabel(w)}>{workspaceLabel(w)}</span>
                         {stats[w.id]?.files ? (
                           <span className="ml-auto shrink-0 font-mono text-[10px]">
                             <span className="text-additions">+{stats[w.id].insertions}</span>{" "}
@@ -252,6 +252,21 @@ export function Sidebar({
                           <TooltipContent>Delete workspace</TooltipContent>
                         </Tooltip>
                       )}
+                      {w.kind === "Base" && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="mr-1 size-6 text-destructive opacity-0 group-hover/ws:opacity-100"
+                              onClick={() => void deleteWorkspace(w)}
+                            >
+                              <Trash2 className="size-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Delete base workspace</TooltipContent>
+                        </Tooltip>
+                      )}
                     </div>
                   </ContextMenuTrigger>
                   <ContextMenuContent>
@@ -271,6 +286,11 @@ export function Sidebar({
                     {w.kind === "Worktree" && (
                       <ContextMenuItem variant="destructive" onClick={() => void deleteWorkspace(w)}>
                         <Trash2 className="size-4" /> Delete workspace
+                      </ContextMenuItem>
+                    )}
+                    {w.kind === "Base" && (
+                      <ContextMenuItem variant="destructive" onClick={() => void deleteWorkspace(w)}>
+                        <Trash2 className="size-4" /> Delete base workspace
                       </ContextMenuItem>
                     )}
                   </ContextMenuContent>

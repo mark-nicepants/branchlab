@@ -69,7 +69,9 @@ pub fn get_project_prompts(
     registry.prompts(&project_id)
 }
 
-/// Remove a worktree workspace: stop its server first, then remove the worktree.
+/// Remove a workspace: stop its server first. For worktree workspaces the git
+/// worktree is also removed; for base workspaces only the registry entry is
+/// deleted and the repo directory is left untouched.
 #[tauri::command]
 pub fn remove_workspace(
     workspace_id: String,

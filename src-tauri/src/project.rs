@@ -316,19 +316,22 @@ impl Registry {
         Ok(ws)
     }
 
-    /// Remove a worktree workspace (and its git worktree). Base workspaces
-    /// cannot be removed this way — remove the project instead.
+    /// Remove a workspace from the registry. For worktree workspaces the git
+    /// worktree is also removed. Base workspaces are removed from the registry
+    /// only (the underlying repo directory is never touched); removing the last
+    /// base workspace effectively orphans its project, so callers should
+    /// consider removing the project too.
     pub fn remove_workspace(&self, workspace_id: &str, force: bool) -> Result<(), String> {
-        let (project_id, path) = {
+        let (project_id, kind, path) = {
             let data = self.data.lock().unwrap();
             let ws = data.workspaces.iter().find(|w| w.id == workspace_id).ok_or("unknown workspace")?;
-            if ws.kind == WorkspaceKind::Base {
-                return Err("cannot remove the base workspace".into());
-            }
-            (ws.project_id.clone(), ws.path.clone())
+            (ws.project_id.clone(), ws.kind.clone(), ws.path.clone())
         };
-        let root = self.repo_root(&project_id).ok_or("unknown project")?;
-        git::remove_worktree(&root, &path, force)?;
+
+        if kind == WorkspaceKind::Worktree {
+            let root = self.repo_root(&project_id).ok_or("unknown project")?;
+            git::remove_worktree(&root, &path, force)?;
+        }
 
         let mut data = self.data.lock().unwrap();
         data.workspaces.retain(|w| w.id != workspace_id);
