@@ -150,7 +150,7 @@ export function Sidebar({
 
           {projects.map((p) => (
             <div key={p.id} className="group/project mb-2">
-              <div className="flex items-center justify-between px-2 py-1">
+              <div className="flex min-w-0 items-center justify-between px-2 py-1">
                 <button
                   className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
                   onClick={() => toggleCollapsed(p.id)}
@@ -223,7 +223,9 @@ export function Sidebar({
                         onClick={() => onSelectWorkspace(w)}
                       >
                         <span className="size-3.5 shrink-0" />
-                        <span className="truncate text-sm" title={workspaceLabel(w)}>{workspaceLabel(w)}</span>
+                        <span className="min-w-0 flex-1 truncate text-sm" title={workspaceLabel(w)}>
+                          {workspaceLabel(w)}
+                        </span>
                         {stats[w.id]?.files ? (
                           <span className="ml-auto shrink-0 font-mono text-[10px]">
                             <span className="text-additions">+{stats[w.id].insertions}</span>{" "}
