@@ -147,10 +147,15 @@ export class OpencodeClient {
   /**
    * List pending V2 question requests for a session.
    * Returns empty array on older servers that don't expose the V2 endpoint.
+   * The server may return either an array or a wrapped object; normalize it.
    */
   async listQuestionsV2(sessionId: string): Promise<QuestionV2Request[]> {
     try {
-      return await this.json<QuestionV2Request[]>(`/api/session/${sessionId}/question`);
+      const data = await this.json<QuestionV2Request[] | { requests?: QuestionV2Request[]; questions?: QuestionV2Request[] }>(
+        `/api/session/${sessionId}/question`,
+      );
+      if (Array.isArray(data)) return data;
+      return data?.requests ?? data?.questions ?? [];
     } catch {
       return [];
     }
@@ -174,11 +179,15 @@ export class OpencodeClient {
 
   /**
    * List pending V1 question requests. Falls back to empty array on servers
-   * that only expose the V2 API.
+   * that only expose the V2 API. Normalizes wrapped responses too.
    */
   async listQuestions(): Promise<QuestionRequest[]> {
     try {
-      return await this.json<QuestionRequest[]>("/question");
+      const data = await this.json<QuestionRequest[] | { requests?: QuestionRequest[]; questions?: QuestionRequest[] }>(
+        "/question",
+      );
+      if (Array.isArray(data)) return data;
+      return data?.requests ?? data?.questions ?? [];
     } catch {
       return [];
     }
