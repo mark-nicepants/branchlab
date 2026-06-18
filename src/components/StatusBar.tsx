@@ -71,9 +71,7 @@ export function StatusBar({
           {workspace ? (
             pct !== null ? (
               <HoverCard openDelay={150}>
-                <HoverCardTrigger
-                  className={cn("truncate", pct >= 80 && "text-amber-600 dark:text-amber-400")}
-                >
+                <HoverCardTrigger className={cn("truncate", pct >= 80 && "text-warning")}>
                   {pct}% context
                 </HoverCardTrigger>
                 <HoverCardContent side="top" align="center" className="w-56 rounded-none text-xs">

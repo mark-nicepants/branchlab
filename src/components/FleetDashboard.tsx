@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SectionLabel } from "@/components/ui/section-label";
 import { FolderPlus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { workspaceDiffStat } from "../lib/api";
@@ -68,9 +69,7 @@ export function FleetDashboard({ projects, onOpenWorkspace, onAddProject }: Prop
                   className="flex flex-col gap-1.5 rounded-lg border border-border bg-card p-3 text-left transition-colors hover:border-muted-foreground/40"
                   onClick={() => onOpenWorkspace(workspace)}
                 >
-                  <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-                    {projectName}
-                  </span>
+                  <SectionLabel>{projectName}</SectionLabel>
                   <span className="truncate text-sm font-medium">{workspaceLabel(workspace)}</span>
                   <span className="text-[11px] text-muted-foreground">
                     {workspace.kind === "Base" ? "base repo" : "workspace"}
@@ -79,9 +78,8 @@ export function FleetDashboard({ projects, onOpenWorkspace, onAddProject }: Prop
                     {diff &&
                       (diff.files > 0 ? (
                         <>
-                          {diff.files} files{" "}
-                          <span className="text-emerald-600 dark:text-emerald-400">+{diff.insertions}</span>{" "}
-                          <span className="text-red-600 dark:text-red-400">−{diff.deletions}</span>
+                          {diff.files} files <span className="text-additions">+{diff.insertions}</span>{" "}
+                          <span className="text-deletions">−{diff.deletions}</span>
                         </>
                       ) : (
                         <span className="text-muted-foreground">clean</span>

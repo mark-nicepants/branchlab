@@ -5,7 +5,8 @@ import { readConfig, restartServer, writeConfig } from "../../lib/api";
 import { OpencodeClient } from "../../lib/opencode";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { cn } from "@/lib/utils";
+import { Segmented, SegmentedItem } from "@/components/ui/segmented";
+import { SectionLabel } from "@/components/ui/section-label";
 
 interface Props {
   workspaceId: string;
@@ -73,14 +74,14 @@ export function ConfigView({ workspaceId, baseUrl, onRestarted }: Props) {
     <div className="flex h-full flex-col overflow-y-auto">
       <div className="space-y-3 p-4">
         <div className="flex items-center gap-2">
-          <div className="flex rounded-md border border-border p-0.5">
-            <Seg active={scope === "project"} onClick={() => setScope("project")}>
+          <Segmented>
+            <SegmentedItem active={scope === "project"} onClick={() => setScope("project")}>
               Project
-            </Seg>
-            <Seg active={scope === "global"} onClick={() => setScope("global")}>
+            </SegmentedItem>
+            <SegmentedItem active={scope === "global"} onClick={() => setScope("global")}>
               Global
-            </Seg>
-          </div>
+            </SegmentedItem>
+          </Segmented>
           <span className="truncate font-mono text-xs text-muted-foreground" title={path}>
             {path}
           </span>
@@ -146,26 +147,10 @@ export function ConfigView({ workspaceId, baseUrl, onRestarted }: Props) {
   );
 }
 
-function Seg({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "rounded px-2 py-0.5 text-xs",
-        active ? "bg-accent text-accent-foreground" : "text-muted-foreground",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="border-t border-border">
-      <div className="px-4 py-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-        {title}
-      </div>
+      <SectionLabel className="px-4 py-2">{title}</SectionLabel>
       {children}
     </div>
   );

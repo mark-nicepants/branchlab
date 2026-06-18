@@ -8,8 +8,8 @@ const GUTTER = "w-10 shrink-0 select-none px-1 text-right text-muted-foreground/
 const CODE = "min-w-0 flex-1 select-text whitespace-pre-wrap break-words px-1";
 
 function bgFor(type: DiffLineType): string {
-  if (type === "add") return "bg-emerald-500/10";
-  if (type === "del") return "bg-red-500/10";
+  if (type === "add") return "bg-additions/10";
+  if (type === "del") return "bg-deletions/10";
   return "";
 }
 
@@ -20,7 +20,7 @@ export function UnifiedDiff({ hunks }: { hunks: DiffHunk[] }) {
     <div className="font-mono text-[12px] leading-[1.5]">
       {hunks.map((h, i) => (
         <div key={i}>
-          <div className="bg-muted/40 px-2 py-0.5 text-sky-600 dark:text-sky-400">{h.header}</div>
+          <div className="bg-muted/40 px-2 py-0.5 text-info">{h.header}</div>
           {h.lines.map((l, j) => (
             <div key={j} className={cn("flex", bgFor(l.type))}>
               <span className={GUTTER}>{l.oldNo ?? ""}</span>
@@ -42,7 +42,7 @@ export function SplitDiff({ hunks }: { hunks: DiffHunk[] }) {
     <div className="font-mono text-[12px] leading-[1.5]">
       {hunks.map((h, i) => (
         <div key={i}>
-          <div className="bg-muted/40 px-2 py-0.5 text-sky-600 dark:text-sky-400">{h.header}</div>
+          <div className="bg-muted/40 px-2 py-0.5 text-info">{h.header}</div>
           {splitRows(h).map((r, j) => (
             <div key={j} className="flex">
               <SplitSide line={r.left} which="old" />

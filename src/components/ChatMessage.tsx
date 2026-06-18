@@ -64,7 +64,7 @@ export function SystemMessageView({ message }: SystemMessageProps) {
   const d = DENSITY[prefs.chatDensity] ?? DENSITY.loose;
   const kindStyles = {
     info: "border-border bg-muted/50 text-muted-foreground",
-    success: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+    success: "border-additions/30 bg-additions/10 text-additions",
     error: "border-destructive/30 bg-destructive/10 text-destructive",
   };
   const justify = message.align === "left" ? "justify-start" : "justify-center";

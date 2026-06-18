@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { FileWarning, Loader2, TriangleAlert } from "lucide-react";
 import { readFile } from "../../lib/api";
 import type { FileContent } from "../../lib/types";
+import { EmptyState } from "@/components/ui/empty-state";
 
 type State =
   | { kind: "loading" }
@@ -36,10 +37,10 @@ export function FileView({ workspaceId, file }: { workspaceId: string; file: str
 
   if (state.kind === "error") {
     return (
-      <Centered icon={<TriangleAlert className="size-6 text-destructive" />}>
+      <EmptyState icon={<TriangleAlert className="size-6 text-destructive" />}>
         Could not open this file.
         <span className="mt-1 block font-mono text-xs">{state.message}</span>
-      </Centered>
+      </EmptyState>
     );
   }
 
@@ -47,9 +48,9 @@ export function FileView({ workspaceId, file }: { workspaceId: string; file: str
 
   if (data.binary) {
     return (
-      <Centered icon={<FileWarning className="size-6 text-muted-foreground/60" />}>
+      <EmptyState icon={<FileWarning className="size-6 text-muted-foreground/60" />}>
         Binary file not shown ({formatBytes(data.size)}).
-      </Centered>
+      </EmptyState>
     );
   }
 
@@ -66,9 +67,7 @@ export function FileView({ workspaceId, file }: { workspaceId: string; file: str
         <span className="shrink-0">
           {lines.length} lines · {formatBytes(data.size)}
         </span>
-        {data.truncated && (
-          <span className="shrink-0 text-amber-600 dark:text-amber-400">truncated</span>
-        )}
+        {data.truncated && <span className="shrink-0 text-warning">truncated</span>}
       </div>
 
       <div className="flex-1 overflow-auto font-mono text-[12px] leading-[1.5]">
@@ -83,15 +82,6 @@ export function FileView({ workspaceId, file }: { workspaceId: string; file: str
           </div>
         ))}
       </div>
-    </div>
-  );
-}
-
-function Centered({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-sm text-muted-foreground">
-      {icon}
-      <p>{children}</p>
     </div>
   );
 }

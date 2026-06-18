@@ -4,11 +4,11 @@ import { startServer } from "../lib/api";
 import { OpencodeClient } from "../lib/opencode";
 import type { ContextInfo, ProjectView, Workspace } from "../lib/types";
 import { Button } from "@/components/ui/button";
+import { TabBarItem } from "@/components/ui/tab-bar";
 import { Chat, type WorkspaceAction } from "./Chat";
 import { CommitButton } from "./CommitButton";
 import { ChangesView } from "./center/ChangesView";
 import { FileView } from "./center/FileView";
-import { cn } from "@/lib/utils";
 
 export type CenterTab = "activity" | "changes" | "file";
 
@@ -93,14 +93,14 @@ export function WorkspaceView({
   return (
     <div className="flex h-full flex-col">
       <header className="flex shrink-0 items-center gap-1 border-b border-border px-3 text-sm">
-        <Tab active={tab === "activity"} onClick={() => onTabChange("activity")}>
+        <TabBarItem active={tab === "activity"} onClick={() => onTabChange("activity")}>
           Activity
-        </Tab>
-        <Tab active={tab === "changes"} onClick={() => onTabChange("changes")}>
+        </TabBarItem>
+        <TabBarItem active={tab === "changes"} onClick={() => onTabChange("changes")}>
           Changes
-        </Tab>
+        </TabBarItem>
         {viewerFile && (
-          <Tab active={tab === "file"} onClick={() => onTabChange("file")}>
+          <TabBarItem active={tab === "file"} onClick={() => onTabChange("file")}>
             <span className="flex items-center gap-1.5">
               <span className="max-w-40 truncate" title={viewerFile}>
                 {viewerFile.split("/").pop()}
@@ -118,7 +118,7 @@ export function WorkspaceView({
                 <X className="size-3" />
               </span>
             </span>
-          </Tab>
+          </TabBarItem>
         )}
         <div className="ml-auto">
           {workspace.kind === "Worktree" && state.kind === "ready" && (
@@ -167,26 +167,4 @@ export function WorkspaceView({
   );
 }
 
-function Tab({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "border-b-2 px-2 py-2.5 text-sm",
-        active
-          ? "border-primary font-medium text-foreground"
-          : "border-transparent text-muted-foreground hover:text-foreground",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
+

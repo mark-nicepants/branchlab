@@ -14,6 +14,9 @@ import { toast } from "sonner";
 import { openExternal, workspaceChanges, workspaceFiles } from "../../lib/api";
 import type { FileChange, Workspace } from "../../lib/types";
 import { Input } from "@/components/ui/input";
+import { EmptyState } from "@/components/ui/empty-state";
+import { TabBarItem } from "@/components/ui/tab-bar";
+import { fileStatus } from "@/lib/status";
 import { usePreferences } from "../PreferencesProvider";
 import { cn } from "@/lib/utils";
 
@@ -28,30 +31,22 @@ interface Props {
 
 type Tab = "changes" | "files";
 
-const STATUS_STYLES: Record<string, { letter: string; className: string }> = {
-  added: { letter: "A", className: "text-emerald-600 dark:text-emerald-400" },
-  untracked: { letter: "U", className: "text-emerald-600 dark:text-emerald-400" },
-  modified: { letter: "M", className: "text-amber-600 dark:text-amber-400" },
-  deleted: { letter: "D", className: "text-red-600 dark:text-red-400" },
-  renamed: { letter: "R", className: "text-sky-600 dark:text-sky-400" },
-};
-
 export function ChangesPanel({ workspace, viewed, onToggleViewed, onOpenFile, onViewFile }: Props) {
   const [tab, setTab] = useState<Tab>("changes");
 
   return (
     <div className="flex h-full flex-col bg-sidebar">
       <header className="flex items-center gap-1 border-b border-border px-3">
-        <PanelTab active={tab === "changes"} onClick={() => setTab("changes")}>
+        <TabBarItem active={tab === "changes"} onClick={() => setTab("changes")}>
           Changes
-        </PanelTab>
-        <PanelTab active={tab === "files"} onClick={() => setTab("files")}>
+        </TabBarItem>
+        <TabBarItem active={tab === "files"} onClick={() => setTab("files")}>
           Files
-        </PanelTab>
+        </TabBarItem>
       </header>
 
       {!workspace ? (
-        <Empty>Select a workspace to see its changes.</Empty>
+        <EmptyIcon>Select a workspace to see its changes.</EmptyIcon>
       ) : tab === "changes" ? (
         <ChangesTab workspace={workspace} viewed={viewed} onToggleViewed={onToggleViewed} onOpenFile={onOpenFile} />
       ) : (
@@ -61,28 +56,9 @@ export function ChangesPanel({ workspace, viewed, onToggleViewed, onOpenFile, on
   );
 }
 
-function PanelTab({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "border-b-2 px-2 py-2.5 text-sm",
-        active
-          ? "border-primary font-medium text-foreground"
-          : "border-transparent text-muted-foreground hover:text-foreground",
-      )}
-    >
-      {children}
-    </button>
-  );
+/** Local: empty state with the file-diff icon used in this panel. */
+function EmptyIcon({ children }: { children: React.ReactNode }) {
+  return <EmptyState icon={<FileDiff className="size-6 text-muted-foreground/60" />}>{children}</EmptyState>;
 }
 
 // ── Changes tab: the changed-files list ──
@@ -113,7 +89,7 @@ function ChangesTab({
 
   const shown = files.filter((f) => f.path.toLowerCase().includes(filter.toLowerCase()));
 
-  if (files.length === 0) return <Empty>No changes yet</Empty>;
+  if (files.length === 0) return <EmptyIcon>No changes yet</EmptyIcon>;
 
   return (
     <>
@@ -131,7 +107,7 @@ function ChangesTab({
           const slash = f.path.lastIndexOf("/");
           const dir = slash >= 0 ? f.path.slice(0, slash + 1) : "";
           const name = slash >= 0 ? f.path.slice(slash + 1) : f.path;
-          const s = STATUS_STYLES[f.status] ?? STATUS_STYLES.modified;
+          const s = fileStatus(f.status);
           return (
             <div
               key={f.path}
@@ -147,8 +123,8 @@ function ChangesTab({
                 </span>
               </button>
               <span className="shrink-0 font-mono text-[11px]">
-                {f.insertions > 0 && <span className="text-emerald-600 dark:text-emerald-400">+{f.insertions}</span>}{" "}
-                {f.deletions > 0 && <span className="text-red-600 dark:text-red-400">−{f.deletions}</span>}
+                {f.insertions > 0 && <span className="text-additions">+{f.insertions}</span>}{" "}
+                {f.deletions > 0 && <span className="text-deletions">−{f.deletions}</span>}
               </span>
               <button
                 className="shrink-0 text-muted-foreground hover:text-foreground"
@@ -156,7 +132,7 @@ function ChangesTab({
                 onClick={() => onToggleViewed(f.path)}
               >
                 {viewed.has(f.path) ? (
-                  <CheckCircle2 className="size-4 text-emerald-500" />
+                  <CheckCircle2 className="size-4 text-additions" />
                 ) : (
                   <Circle className="size-4" />
                 )}
@@ -228,7 +204,7 @@ function FilesTab({ workspace, onViewFile }: { workspace: Workspace; onViewFile:
     );
   }
 
-  if (paths.length === 0) return <Empty>No files.</Empty>;
+  if (paths.length === 0) return <EmptyIcon>No files.</EmptyIcon>;
 
   return (
     <div className="flex-1 overflow-auto py-1 text-sm">
@@ -311,11 +287,4 @@ function TreeRow({
   );
 }
 
-function Empty({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
-      <FileDiff className="size-6 text-muted-foreground/60" />
-      <p className="text-sm text-muted-foreground">{children}</p>
-    </div>
-  );
-}
+

@@ -6,6 +6,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { todoStatusBg } from "@/lib/status";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -66,16 +67,5 @@ export function TodoButton({ todos }: Props) {
 }
 
 function StatusDot({ status }: { status: string }) {
-  return (
-    <span
-      className={cn(
-        "mt-1 block size-1.5 shrink-0 rounded-full",
-        status === "completed" && "bg-green-500",
-        status === "in_progress" && "bg-blue-500",
-        status === "pending" && "bg-amber-500",
-        status === "cancelled" && "bg-destructive",
-        !["completed", "in_progress", "pending", "cancelled"].includes(status) && "bg-muted-foreground",
-      )}
-    />
-  );
+  return <span className={cn("mt-1 block size-1.5 shrink-0 rounded-full", todoStatusBg(status))} />;
 }

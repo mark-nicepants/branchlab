@@ -4,6 +4,9 @@ import type { LspStatus, McpStatus } from "../lib/types";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
+import { TabBarItem } from "@/components/ui/tab-bar";
+import { EmptyState } from "@/components/ui/empty-state";
+import { runtimeStatusBg } from "@/lib/status";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -14,14 +17,6 @@ interface Props {
 }
 
 type Tab = "mcp" | "lsp" | "plugins";
-
-/** Dot color for an MCP/LSP runtime status. */
-function statusColor(status: string | undefined): string {
-  if (status === "connected" || status === "active" || status === "running") return "bg-emerald-500";
-  if (status === "failed" || status === "error") return "bg-red-500";
-  if (status === "disabled") return "bg-muted-foreground/40";
-  return "bg-amber-500";
-}
 
 /**
  * Status-bar control for the workspace's OpenCode server. Click opens a popover
@@ -73,7 +68,7 @@ export function OpencodeStatus({ baseUrl, version, workspace, onRestart }: Props
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger className="flex items-center gap-1.5 truncate outline-none">
-        <span className={cn("size-1.5 rounded-full", running ? "bg-emerald-500" : "bg-muted-foreground/40")} />
+        <span className={cn("size-1.5 rounded-full", running ? "bg-additions" : "bg-muted-foreground/40")} />
         opencode{version ? ` ${version}` : ""}
       </PopoverTrigger>
       <PopoverContent side="top" align="end" className="w-72 rounded-none p-0">
@@ -84,25 +79,25 @@ export function OpencodeStatus({ baseUrl, version, workspace, onRestart }: Props
         ) : (
           <>
             <div className="flex items-center gap-1 border-b border-border px-1">
-              <TabButton active={tab === "mcp"} onClick={() => setTab("mcp")}>
+              <TabBarItem active={tab === "mcp"} onClick={() => setTab("mcp")} size="sm">
                 {mcp.length} MCP
-              </TabButton>
-              <TabButton active={tab === "lsp"} onClick={() => setTab("lsp")}>
+              </TabBarItem>
+              <TabBarItem active={tab === "lsp"} onClick={() => setTab("lsp")} size="sm">
                 {lsp.length ? `${lsp.length} ` : ""}LSP
-              </TabButton>
-              <TabButton active={tab === "plugins"} onClick={() => setTab("plugins")}>
+              </TabBarItem>
+              <TabBarItem active={tab === "plugins"} onClick={() => setTab("plugins")} size="sm">
                 {plugins.length ? `${plugins.length} ` : ""}Plugins
-              </TabButton>
+              </TabBarItem>
             </div>
 
             <div className="max-h-64 overflow-y-auto p-1.5">
               {tab === "mcp" &&
                 (mcp.length === 0 ? (
-                  <Empty>No MCP servers configured.</Empty>
+                  <EmptyState dense>No MCP servers configured.</EmptyState>
                 ) : (
                   mcp.map((m) => (
                     <div key={m.name} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm">
-                      <span className={cn("size-1.5 shrink-0 rounded-full", statusColor(m.status))} />
+                      <span className={cn("size-1.5 shrink-0 rounded-full", runtimeStatusBg(m.status))} />
                       <span className="min-w-0 flex-1 truncate" title={m.error ?? m.status}>
                         {m.name}
                       </span>
@@ -117,11 +112,11 @@ export function OpencodeStatus({ baseUrl, version, workspace, onRestart }: Props
 
               {tab === "lsp" &&
                 (lsp.length === 0 ? (
-                  <Empty>No LSP servers running.</Empty>
+                  <EmptyState dense>No LSP servers running.</EmptyState>
                 ) : (
                   lsp.map((l) => (
                     <div key={l.id} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm">
-                      <span className={cn("size-1.5 shrink-0 rounded-full", statusColor(l.status))} />
+                      <span className={cn("size-1.5 shrink-0 rounded-full", runtimeStatusBg(l.status))} />
                       <span className="min-w-0 flex-1 truncate">{l.id}</span>
                     </div>
                   ))
@@ -129,7 +124,7 @@ export function OpencodeStatus({ baseUrl, version, workspace, onRestart }: Props
 
               {tab === "plugins" &&
                 (plugins.length === 0 ? (
-                  <Empty>No plugins loaded.</Empty>
+                  <EmptyState dense>No plugins loaded.</EmptyState>
                 ) : (
                   plugins.map((p) => (
                     <div key={p} className="rounded-md px-2 py-1.5 text-sm">
@@ -159,30 +154,4 @@ export function OpencodeStatus({ baseUrl, version, workspace, onRestart }: Props
   );
 }
 
-function TabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "border-b-2 px-2 py-2 text-xs",
-        active
-          ? "border-primary font-medium text-foreground"
-          : "border-transparent text-muted-foreground hover:text-foreground",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
 
-function Empty({ children }: { children: React.ReactNode }) {
-  return <p className="px-2 py-4 text-center text-xs text-muted-foreground">{children}</p>;
-}

@@ -249,12 +249,8 @@ export function Sidebar({
                         <span className="truncate text-sm">{workspaceLabel(w)}</span>
                         {stats[w.id]?.files ? (
                           <span className="ml-auto shrink-0 font-mono text-[10px]">
-                            <span className="text-emerald-600 dark:text-emerald-400">
-                              +{stats[w.id].insertions}
-                            </span>{" "}
-                            <span className="text-red-600 dark:text-red-400">
-                              −{stats[w.id].deletions}
-                            </span>
+                            <span className="text-additions">+{stats[w.id].insertions}</span>{" "}
+                            <span className="text-deletions">−{stats[w.id].deletions}</span>
                           </span>
                         ) : (
                           w.kind === "Base" && (

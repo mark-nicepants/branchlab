@@ -13,6 +13,7 @@ import type { FileChange } from "../../lib/types";
 import { parseDiff } from "@/lib/diff";
 import { UnifiedDiff, SplitDiff } from "../DiffBody";
 import { Button } from "@/components/ui/button";
+import { Segmented, SegmentedItem } from "@/components/ui/segmented";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -95,21 +96,20 @@ export function ChangesView({
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-3 border-b border-border px-4 py-2 text-xs">
         <span className="text-muted-foreground">
-          {files.length} files{" "}
-          <span className="text-emerald-600 dark:text-emerald-400">+{totalIns}</span>{" "}
-          <span className="text-red-600 dark:text-red-400">−{totalDel}</span>
+          {files.length} files <span className="text-additions">+{totalIns}</span>{" "}
+          <span className="text-deletions">−{totalDel}</span>
         </span>
         <span className="text-muted-foreground">
           {viewedCount}/{files.length} viewed
         </span>
         <div className="ml-auto flex items-center gap-2">
           <Segmented>
-            <Seg active={view === "unified"} onClick={() => setView("unified")}>
+            <SegmentedItem active={view === "unified"} onClick={() => setView("unified")}>
               <Rows3 className="size-3.5" /> Unified
-            </Seg>
-            <Seg active={view === "split"} onClick={() => setView("split")}>
+            </SegmentedItem>
+            <SegmentedItem active={view === "split"} onClick={() => setView("split")}>
               <Columns2 className="size-3.5" /> Split
-            </Seg>
+            </SegmentedItem>
           </Segmented>
           <Button
             variant="ghost"
@@ -145,32 +145,6 @@ export function ChangesView({
   );
 }
 
-function Segmented({ children }: { children: React.ReactNode }) {
-  return <div className="flex rounded-md border border-border p-0.5">{children}</div>;
-}
-
-function Seg({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex items-center gap-1 rounded px-2 py-0.5 text-xs",
-        active ? "bg-accent text-accent-foreground" : "text-muted-foreground",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
 function DiffFile({
   file,
   diff,
@@ -201,8 +175,8 @@ function DiffFile({
           {file.path}
         </span>
         <span className="shrink-0 font-mono">
-          <span className="text-emerald-600 dark:text-emerald-400">+{file.insertions}</span>{" "}
-          <span className="text-red-600 dark:text-red-400">−{file.deletions}</span>
+          <span className="text-additions">+{file.insertions}</span>{" "}
+          <span className="text-deletions">−{file.deletions}</span>
         </span>
         <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={onDiscard}>
           <Undo2 className="size-3.5" /> Discard
@@ -210,7 +184,7 @@ function DiffFile({
         <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={onToggleViewed}>
           {viewed ? (
             <>
-              <Check className="size-3.5 text-emerald-500" /> Viewed
+              <Check className="size-3.5 text-additions" /> Viewed
             </>
           ) : (
             <>
