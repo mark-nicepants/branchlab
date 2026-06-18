@@ -124,7 +124,9 @@ export function usePreferences() {
   return useContext(PrefsCtx);
 }
 
-/** Curated app options for the "Open in…" settings (macOS app names). */
+// macOS-only: these are application names passed to `open -a` in
+// commands.rs::open_external. Cross-platform support will need a different
+// integration model (e.g. exec paths or freedesktop xdg-open).
 export const TERMINAL_APPS = ["Terminal", "iTerm", "Warp", "Ghostty", "Alacritty", "kitty"];
 export const EDITOR_APPS = [
   "Visual Studio Code",
