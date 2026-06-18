@@ -2,9 +2,8 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SectionLabel } from "@/components/ui/section-label";
 import { FolderPlus } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
-import { workspaceDiffStat } from "../lib/api";
-import { workspaceLabel, type DiffStat, type ProjectView, type Workspace } from "../lib/types";
+import { workspaceLabel, type ProjectView, type Workspace } from "../lib/types";
+import { useWorkspaceData } from "../hooks/useWorkspaceData";
 
 interface Props {
   projects: ProjectView[];
@@ -27,21 +26,7 @@ export function FleetDashboard({ projects, onOpenWorkspace, onAddProject }: Prop
     p.workspaces.map((w) => ({ workspace: w, projectName: p.name })),
   );
 
-  const [diffs, setDiffs] = useState<Record<string, DiffStat>>({});
-
-  const poll = useCallback(async () => {
-    const entries = await Promise.all(
-      rows.map(async (r) => [r.workspace.id, await workspaceDiffStat(r.workspace.id)] as const),
-    );
-    setDiffs(Object.fromEntries(entries));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projects]);
-
-  useEffect(() => {
-    void poll();
-    const t = setInterval(() => void poll(), 4000);
-    return () => clearInterval(t);
-  }, [poll]);
+  const { diffStats: diffs } = useWorkspaceData();
 
   return (
     <div className="flex h-full flex-col">

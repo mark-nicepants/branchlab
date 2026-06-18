@@ -8,12 +8,14 @@ import {
   Rows3,
   Undo2,
 } from "lucide-react";
-import { discardFile, workspaceChanges, workspaceFileDiff } from "../../lib/api";
+import { discardFile, workspaceFileDiff } from "../../lib/api";
 import type { FileChange } from "../../lib/types";
 import { parseDiff } from "@/lib/diff";
 import { UnifiedDiff, SplitDiff } from "../DiffBody";
 import { Button } from "@/components/ui/button";
 import { Segmented, SegmentedItem } from "@/components/ui/segmented";
+import { useWorkspaceData } from "../../hooks/useWorkspaceData";
+import { useCancellableEffect } from "../../hooks/useCancellableEffect";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -39,33 +41,25 @@ export function ChangesView({
   onMarkAllViewed,
 }: Props) {
   const [view, setView] = useState<ViewKind>("unified");
-  const [files, setFiles] = useState<FileChange[]>([]);
   const [diffs, setDiffs] = useState<Record<string, string>>({});
   const [openMap, setOpenMap] = useState<Record<string, boolean>>({});
-  const [tick, setTick] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const t = setInterval(() => setTick((x) => x + 1), 4000);
-    return () => clearInterval(t);
-  }, []);
+  const { changes, refreshChanges } = useWorkspaceData();
+  const files: FileChange[] = changes ?? [];
+  // Stable signature so we only refetch per-file diffs when the set changes,
+  // not on every poll cycle even when the file list hasn't changed.
+  const signature = files.map((f) => `${f.path}:${f.insertions}/${f.deletions}`).join(",");
 
-  useEffect(() => {
-    let cancelled = false;
-    workspaceChanges(workspaceId)
-      .then(async (fs) => {
-        if (cancelled) return;
-        setFiles(fs);
-        const entries = await Promise.all(
-          fs.map(async (f) => [f.path, await workspaceFileDiff(workspaceId, f.path)] as const),
-        );
-        if (!cancelled) setDiffs(Object.fromEntries(entries));
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [workspaceId, tick]);
+  useCancellableEffect(
+    async (cancelled) => {
+      const entries = await Promise.all(
+        files.map(async (f) => [f.path, await workspaceFileDiff(workspaceId, f.path)] as const),
+      );
+      if (!cancelled()) setDiffs(Object.fromEntries(entries));
+    },
+    [workspaceId, signature],
+  );
 
   useEffect(() => {
     if (!focusedFile) return;
@@ -81,7 +75,7 @@ export function ChangesView({
 
   async function discard(path: string) {
     await discardFile(workspaceId, path).catch(() => {});
-    setTick((x) => x + 1);
+    refreshChanges();
   }
 
   if (files.length === 0) {

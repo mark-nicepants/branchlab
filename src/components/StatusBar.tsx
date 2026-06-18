@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Layout } from "react-resizable-panels";
 import { restartServer, serverStatus } from "../lib/api";
+import { useInterval } from "../hooks/useInterval";
 import type { ContextInfo, ServerInfo, Workspace } from "../lib/types";
 import {
   HoverCard,
@@ -42,11 +43,14 @@ export function StatusBar({
       setServer(null);
       return;
     }
-    const poll = () => serverStatus(workspace.id).then(setServer).catch(() => {});
-    void poll();
-    const t = setInterval(poll, 5000);
-    return () => clearInterval(t);
+    serverStatus(workspace.id).then(setServer).catch(() => {});
   }, [workspace?.id]);
+  useInterval(
+    () => {
+      if (workspace) serverStatus(workspace.id).then(setServer).catch(() => {});
+    },
+    workspace ? 5000 : null,
+  );
 
   const pct = context && context.max > 0 ? Math.round((context.used / context.max) * 100) : null;
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Loader2, TriangleAlert, X } from "lucide-react";
 import { startServer } from "../lib/api";
 import { OpencodeClient } from "../lib/opencode";
@@ -9,6 +9,7 @@ import { Chat, type WorkspaceAction } from "./Chat";
 import { CommitButton } from "./CommitButton";
 import { ChangesView } from "./center/ChangesView";
 import { FileView } from "./center/FileView";
+import { useCancellableEffect } from "../hooks/useCancellableEffect";
 
 export type CenterTab = "activity" | "changes" | "file";
 
@@ -52,16 +53,14 @@ export function WorkspaceView({
   const [state, setState] = useState<State>({ kind: "starting" });
   const [attempt, setAttempt] = useState(0);
 
-  useEffect(() => {
-    let cancelled = false;
-    setState({ kind: "starting" });
-
-    (async () => {
+  useCancellableEffect(
+    async (cancelled) => {
+      setState({ kind: "starting" });
       try {
         const info = await startServer(workspace.id);
         const client = new OpencodeClient(info.base_url);
         let ok = false;
-        for (let i = 0; i < 40 && !cancelled; i++) {
+        for (let i = 0; i < 40 && !cancelled(); i++) {
           try {
             await client.health();
             ok = true;
@@ -70,19 +69,16 @@ export function WorkspaceView({
             await new Promise((r) => setTimeout(r, 150));
           }
         }
-        if (cancelled) return;
+        if (cancelled()) return;
         setState(
           ok ? { kind: "ready", baseUrl: info.base_url } : { kind: "error", message: "server did not become healthy" },
         );
       } catch (e) {
-        if (!cancelled) setState({ kind: "error", message: String(e) });
+        if (!cancelled()) setState({ kind: "error", message: String(e) });
       }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [workspace.id, attempt, reloadNonce]);
+    },
+    [workspace.id, attempt, reloadNonce],
+  );
 
   const dispatchAction = (action: WorkspaceAction) => {
     const el = document.getElementById("workspace-actions");

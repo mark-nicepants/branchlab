@@ -10,6 +10,7 @@ import { ThinkingSelector } from "./ThinkingSelector";
 import { ChatMessage, PartView, SystemMessageView } from "./ChatMessage";
 import { TodoButton } from "./TodoButton";
 import { usePreferences } from "./PreferencesProvider";
+import { useInterval } from "../hooks/useInterval";
 
 interface Props {
   workspace: Workspace;
@@ -350,30 +351,29 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext, onAction }: Pro
   }, [client, sessionId, upsertPart]);
 
   // Poll the session todo list while we have an active session.
-  useEffect(() => {
+  const fetchTodos = useCallback(() => {
     if (!sessionId) return;
-    const fetchTodos = () => {
-      client
-        .listTodos(sessionId)
-        .then((list) => {
-          // If the polled list matches a previously-dismissed snapshot
-          // (everything completed when the user sent a new turn), keep it
-          // hidden until the assistant produces a different list.
-          setDismissedTodos((dismissed) => {
-            if (dismissed && sameTodoList(list, dismissed)) {
-              setTodos([]);
-              return dismissed;
-            }
-            setTodos(list);
-            return null;
-          });
-        })
-        .catch(() => {});
-    };
-    fetchTodos();
-    const t = setInterval(fetchTodos, 2000);
-    return () => clearInterval(t);
+    client
+      .listTodos(sessionId)
+      .then((list) => {
+        // If the polled list matches a previously-dismissed snapshot
+        // (everything completed when the user sent a new turn), keep it
+        // hidden until the assistant produces a different list.
+        setDismissedTodos((dismissed) => {
+          if (dismissed && sameTodoList(list, dismissed)) {
+            setTodos([]);
+            return dismissed;
+          }
+          setTodos(list);
+          return null;
+        });
+      })
+      .catch(() => {});
   }, [client, sessionId]);
+  useEffect(() => {
+    fetchTodos();
+  }, [fetchTodos]);
+  useInterval(fetchTodos, sessionId ? 2000 : null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });

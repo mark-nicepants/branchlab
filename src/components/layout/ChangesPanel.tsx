@@ -11,12 +11,13 @@ import {
   SquareArrowOutUpRight,
 } from "lucide-react";
 import { toast } from "sonner";
-import { openExternal, workspaceChanges, workspaceFiles } from "../../lib/api";
-import type { FileChange, Workspace } from "../../lib/types";
+import { openExternal, workspaceFiles } from "../../lib/api";
+import type { Workspace } from "../../lib/types";
 import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/empty-state";
 import { TabBarItem } from "@/components/ui/tab-bar";
 import { fileStatus } from "@/lib/status";
+import { useWorkspaceData } from "../../hooks/useWorkspaceData";
 import { usePreferences } from "../PreferencesProvider";
 import { cn } from "@/lib/utils";
 
@@ -64,7 +65,6 @@ function EmptyIcon({ children }: { children: React.ReactNode }) {
 // ── Changes tab: the changed-files list ──
 
 function ChangesTab({
-  workspace,
   viewed,
   onToggleViewed,
   onOpenFile,
@@ -74,19 +74,9 @@ function ChangesTab({
   onToggleViewed: (path: string) => void;
   onOpenFile: (path: string) => void;
 }) {
-  const [files, setFiles] = useState<FileChange[]>([]);
   const [filter, setFilter] = useState("");
-  const [tick, setTick] = useState(0);
-
-  useEffect(() => {
-    const t = setInterval(() => setTick((x) => x + 1), 4000);
-    return () => clearInterval(t);
-  }, []);
-
-  useEffect(() => {
-    workspaceChanges(workspace.id).then(setFiles).catch(() => {});
-  }, [workspace.id, tick]);
-
+  const { changes } = useWorkspaceData();
+  const files = changes ?? [];
   const shown = files.filter((f) => f.path.toLowerCase().includes(filter.toLowerCase()));
 
   if (files.length === 0) return <EmptyIcon>No changes yet</EmptyIcon>;

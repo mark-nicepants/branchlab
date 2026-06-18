@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { FileWarning, Loader2, TriangleAlert } from "lucide-react";
 import { readFile } from "../../lib/api";
 import type { FileContent } from "../../lib/types";
 import { EmptyState } from "@/components/ui/empty-state";
+import { useCancellableEffect } from "../../hooks/useCancellableEffect";
 
 type State =
   | { kind: "loading" }
@@ -16,16 +17,15 @@ type State =
 export function FileView({ workspaceId, file }: { workspaceId: string; file: string }) {
   const [state, setState] = useState<State>({ kind: "loading" });
 
-  useEffect(() => {
-    let cancelled = false;
-    setState({ kind: "loading" });
-    readFile(workspaceId, file)
-      .then((data) => !cancelled && setState({ kind: "ready", data }))
-      .catch((e) => !cancelled && setState({ kind: "error", message: String(e) }));
-    return () => {
-      cancelled = true;
-    };
-  }, [workspaceId, file]);
+  useCancellableEffect(
+    (cancelled) => {
+      setState({ kind: "loading" });
+      readFile(workspaceId, file)
+        .then((data) => !cancelled() && setState({ kind: "ready", data }))
+        .catch((e) => !cancelled() && setState({ kind: "error", message: String(e) }));
+    },
+    [workspaceId, file],
+  );
 
   if (state.kind === "loading") {
     return (

@@ -20,6 +20,8 @@ import {
 } from "./lib/types";
 import { useShortcuts } from "./hooks/useShortcuts";
 import { useDesktopBehaviors } from "./hooks/useDesktopBehaviors";
+import { useInterval } from "./hooks/useInterval";
+import { WorkspaceDataProvider } from "./hooks/useWorkspaceData";
 import { Onboarding } from "./components/Onboarding";
 import { Sidebar } from "./components/Sidebar";
 import { WorkspaceView, type CenterTab } from "./components/WorkspaceView";
@@ -129,11 +131,11 @@ function App() {
     : null;
 
   useEffect(() => {
-    if (!selectedId) return;
-    void touchServer(selectedId);
-    const t = setInterval(() => void touchServer(selectedId), 60_000);
-    return () => clearInterval(t);
+    if (selectedId) void touchServer(selectedId);
   }, [selectedId]);
+  useInterval(() => {
+    if (selectedId) void touchServer(selectedId);
+  }, selectedId ? 60_000 : null);
 
   // Reset per-workspace UI state when switching workspaces.
   useEffect(() => {
@@ -217,7 +219,10 @@ function App() {
     return <Onboarding env={phase.env} onRecheck={check} rechecking={rechecking} />;
   }
 
+  const workspaceIds = useMemo(() => allWorkspaces.map((w) => w.id), [allWorkspaces]);
+
   return (
+    <WorkspaceDataProvider workspaceIds={workspaceIds} activeWorkspaceId={selectedId}>
     <div className="flex h-screen flex-col bg-background text-foreground">
       <Titlebar
         project={selectedProject?.name ?? null}
@@ -347,6 +352,7 @@ function App() {
         />
       )}
     </div>
+    </WorkspaceDataProvider>
   );
 }
 

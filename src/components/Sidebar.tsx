@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -16,14 +16,9 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
-import {
-  openExternal,
-  removeProject,
-  removeWorkspace,
-  renameWorkspace,
-  workspaceDiffStat,
-} from "../lib/api";
-import { workspaceLabel, type DiffStat, type ProjectView, type Workspace } from "../lib/types";
+import { openExternal, removeProject, removeWorkspace, renameWorkspace } from "../lib/api";
+import { workspaceLabel, type ProjectView, type Workspace } from "../lib/types";
+import { useWorkspaceData } from "../hooks/useWorkspaceData";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -79,30 +74,12 @@ export function Sidebar({
   onOpenSettings,
 }: Props) {
   const { prefs, setPref } = usePreferences();
+  const { diffStats: stats } = useWorkspaceData();
   const [renaming, setRenaming] = useState<Workspace | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(
     () => new Set(Object.entries(prefs.collapsedProjects).filter(([, v]) => v).map(([k]) => k)),
   );
-  const [stats, setStats] = useState<Record<string, DiffStat>>({});
-
-  // Poll per-workspace diff stats so the sidebar shows live +/- counts.
-  useEffect(() => {
-    let active = true;
-    const poll = async () => {
-      const ids = projects.flatMap((p) => p.workspaces.map((w) => w.id));
-      const entries = await Promise.all(
-        ids.map(async (id) => [id, await workspaceDiffStat(id)] as const),
-      );
-      if (active) setStats(Object.fromEntries(entries));
-    };
-    void poll();
-    const t = setInterval(() => void poll(), 5000);
-    return () => {
-      active = false;
-      clearInterval(t);
-    };
-  }, [projects]);
 
   const toggleCollapsed = (id: string) =>
     setCollapsed((prev) => {
