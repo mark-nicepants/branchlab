@@ -125,6 +125,7 @@ function App() {
   }, [phase.kind, refreshProjects]);
 
   const allWorkspaces = useMemo(() => projects.flatMap((p) => p.workspaces), [projects]);
+  const workspaceIds = useMemo(() => allWorkspaces.map((w) => w.id), [allWorkspaces]);
   const selected = selectedId ? allWorkspaces.find((w) => w.id === selectedId) ?? null : null;
   const selectedProject = selected
     ? projects.find((p) => p.id === selected.project_id) ?? null
@@ -218,8 +219,6 @@ function App() {
   if (phase.kind === "blocked") {
     return <Onboarding env={phase.env} onRecheck={check} rechecking={rechecking} />;
   }
-
-  const workspaceIds = useMemo(() => allWorkspaces.map((w) => w.id), [allWorkspaces]);
 
   return (
     <WorkspaceDataProvider workspaceIds={workspaceIds} activeWorkspaceId={selectedId}>
