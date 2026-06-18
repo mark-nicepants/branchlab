@@ -12,6 +12,9 @@ import { TodoButton } from "./TodoButton";
 import { usePreferences } from "./PreferencesProvider";
 import { useTodos } from "../hooks/useTodos";
 import { useClipboardImages } from "../hooks/useClipboardImages";
+import { useCommands } from "../hooks/useCommands";
+import { expandTemplate, filterCommands, isSlashTyping, parseSlash } from "../lib/slash";
+import { SlashCommandPalette } from "./SlashCommandPalette";
 
 interface Props {
   workspace: Workspace;
@@ -79,6 +82,8 @@ export function Chat({
   const { todos, dismissIfAllCompleted } = useTodos(client, sessionId);
   const { attachments, handlePaste, remove: removeAttachment, clear: clearAttachments } =
     useClipboardImages();
+  const { commands } = useCommands(client);
+  const [slashIndex, setSlashIndex] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [systemMessages, setSystemMessages] = useState<SystemMessage[]>([]);
@@ -336,6 +341,22 @@ export function Chat({
   async function send() {
     const text = input.trim();
     if ((!text && attachments.length === 0) || !sessionId || busy) return;
+
+    // Slash-command path: expand the template, then send like a normal prompt.
+    // Unknown commands surface an inline error and don't send.
+    let finalText = text;
+    let effectiveAgent = agent;
+    if (text.startsWith("/")) {
+      const parsed = parseSlash(text);
+      const match = parsed ? commands.find((c) => c.name === parsed.name) : null;
+      if (!match) {
+        setError(`Unknown command: ${parsed?.name ? `/${parsed.name}` : text}`);
+        return;
+      }
+      finalText = expandTemplate(match.template, parsed!.args);
+      if (match.subtask) effectiveAgent = "general";
+    }
+
     const sentAttachments = attachments;
     setInput("");
     clearAttachments();
@@ -351,7 +372,9 @@ export function Chat({
     // it back via SSE as a real message, so adding it here would duplicate it.
 
     // First interaction → let the title agent name the workspace (background).
-    if (!workspace.name && text && !nameRequested.current) {
+    // Skip for slash commands: their expanded templates are meta-prompts, not
+    // representative of the user's actual intent.
+    if (!workspace.name && text && !text.startsWith("/") && !nameRequested.current) {
       nameRequested.current = true;
       void client
         .generateName(text, model ?? undefined)
@@ -361,10 +384,10 @@ export function Chat({
     try {
       await client.sendPrompt(
         sessionId,
-        text,
+        finalText,
         model ?? undefined,
         variant ?? undefined,
-        agent,
+        effectiveAgent,
         sentAttachments.map((a) => ({ mime: a.mime, url: a.url, filename: a.filename })),
       );
     } catch (e) {
@@ -404,6 +427,19 @@ export function Chat({
     return () => saveDraft(inputRef.current);
   }, [saveDraft]);
 
+  // Slash autocomplete: visible while the user is still typing the command
+  // name (before the first whitespace). Filtered by case-insensitive prefix.
+  const showPalette = isSlashTyping(input);
+  const slashMatches = showPalette ? filterCommands(commands, input.slice(1)) : [];
+  // Reset selection when the filtered list changes so the highlight stays valid.
+  useEffect(() => {
+    setSlashIndex(0);
+  }, [showPalette, slashMatches.length]);
+
+  function pickCommand(name: string) {
+    setInput(`/${name} `);
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
@@ -442,6 +478,16 @@ export function Chat({
       </div>
 
       <div className="p-3">
+        {showPalette && (
+          <div className="mx-auto mb-2 max-w-4xl">
+            <SlashCommandPalette
+              commands={slashMatches}
+              selectedIndex={slashIndex}
+              onHover={setSlashIndex}
+              onPick={(c) => pickCommand(c.name)}
+            />
+          </div>
+        )}
         <div className="composer-shadow mx-auto max-w-4xl rounded-2xl border border-border bg-card transition-shadow focus-within:border-muted-foreground/40">
           {/* Controls on top (Polyscope-style), composer below. */}
           <div className="flex items-center gap-1.5 px-2 py-1.5">
@@ -497,12 +543,29 @@ export function Chat({
             onChange={(e) => setInput(e.target.value)}
             onPaste={handlePaste}
             onKeyDown={(e) => {
+              // ⌘/Ctrl+Enter always sends, regardless of palette state.
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
                 void send();
+                return;
+              }
+              if (showPalette && slashMatches.length > 0) {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setSlashIndex((i) => (i + 1) % slashMatches.length);
+                } else if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setSlashIndex((i) => (i - 1 + slashMatches.length) % slashMatches.length);
+                } else if (e.key === "Enter" || e.key === "Tab") {
+                  e.preventDefault();
+                  pickCommand(slashMatches[slashIndex].name);
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  setInput("");
+                }
               }
             }}
-            placeholder="Ask the agent…  (⌘/Ctrl+Enter to send, paste images to attach)"
+            placeholder="Ask the agent…  (⌘/Ctrl+Enter to send, / for commands, paste images to attach)"
             className="min-h-[80px] resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
           />
         </div>

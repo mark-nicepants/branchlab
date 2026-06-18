@@ -282,3 +282,20 @@ export interface ContextInfo {
   used: number;
   max: number;
 }
+
+/** One slash command from OpenCode's `/command` endpoint.
+ *
+ * Slash commands are client-side prompt templates: the client expands
+ * `$ARGUMENTS` in `template` with the user-supplied text and sends the result
+ * as a normal prompt. There is no dedicated server execution endpoint. */
+export interface CommandOption {
+  /** Identifier the user types after `/` (e.g. "review"). */
+  name: string;
+  description?: string;
+  /** Prompt body, may contain `$ARGUMENTS` placeholders. */
+  template: string;
+  /** "command" (user-defined) or "skill" (an opencode skill surfaced as one). */
+  source?: string;
+  /** Run as a sub-agent (delegated task) instead of in the user's current mode. */
+  subtask?: boolean;
+}

@@ -7,6 +7,7 @@
 import type {
   AgentOption,
   BusEvent,
+  CommandOption,
   LspStatus,
   McpStatus,
   MessageWithParts,
@@ -134,8 +135,8 @@ export class OpencodeClient {
     return this.json(`/session/${sessionId}/todo`);
   }
 
-  /** Available slash commands. */
-  listCommands(): Promise<{ name: string; description?: string }[]> {
+  /** Available slash commands (client-expanded prompt templates). */
+  listCommands(): Promise<CommandOption[]> {
     return this.json("/command");
   }
 
