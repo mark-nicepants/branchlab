@@ -9,11 +9,41 @@ BranchLab is a Tauri 2 desktop app (React 19 + TypeScript frontend, Rust
 backend) that drives the `opencode` CLI across git-worktree workspaces. See
 [README.md](README.md) for the user-facing overview and architecture diagram.
 
+## Browser-only visual debugging
+
+When a change is purely visual (layout, colors, truncation, hover states,
+etc.), you don't need a running Tauri backend. Use the browser dev harness:
+
+```bash
+npm run dev:browser
+```
+
+This serves the React frontend at `http://localhost:5173` with a mocked
+Tauri backend (`src/lib/api.mock.ts`). The mock includes sample projects
+with deliberately long names and realistic diff stats so truncation and
+overflow bugs are easy to spot.
+
+To inspect or validate the rendered UI, use the **Playwright MCP**
+(`playwright-mcp`) pointed at `http://localhost:5173`. Take screenshots,
+measure element boxes, and verify text-overflow behavior without launching
+the desktop app.
+
+How the harness works:
+- `index.browser.html` loads `src/main.browser.tsx` instead of `src/main.tsx`.
+- `main.browser.tsx` stubs `window.__TAURI_INTERNALS__` and renders `<App />`
+  with the same providers.
+- `vite.config.ts` aliases `./lib/api` to `./src/lib/api.mock.ts` when
+  `mode === "browser"`, so every component uses mock data.
+
+Limitations: filesystem/git/server lifecycle flows still require
+`npm run tauri dev`. The browser harness is for UI/visual verification only.
+
 ## Commands
 
 ```bash
 npm install                   # install frontend deps
 npm run tauri dev             # run the app (hot reload)
+npm run dev:browser           # run the frontend in a browser with mocked backend
 npm run build                 # tsc type-check + vite production build
 npm test                      # frontend unit tests (Vitest, run once)
 npm run test:watch            # Vitest watch mode
