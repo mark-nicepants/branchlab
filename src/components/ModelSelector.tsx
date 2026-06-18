@@ -144,7 +144,7 @@ function ManageModelsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="w-full max-w-lg">
         <DialogHeader>
           <DialogTitle>Manage models</DialogTitle>
           <DialogDescription>Customize which models appear in the model selector.</DialogDescription>

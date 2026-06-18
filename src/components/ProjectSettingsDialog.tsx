@@ -101,7 +101,7 @@ export function ProjectSettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex h-[80vh] max-w-4xl flex-row gap-0 overflow-hidden rounded-lg bg-card p-0 text-card-foreground">
+      <DialogContent className="flex h-[80vh] w-full max-w-4xl flex-row gap-0 overflow-hidden rounded-lg bg-card p-0 text-card-foreground">
         <nav className="flex w-48 shrink-0 flex-col bg-card">
           <NavItem tab="general" current={tab} icon={FileText} onClick={setTab}>
             General

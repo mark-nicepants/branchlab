@@ -288,7 +288,7 @@ export function Sidebar({
       </div>
 
       <Dialog open={!!renaming} onOpenChange={(o) => !o && setRenaming(null)}>
-        <DialogContent className="sm:max-w-sm">
+        <DialogContent className="w-full max-w-sm">
           <DialogHeader>
             <DialogTitle>Rename workspace</DialogTitle>
           </DialogHeader>

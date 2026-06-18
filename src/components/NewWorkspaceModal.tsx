@@ -74,7 +74,7 @@ export function NewWorkspaceModal({ project, onClose, onCreated }: Props) {
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="w-full max-w-md">
         <DialogHeader>
           <DialogTitle>New workspace in {project.name}</DialogTitle>
         </DialogHeader>

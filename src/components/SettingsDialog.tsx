@@ -46,7 +46,7 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="w-full max-w-lg">
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>Appearance and preferences.</DialogDescription>
