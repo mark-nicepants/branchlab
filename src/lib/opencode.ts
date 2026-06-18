@@ -12,6 +12,10 @@ import type {
   McpStatus,
   MessageWithParts,
   ModelOption,
+  QuestionReply,
+  QuestionRequest,
+  QuestionV2Reply,
+  QuestionV2Request,
   Session,
   Todo,
 } from "./types";
@@ -138,6 +142,59 @@ export class OpencodeClient {
   /** Available slash commands (client-expanded prompt templates). */
   listCommands(): Promise<CommandOption[]> {
     return this.json("/command");
+  }
+
+  /**
+   * List pending V2 question requests for a session.
+   * Returns empty array on older servers that don't expose the V2 endpoint.
+   */
+  async listQuestionsV2(sessionId: string): Promise<QuestionV2Request[]> {
+    try {
+      return await this.json<QuestionV2Request[]>(`/api/session/${sessionId}/question`);
+    } catch {
+      return [];
+    }
+  }
+
+  /** Submit answers to a V2 question request. `answers[i]` is the selected labels for question `i`. */
+  replyQuestionV2(sessionId: string, requestId: string, answers: string[][]): Promise<void> {
+    return this.json(`/api/session/${sessionId}/question/${requestId}/reply`, {
+      method: "POST",
+      body: JSON.stringify({ answers } satisfies QuestionV2Reply),
+    });
+  }
+
+  /** Reject/dismiss a V2 question request. */
+  rejectQuestionV2(sessionId: string, requestId: string): Promise<void> {
+    return this.json(`/api/session/${sessionId}/question/${requestId}/reject`, {
+      method: "POST",
+      body: "{}",
+    });
+  }
+
+  /**
+   * List pending V1 question requests. Falls back to empty array on servers
+   * that only expose the V2 API.
+   */
+  async listQuestions(): Promise<QuestionRequest[]> {
+    try {
+      return await this.json<QuestionRequest[]>("/question");
+    } catch {
+      return [];
+    }
+  }
+
+  /** Submit answers to a V1 question request. */
+  replyQuestion(requestId: string, answers: string[][]): Promise<void> {
+    return this.json(`/question/${requestId}/reply`, {
+      method: "POST",
+      body: JSON.stringify({ answers } satisfies QuestionReply),
+    });
+  }
+
+  /** Reject/dismiss a V1 question request. */
+  rejectQuestion(requestId: string): Promise<void> {
+    return this.json(`/question/${requestId}/reject`, { method: "POST", body: "{}" });
   }
 
   /** MCP servers with runtime status (`/mcp` → `{ name: { status, error? } }`). */

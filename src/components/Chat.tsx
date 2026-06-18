@@ -1,20 +1,30 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, GitBranch, Square, X } from "lucide-react";
-import { OpencodeClient } from "../lib/opencode";
-import type { BusEvent, ContextInfo, ModelOption, Part, Session, Workspace } from "../lib/types";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { ModelSelector } from "./ModelSelector";
-import { ModeSelector } from "./ModeSelector";
-import { ThinkingSelector } from "./ThinkingSelector";
-import { ChatMessage, PartView, SystemMessageView } from "./ChatMessage";
-import { TodoButton } from "./TodoButton";
-import { usePreferences } from "./PreferencesProvider";
-import { useTodos } from "../hooks/useTodos";
+import { ArrowUp, GitBranch, Square, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useClipboardImages } from "../hooks/useClipboardImages";
 import { useCommands } from "../hooks/useCommands";
+import { useTodos } from "../hooks/useTodos";
+import { OpencodeClient } from "../lib/opencode";
 import { expandTemplate, filterCommands, isSlashTyping, parseSlash } from "../lib/slash";
+import type {
+  BusEvent,
+  ContextInfo,
+  ModelOption,
+  Part,
+  QuestionRequest,
+  QuestionV2Request,
+  Session,
+  Workspace,
+} from "../lib/types";
+import { ChatMessage, PartView, SystemMessageView } from "./ChatMessage";
+import { QuestionView } from "./QuestionView";
+import { ModelSelector } from "./ModelSelector";
+import { ModeSelector } from "./ModeSelector";
+import { usePreferences } from "./PreferencesProvider";
 import { SlashCommandPalette } from "./SlashCommandPalette";
+import { ThinkingSelector } from "./ThinkingSelector";
+import { TodoButton } from "./TodoButton";
 
 interface Props {
   workspace: Workspace;
@@ -88,6 +98,9 @@ export function Chat({
   const [error, setError] = useState<string | null>(null);
   const [systemMessages, setSystemMessages] = useState<SystemMessage[]>([]);
   const [pendingOnFinish, setPendingOnFinish] = useState<OnFinishAction | null>(null);
+  const [pendingQuestions, setPendingQuestions] = useState<
+    Array<{ request: QuestionRequest | QuestionV2Request; version: 1 | 2 }>
+  >([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const nameRequested = useRef(false);
   // Tracks whether we are currently running a lifecycle action so we can detect
@@ -110,7 +123,39 @@ export function Chat({
   // Clear transient lifecycle notices when the workspace changes.
   useEffect(() => {
     clearSystemMessages();
+    setPendingQuestions([]);
   }, [workspace.id, clearSystemMessages]);
+
+  async function submitQuestionAnswers(
+    entry: { request: QuestionRequest | QuestionV2Request; version: 1 | 2 },
+    answers: string[][],
+  ) {
+    setError(null);
+    try {
+      if (entry.version === 2) {
+        await client.replyQuestionV2(entry.request.sessionID, entry.request.id, answers);
+      } else {
+        await client.replyQuestion(entry.request.id, answers);
+      }
+      setPendingQuestions((prev) => prev.filter((p) => p.request.id !== entry.request.id));
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function rejectQuestion(entry: { request: QuestionRequest | QuestionV2Request; version: 1 | 2 }) {
+    try {
+      if (entry.version === 2) {
+        await client.rejectQuestionV2(entry.request.sessionID, entry.request.id);
+      } else {
+        await client.rejectQuestion(entry.request.id);
+      }
+      setPendingQuestions((prev) => prev.filter((p) => p.request.id !== entry.request.id));
+    } catch {
+      // Dismiss locally even if the server call fails; the user explicitly cancelled.
+      setPendingQuestions((prev) => prev.filter((p) => p.request.id !== entry.request.id));
+    }
+  }
 
   // Lifecycle actions come from the workspace header buttons via the
   // `pendingAction` prop. We send the technical prompt to the AI but surface
@@ -246,6 +291,21 @@ export function Chat({
         setMessages(loadedMessages);
         setOrder(loadedOrder);
 
+        // Pick up any questions that were asked while we were disconnected.
+        const [v1Questions, v2Questions] = await Promise.all([
+          client.listQuestions(),
+          client.listQuestionsV2(session.id),
+        ]);
+        if (cancelled) return;
+        const combined = [
+          ...v1Questions.map((q) => ({ request: q, version: 1 as const })),
+          ...v2Questions.map((q) => ({ request: q, version: 2 as const })),
+        ];
+        setPendingQuestions((prev) => {
+          const existing = new Set(prev.map((p) => p.request.id));
+          return [...prev, ...combined.filter((c) => !existing.has(c.request.id))];
+        });
+
         // Send the workspace init prompt once after the session is ready.
         const initPrompt = workspace.init_prompt?.trim();
         if (initPrompt && !initPromptSent.current && !cancelled) {
@@ -329,6 +389,25 @@ export function Chat({
           setError(JSON.stringify(props.error));
           setBusy(false);
           break;
+        case "question.asked":
+        case "question.v2.asked": {
+          const q = props as QuestionRequest | QuestionV2Request;
+          if (!q.id || !q.sessionID || !Array.isArray(q.questions)) break;
+          setPendingQuestions((prev) => {
+            if (prev.some((p) => p.request.id === q.id)) return prev;
+            return [...prev, { request: q, version: e.type === "question.v2.asked" ? 2 : 1 }];
+          });
+          break;
+        }
+        case "question.replied":
+        case "question.v2.replied":
+        case "question.rejected":
+        case "question.v2.rejected": {
+          const requestID = (props.requestID as string) ?? (props.id as string);
+          if (!requestID) break;
+          setPendingQuestions((prev) => prev.filter((p) => p.request.id !== requestID));
+          break;
+        }
       }
     });
     return unsub;
@@ -469,10 +548,20 @@ export function Chat({
               </ChatMessage>
             );
           })}
+          {pendingQuestions.map((entry) => (
+            <div key={entry.request.id} className="flex w-full justify-start">
+              <div className="w-full max-w-[85%]">
+                <QuestionView
+                  questions={entry.request.questions}
+                  onSubmit={(answers) => void submitQuestionAnswers(entry, answers)}
+                  onCancel={() => void rejectQuestion(entry)}
+                />
+              </div>
+            </div>
+          ))}
           {systemMessages.map((sys) => (
             <SystemMessageView key={sys.id} message={sys} />
           ))}
-          {busy && <p className="text-xs text-muted-foreground">● working…</p>}
           {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
       </div>

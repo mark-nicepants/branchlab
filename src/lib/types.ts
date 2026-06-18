@@ -268,7 +268,56 @@ export interface LspStatus {
   status?: string;
 }
 
-/** A selectable OpenCode agent / mode. */
+/** One selectable option inside an OpenCode question. */
+export interface QuestionOption {
+  /** Display text (1-5 words, concise). */
+  label: string;
+  /** Explanation of choice. */
+  description: string;
+}
+
+/** One question inside a question request. */
+export interface QuestionInfo {
+  /** Complete question text. */
+  question: string;
+  /** Very short label (max 30 chars). */
+  header: string;
+  /** Available choices. */
+  options: QuestionOption[];
+  /** Allow selecting multiple options. */
+  multiple?: boolean;
+  /** Allow a free-text answer alongside/instead of options. */
+  custom?: boolean;
+}
+
+/** V2 question request emitted via `question.v2.asked` SSE event. */
+export interface QuestionV2Request {
+  /** Request ID used to reply. */
+  id: string;
+  sessionID: string;
+  questions: QuestionInfo[];
+  tool?: { messageID: string; callID: string };
+}
+
+/** V1 question request emitted via `question.asked` SSE event. */
+export interface QuestionRequest {
+  id: string;
+  sessionID: string;
+  questions: QuestionInfo[];
+  tool?: { messageID: string; callID: string };
+}
+
+/** Shape of the reply body for V2 questions. */
+export interface QuestionV2Reply {
+  /** User answers in order of questions (each answer is an array of selected labels). */
+  answers: string[][];
+}
+
+/** Shape of the reply body for V1 questions. */
+export interface QuestionReply {
+  answers: string[][];
+}
+
 export interface AgentOption {
   /** Agent name passed to `/session/{id}/prompt_async` as `agent`. */
   name: string;
