@@ -13,6 +13,8 @@ export interface Preferences {
   workspaceModels: Record<string, string>;
   /** Last selected reasoning-effort variant per workspace (`workspaceId` → variant name, or "" for default). */
   workspaceVariants: Record<string, string>;
+  /** Per-workspace OpenCode session IDs (`workspaceId` → session id). */
+  workspaceSessions: Record<string, string>;
   /** Collapsed state of project stats panels in the sidebar (project id → boolean). */
   collapsedProjects: Record<string, boolean>;
   /** Vertical spacing density for chat messages. */
@@ -27,6 +29,7 @@ const DEFAULTS: Preferences = {
   disabledModels: [],
   workspaceModels: {},
   workspaceVariants: {},
+  workspaceSessions: {},
   collapsedProjects: {},
   chatDensity: "loose",
 };

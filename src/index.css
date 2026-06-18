@@ -452,4 +452,16 @@
     0% { transform: translateX(-100%); }
     100% { transform: translateX(300%); }
   }
+
+  /* Floating composer: subtle border + soft drop shadow used by Chat input. */
+  .composer-shadow {
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--foreground) 6%, transparent),
+      0 8px 30px -6px color-mix(in oklab, var(--foreground) 16%, transparent);
+  }
+  .composer-shadow:focus-within {
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--foreground) 10%, transparent),
+      0 12px 40px -8px color-mix(in oklab, var(--foreground) 22%, transparent);
+  }
 }

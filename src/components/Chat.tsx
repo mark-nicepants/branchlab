@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, GitBranch, Square, X } from "lucide-react";
 import { OpencodeClient } from "../lib/opencode";
-import type { BusEvent, ContextInfo, ModelOption, Part, Todo, Workspace } from "../lib/types";
+import type { BusEvent, ContextInfo, ModelOption, Part, Session, Todo, Workspace } from "../lib/types";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ModelSelector } from "./ModelSelector";
@@ -97,7 +97,23 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
     (async () => {
       try {
         const sessions = await client.listSessions();
-        const session = sessions[0] ?? (await client.createSession());
+        const savedId = prefs.workspaceSessions[workspace.id];
+
+        // Reuse the persisted session only if the server still knows about it.
+        let session: Session | undefined = savedId
+          ? sessions.find((s) => s.id === savedId)
+          : undefined;
+
+        // Otherwise create a fresh session for this workspace so worktrees never
+        // inherit the base repo's chat history. opencode stores sessions in a
+        // directory-keyed DB, and git worktrees share the same underlying git
+        // directory, so `sessions[0]` on a new worktree would otherwise be the
+        // base workspace's session.
+        if (!session) {
+          session = await client.createSession();
+          setPref("workspaceSessions", { ...prefs.workspaceSessions, [workspace.id]: session.id });
+        }
+
         if (cancelled) return;
         setSessionId(session.id);
 
@@ -372,7 +388,7 @@ export function Chat({ workspace, baseUrl, onRenamed, onContext }: Props) {
       </div>
 
       <div className="p-3">
-        <div className="mx-auto max-w-4xl rounded-xl border border-border bg-card focus-within:border-muted-foreground/40">
+        <div className="composer-shadow mx-auto max-w-4xl rounded-2xl border border-border bg-card transition-shadow focus-within:border-muted-foreground/40">
           {/* Controls on top (Polyscope-style), composer below. */}
           <div className="flex items-center gap-1.5 px-2 py-1.5">
             <ModeSelector value={agent} onChange={setAgent} />
