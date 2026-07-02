@@ -19,8 +19,14 @@ export default defineConfig(async ({ mode }) => ({
         "./lib/api": path.resolve(__dirname, "./src/lib/api.mock.ts"),
         "../lib/api": path.resolve(__dirname, "./src/lib/api.mock.ts"),
         "../../lib/api": path.resolve(__dirname, "./src/lib/api.mock.ts"),
-        "../lib/opencode": path.resolve(__dirname, "./src/lib/opencode.mock.ts"),
-        "../../lib/opencode": path.resolve(__dirname, "./src/lib/opencode.mock.ts"),
+        "../lib/opencode": path.resolve(
+          __dirname,
+          "./src/lib/opencode.mock.ts",
+        ),
+        "../../lib/opencode": path.resolve(
+          __dirname,
+          "./src/lib/opencode.mock.ts",
+        ),
       }),
     },
   },

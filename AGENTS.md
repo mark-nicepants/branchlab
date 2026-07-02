@@ -29,6 +29,7 @@ measure element boxes, and verify text-overflow behavior without launching
 the desktop app.
 
 How the harness works:
+
 - `index.browser.html` loads `src/main.browser.tsx` instead of `src/main.tsx`.
 - `main.browser.tsx` stubs `window.__TAURI_INTERNALS__` and renders `<App />`
   with the same providers.
@@ -122,7 +123,7 @@ existing `read_file` / `workspace_files` commands as the template:
 - **Rust:** shell out to `git` (no libgit2). Use the `git()` helper for commands
   whose exit status matters, `git_out()` for ones where nonzero is normal
   (e.g. `diff --no-index`). Return `Result<_, String>` for fallible commands.
-- **Comments** explain *why*, not *what*. Keep the existing density.
+- **Comments** explain _why_, not _what_. Keep the existing density.
 
 ## Testing
 

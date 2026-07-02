@@ -9,7 +9,7 @@ follow-up work. Nothing here blocks the current UI from shipping.
 
 - **Quick chat scratch dir** — `createQuickChat()` in `src/lib/api.ts` invokes the Rust
   command `create_quick_chat`, which **does not exist yet**. It should create/serve an
-  app-managed *empty* directory (no git repo, no worktree) and return a `Workspace` with
+  app-managed _empty_ directory (no git repo, no worktree) and return a `Workspace` with
   `kind: "QuickChat"`, analogous to `create_workspace` in `src-tauri/src/project.rs`.
   The frontend + browser mock (`src/lib/api.mock.ts`) already implement the flow, and the
   session view hides all git affordances for quick chats. Quick chats are currently held
@@ -28,7 +28,7 @@ follow-up work. Nothing here blocks the current UI from shipping.
 - **"Up next" feed** — renders the empty "You're all caught up" state. A real feed needs a
   GitHub PR/issue integration (auth + API); no backend today.
 - **Composer mode/model pills ("Interactive" / "Auto")** — display-only on Home. The live
-  mode (`build`/`plan`) and model selectors run *inside* the session composer. If exact
+  mode (`build`/`plan`) and model selectors run _inside_ the session composer. If exact
   "Interactive/Autopilot" wording is wanted, decide how it maps to opencode agents and
   thread an initial agent through `createWorkspace` → `Chat`.
 - **Attach (+) button** — disabled on Home; image attach lives in the session composer.
@@ -45,7 +45,7 @@ Per-session concerns are **not** in global settings — they belong to a workspa
 - The **opencode config editor** (`center/ConfigView.tsx` — edit project/global `opencode.json`,
   effective config, agents, commands) lives **only** in Project Settings ▸ OpenCode config.
 
-A *global* MCP/model registry (managing servers without an open session) does not exist yet.
+A _global_ MCP/model registry (managing servers without an open session) does not exist yet.
 
 Stubbed / disabled in global settings:
 
