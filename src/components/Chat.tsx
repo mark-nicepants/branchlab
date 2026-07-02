@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 import { ArrowUp, GitBranch, Square, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useClipboardImages } from "../hooks/useClipboardImages";
@@ -577,7 +578,12 @@ export function Chat({
             />
           </div>
         )}
-        <div className="composer-shadow mx-auto max-w-4xl rounded-2xl border border-border bg-card transition-shadow focus-within:border-muted-foreground/40">
+        <div
+          className={cn(
+            "relative mx-auto max-w-4xl rounded-2xl border border-border bg-card transition-colors duration-150 focus-within:border-ring",
+            busy && "composer-loading",
+          )}
+        >
           {/* Controls on top (Polyscope-style), composer below. */}
           <div className="flex items-center gap-1.5 px-2 py-1.5">
             <ModeSelector value={agent} onChange={setAgent} />

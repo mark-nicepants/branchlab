@@ -1,4 +1,16 @@
-import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { EmptyState } from "@/components/ui/empty-state";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { THEMES } from "@/lib/themes";
+import { cn } from "@/lib/utils";
 import {
   Accessibility,
   Check,
@@ -12,23 +24,15 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
-import { EmptyState } from "@/components/ui/empty-state";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { useEffect, useState } from "react";
 import { removeProject } from "../../lib/api";
 import type { ProjectView } from "../../lib/types";
-import { THEMES } from "@/lib/themes";
+import {
+  EDITOR_APPS,
+  TERMINAL_APPS,
+  usePreferences,
+} from "../PreferencesProvider";
 import { useTheme } from "../ThemeProvider";
-import { EDITOR_APPS, TERMINAL_APPS, usePreferences } from "../PreferencesProvider";
-import { cn } from "@/lib/utils";
 
 export type SettingsTab =
   | "general"
@@ -62,9 +66,19 @@ const NAV: NavItem[] = [
   { id: "accounts", label: "Accounts", icon: CircleUser, group: "top" },
   { id: "sessions", label: "Sessions", icon: MessagesSquare, group: "top" },
   { id: "themes", label: "Themes", icon: Palette, group: "top" },
-  { id: "accessibility", label: "Accessibility", icon: Accessibility, group: "top" },
+  {
+    id: "accessibility",
+    label: "Accessibility",
+    icon: Accessibility,
+    group: "top",
+  },
   { id: "skills", label: "Skills", icon: Sparkles, group: "tools" },
-  { id: "experimental", label: "Experimental", icon: FlaskConical, group: "tools" },
+  {
+    id: "experimental",
+    label: "Experimental",
+    icon: FlaskConical,
+    group: "tools",
+  },
   { id: "projects", label: "Projects", icon: FolderCog, group: "tools" },
 ];
 
@@ -96,7 +110,12 @@ export function SettingsScreen({
         {/* Left nav */}
         <nav className="flex flex-col gap-0.5 overflow-y-auto border-r border-border bg-sidebar p-2">
           {(["top", "tools"] as const).map((group, gi) => (
-            <div key={group} className={cn(gi > 0 && "mt-3 border-t border-sidebar-border pt-3")}>
+            <div
+              key={group}
+              className={cn(
+                gi > 0 && "mt-3 border-t border-sidebar-border pt-3",
+              )}
+            >
               {NAV.filter((n) => n.group === group).map((n) => (
                 <button
                   key={n.id}
@@ -119,7 +138,9 @@ export function SettingsScreen({
         {/* Right pane */}
         <div className="min-w-0 overflow-y-auto">
           <div className="mx-auto max-w-2xl px-8 py-7">
-            <h2 className="mb-5 text-lg font-semibold">{NAV.find((n) => n.id === tab)?.label}</h2>
+            <h2 className="mb-5 text-lg font-semibold">
+              {NAV.find((n) => n.id === tab)?.label}
+            </h2>
             {tab === "general" && <GeneralTab />}
             {tab === "themes" && <ThemesTab />}
             {tab === "projects" && (
@@ -130,11 +151,19 @@ export function SettingsScreen({
                 onOpenProjectSettings={onOpenProjectSettings}
               />
             )}
-            {tab === "accounts" && <ComingSoon label="Account sign-in and identity" />}
-            {tab === "sessions" && <ComingSoon label="Session defaults and retention" />}
-            {tab === "accessibility" && <ComingSoon label="Accessibility options" />}
+            {tab === "accounts" && (
+              <ComingSoon label="Account sign-in and identity" />
+            )}
+            {tab === "sessions" && (
+              <ComingSoon label="Session defaults and retention" />
+            )}
+            {tab === "accessibility" && (
+              <ComingSoon label="Accessibility options" />
+            )}
             {tab === "skills" && <ComingSoon label="Agent skills management" />}
-            {tab === "experimental" && <ComingSoon label="Experimental features" />}
+            {tab === "experimental" && (
+              <ComingSoon label="Experimental features" />
+            )}
           </div>
         </div>
       </DialogContent>
@@ -148,26 +177,39 @@ function GeneralTab() {
   const { prefs, setPref } = usePreferences();
   return (
     <div className="flex flex-col gap-6">
-      <Row title="Automatically check for updates" desc="Updates are managed by the desktop build.">
+      <Row
+        title="Automatically check for updates"
+        desc="Updates are managed by the desktop build."
+      >
         <Switch checked disabled />
       </Row>
-      <Field title="Storage location" desc="Where repositories and worktrees are stored.">
+      <Field
+        title="Storage location"
+        desc="Where repositories and worktrees are stored."
+      >
         <div className="rounded-md border border-border bg-muted/40 px-3 py-2 font-mono text-xs text-muted-foreground">
           ~/Library/Application&nbsp;Support/BranchLab/worktrees
         </div>
       </Field>
-      <Field title="Open in…" desc="Apps used for the terminal and IDE actions.">
+      <Field
+        title="Open in…"
+        desc="Apps used for the terminal and IDE actions."
+      >
         <div className="flex flex-col gap-2">
-          <AppRow label="Terminal" value={prefs.terminalApp} options={TERMINAL_APPS} onChange={(v) => setPref("terminalApp", v)} />
-          <AppRow label="Editor / IDE" value={prefs.editorApp} options={EDITOR_APPS} onChange={(v) => setPref("editorApp", v)} />
+          <AppRow
+            label="Terminal"
+            value={prefs.terminalApp}
+            options={TERMINAL_APPS}
+            onChange={(v) => setPref("terminalApp", v)}
+          />
+          <AppRow
+            label="Editor / IDE"
+            value={prefs.editorApp}
+            options={EDITOR_APPS}
+            onChange={(v) => setPref("editorApp", v)}
+          />
         </div>
       </Field>
-      <Row title="Show in menu bar" desc="Show the BranchLab icon in the macOS menu bar.">
-        <Switch disabled />
-      </Row>
-      <Row title="Delete chats without confirmation" desc="Skip the confirmation dialog when deleting sessions.">
-        <Switch disabled />
-      </Row>
     </div>
   );
 }
@@ -214,15 +256,34 @@ function ThemesTab() {
       <Field title="Current theme" desc="Customize the app's color palette.">
         <div className="flex items-center gap-3 rounded-lg border border-border bg-card p-3">
           <div className="flex h-11 w-16 flex-col justify-center gap-1 rounded-md border border-border bg-background px-2">
-            <span className="h-1.5 w-full rounded-full" style={{ background: "var(--primary)" }} />
-            <span className="h-1.5 w-3/4 rounded-full" style={{ background: "var(--muted-foreground)" }} />
-            <span className="h-1.5 w-1/2 rounded-full" style={{ background: "var(--border)" }} />
+            <span
+              className="h-1.5 w-full rounded-full"
+              style={{ background: "var(--primary)" }}
+            />
+            <span
+              className="h-1.5 w-3/4 rounded-full"
+              style={{ background: "var(--muted-foreground)" }}
+            />
+            <span
+              className="h-1.5 w-1/2 rounded-full"
+              style={{ background: "var(--border)" }}
+            />
           </div>
           <div className="flex-1">
             <div className="text-sm font-medium">{current?.label ?? theme}</div>
             <div className="mt-1.5 flex gap-1">
-              {["--primary", "--additions", "--warning", "--destructive", "--info"].map((v) => (
-                <span key={v} className="size-3 rounded-full border border-border" style={{ background: `var(${v})` }} />
+              {[
+                "--primary",
+                "--additions",
+                "--warning",
+                "--destructive",
+                "--info",
+              ].map((v) => (
+                <span
+                  key={v}
+                  className="size-3 rounded-full border border-border"
+                  style={{ background: `var(${v})` }}
+                />
               ))}
             </div>
           </div>
@@ -232,7 +293,9 @@ function ThemesTab() {
       <div onMouseLeave={clearPreview}>
         {groups.map((group) => (
           <div key={group} className="mb-4">
-            <div className="mb-1.5 text-[11px] uppercase tracking-wider text-muted-foreground">{group}</div>
+            <div className="mb-1.5 text-[11px] uppercase tracking-wider text-muted-foreground">
+              {group}
+            </div>
             <div className="grid grid-cols-2 gap-1">
               {THEMES.filter((t) => t.group === group).map((t) => (
                 <button
@@ -273,13 +336,23 @@ function ProjectsTab({
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">Git repositories registered with BranchLab.</p>
-        <Button variant="outline" size="sm" className="gap-1.5" onClick={onAddProject}>
+        <p className="text-sm text-muted-foreground">
+          Git repositories registered with BranchLab.
+        </p>
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5"
+          onClick={onAddProject}
+        >
           <FolderPlus className="size-3.5" /> Add project
         </Button>
       </div>
       {projects.length === 0 ? (
-        <EmptyState className="py-10" icon={<FolderCog className="size-6 text-muted-foreground/60" />}>
+        <EmptyState
+          className="py-10"
+          icon={<FolderCog className="size-6 text-muted-foreground/60" />}
+        >
           No projects yet.
         </EmptyState>
       ) : (
@@ -288,9 +361,15 @@ function ProjectsTab({
             <div key={p.id} className="flex items-center gap-3 px-3 py-2.5">
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{p.name}</div>
-                <div className="truncate font-mono text-xs text-muted-foreground">{p.root_path}</div>
+                <div className="truncate font-mono text-xs text-muted-foreground">
+                  {p.root_path}
+                </div>
               </div>
-              <Button variant="ghost" size="sm" onClick={() => onOpenProjectSettings(p)}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onOpenProjectSettings(p)}
+              >
                 <SettingsIcon className="size-3.5" /> Settings
               </Button>
               <Button
@@ -311,22 +390,44 @@ function ProjectsTab({
 
 // ── Shared bits ──
 
-function Field({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {
+function Field({
+  title,
+  desc,
+  children,
+}: {
+  title: string;
+  desc?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div>
       <div className="text-sm font-medium">{title}</div>
-      {desc && <div className="mb-2.5 mt-0.5 text-xs text-muted-foreground">{desc}</div>}
+      {desc && (
+        <div className="mb-2.5 mt-0.5 text-xs text-muted-foreground">
+          {desc}
+        </div>
+      )}
       {children}
     </div>
   );
 }
 
-function Row({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {
+function Row({
+  title,
+  desc,
+  children,
+}: {
+  title: string;
+  desc?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex items-center justify-between gap-6">
       <div>
         <div className="text-sm font-medium">{title}</div>
-        {desc && <div className="mt-0.5 text-xs text-muted-foreground">{desc}</div>}
+        {desc && (
+          <div className="mt-0.5 text-xs text-muted-foreground">{desc}</div>
+        )}
       </div>
       {children}
     </div>
@@ -335,7 +436,10 @@ function Row({ title, desc, children }: { title: string; desc?: string; children
 
 function ComingSoon({ label }: { label: string }) {
   return (
-    <EmptyState className="py-16" icon={<Sparkles className="size-6 text-muted-foreground/60" />}>
+    <EmptyState
+      className="py-16"
+      icon={<Sparkles className="size-6 text-muted-foreground/60" />}
+    >
       {label} is coming soon.
     </EmptyState>
   );

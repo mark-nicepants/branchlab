@@ -23,8 +23,11 @@ export function HomeScreen({
   onAddProject,
 }: Props) {
   return (
-    <ScrollArea className="h-full">
-      <div className="mx-auto flex max-w-2xl flex-col px-6 pb-16 pt-[10vh]">
+    <div className="relative h-full">
+      {/* Top strip acts as a window-drag region (there's no header here). */}
+      <div data-tauri-drag-region className="absolute inset-x-0 top-0 z-10 h-10" />
+      <ScrollArea className="h-full">
+        <div className="mx-auto flex max-w-2xl flex-col px-6 pb-16 pt-[10vh]">
         <Logo className="mb-8 h-24 w-auto self-center text-foreground" />
         <HomeComposer
           projects={projects}
@@ -72,7 +75,8 @@ export function HomeScreen({
           </div>
         </section>
       </div>
-    </ScrollArea>
+      </ScrollArea>
+    </div>
   );
 }
 

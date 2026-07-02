@@ -1,6 +1,26 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { cn } from "@/lib/utils";
 import { open } from "@tauri-apps/plugin-dialog";
+import { ListTodo, PanelLeft, Search } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { HomeScreen } from "./components/home/HomeScreen";
+import { NewWorkspaceModal } from "./components/NewWorkspaceModal";
+import { Onboarding } from "./components/Onboarding";
+import { ProjectSettingsDialog } from "./components/ProjectSettingsDialog";
+import { SessionView } from "./components/session/SessionView";
+import {
+  SettingsScreen,
+  type SettingsTab,
+} from "./components/settings/SettingsScreen";
+import {
+  SessionsSidebar,
+  type NavView,
+} from "./components/shell/SessionsSidebar";
+import { EmptyState } from "./components/ui/empty-state";
+import { useDesktopBehaviors } from "./hooks/useDesktopBehaviors";
+import { useInterval } from "./hooks/useInterval";
+import { useShortcuts } from "./hooks/useShortcuts";
+import { WorkspaceDataProvider } from "./hooks/useWorkspaceData";
 import {
   addProject,
   createQuickChat,
@@ -12,20 +32,6 @@ import {
   touchServer,
 } from "./lib/api";
 import { type EnvReport, type ProjectView, type Workspace } from "./lib/types";
-import { useShortcuts } from "./hooks/useShortcuts";
-import { useDesktopBehaviors } from "./hooks/useDesktopBehaviors";
-import { useInterval } from "./hooks/useInterval";
-import { WorkspaceDataProvider } from "./hooks/useWorkspaceData";
-import { Onboarding } from "./components/Onboarding";
-import { SessionsSidebar, type NavView } from "./components/shell/SessionsSidebar";
-import { HomeScreen } from "./components/home/HomeScreen";
-import { SessionView } from "./components/session/SessionView";
-import { SettingsScreen, type SettingsTab } from "./components/settings/SettingsScreen";
-import { NewWorkspaceModal } from "./components/NewWorkspaceModal";
-import { ProjectSettingsDialog } from "./components/ProjectSettingsDialog";
-import { EmptyState } from "./components/ui/empty-state";
-import { ListTodo, PanelLeft, Search } from "lucide-react";
-import { cn } from "@/lib/utils";
 
 type Phase =
   | { kind: "loading" }
@@ -43,10 +49,13 @@ function App() {
   const [view, setView] = useState<View>("home");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-  const [branchModalProject, setBranchModalProject] = useState<ProjectView | null>(null);
+  const [branchModalProject, setBranchModalProject] =
+    useState<ProjectView | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
-  const [settingsProject, setSettingsProject] = useState<ProjectView | null>(null);
+  const [settingsProject, setSettingsProject] = useState<ProjectView | null>(
+    null,
+  );
   const [reloadNonce, setReloadNonce] = useState(0);
 
   useDesktopBehaviors();
@@ -66,7 +75,11 @@ function App() {
   }, []);
 
   const pickProject = useCallback(async () => {
-    const dir = await open({ directory: true, multiple: false, title: "Select a git repository" });
+    const dir = await open({
+      directory: true,
+      multiple: false,
+      title: "Select a git repository",
+    });
     if (typeof dir !== "string") return;
     try {
       await addProject(dir);
@@ -93,9 +106,11 @@ function App() {
     () => projects.flatMap((p) => p.workspaces).map((w) => w.id),
     [projects],
   );
-  const selected = selectedId ? allWorkspaces.find((w) => w.id === selectedId) ?? null : null;
+  const selected = selectedId
+    ? (allWorkspaces.find((w) => w.id === selectedId) ?? null)
+    : null;
   const selectedProject = selected
-    ? projects.find((p) => p.id === selected.project_id) ?? null
+    ? (projects.find((p) => p.id === selected.project_id) ?? null)
     : null;
 
   // Keep the active session's server warm.
@@ -118,7 +133,9 @@ function App() {
     async (workspaceId: string, name: string) => {
       // Quick chats live only in memory; rename locally. Others persist.
       if (quickChats.some((q) => q.id === workspaceId)) {
-        setQuickChats((prev) => prev.map((q) => (q.id === workspaceId ? { ...q, name } : q)));
+        setQuickChats((prev) =>
+          prev.map((q) => (q.id === workspaceId ? { ...q, name } : q)),
+        );
         return;
       }
       await renameWorkspace(workspaceId, name);
@@ -196,16 +213,21 @@ function App() {
   }
 
   if (phase.kind === "blocked") {
-    return <Onboarding env={phase.env} onRecheck={check} rechecking={rechecking} />;
+    return (
+      <Onboarding env={phase.env} onRecheck={check} rechecking={rechecking} />
+    );
   }
 
   return (
-    <WorkspaceDataProvider workspaceIds={workspaceIds} activeWorkspaceId={view === "session" ? selectedId : null}>
+    <WorkspaceDataProvider
+      workspaceIds={workspaceIds}
+      activeWorkspaceId={view === "session" ? selectedId : null}
+    >
       <div className="relative flex h-screen bg-background text-foreground">
         <div
           className={cn(
-            "shrink-0 overflow-hidden transition-[width] duration-150",
-            sidebarCollapsed ? "w-0" : "w-[264px]",
+            "shrink-0 overflow-hidden transition-[width,opacity] duration-500 ease-out",
+            sidebarCollapsed ? "w-0 opacity-0" : "w-[264px] opacity-100",
           )}
         >
           <SessionsSidebar
@@ -231,18 +253,18 @@ function App() {
           />
         </div>
 
-        {/* Detached "open sidebar" control shown only while collapsed. Its
-            vertical/horizontal position is independent of the in-sidebar
-            toggle — tune `top`/`left` here to sit beside the traffic lights. */}
-        {sidebarCollapsed && (
-          <button
-            onClick={() => setSidebarCollapsed(false)}
-            title="Show sidebar ⌘B"
-            className="absolute left-[80px] top-2 z-20 flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-          >
-            <PanelLeft className="size-4" />
-          </button>
-        )}
+        <button
+          onClick={() => setSidebarCollapsed(false)}
+          title="Show sidebar ⌘B"
+          className={cn(
+            "absolute left-[80px] top-2 z-20 flex size-7 items-center justify-center rounded-md text-muted-foreground transition-all duration-200 ease-out hover:bg-accent hover:text-foreground",
+            sidebarCollapsed
+              ? "scale-100 opacity-100 delay-200"
+              : "pointer-events-none scale-75 opacity-0",
+          )}
+        >
+          <PanelLeft className="size-4" />
+        </button>
 
         <main className="min-w-0 flex-1 overflow-hidden">
           {view === "session" && selected ? (
@@ -255,16 +277,26 @@ function App() {
               sidebarCollapsed={sidebarCollapsed}
             />
           ) : view === "search" ? (
-            <SearchScreen projects={projects} quickChats={quickChats} onSelect={openSession} />
+            <SearchScreen
+              projects={projects}
+              quickChats={quickChats}
+              onSelect={openSession}
+            />
           ) : view === "my-work" || view === "automations" ? (
             <StubScreen
-              icon={view === "my-work" ? <ListTodo className="size-7 text-muted-foreground/60" /> : undefined}
+              icon={
+                view === "my-work" ? (
+                  <ListTodo className="size-7 text-muted-foreground/60" />
+                ) : undefined
+              }
               label={view === "my-work" ? "My work" : "Automations"}
             />
           ) : (
             <HomeScreen
               projects={projects}
-              onCreateSession={(pid, base, prompt) => void createSession(pid, base, prompt)}
+              onCreateSession={(pid, base, prompt) =>
+                void createSession(pid, base, prompt)
+              }
               onQuickChat={(prompt) => void newQuickChat(prompt)}
               onAddProject={() => void pickProject()}
             />
@@ -301,13 +333,21 @@ function App() {
             onOpenChange={(o) => !o && setSettingsProject(null)}
             onUpdated={(updated) => {
               setProjects((prev) =>
-                prev.map((p) => (p.id === updated.id ? { ...updated, workspaces: p.workspaces } : p)),
+                prev.map((p) =>
+                  p.id === updated.id
+                    ? { ...updated, workspaces: p.workspaces }
+                    : p,
+                ),
               );
               setSettingsProject((cur) =>
-                cur?.id === updated.id ? { ...updated, workspaces: cur.workspaces } : cur,
+                cur?.id === updated.id
+                  ? { ...updated, workspaces: cur.workspaces }
+                  : cur,
               );
             }}
-            workspaceId={selected?.id ?? settingsProject.workspaces[0]?.id ?? ""}
+            workspaceId={
+              selected?.id ?? settingsProject.workspaces[0]?.id ?? ""
+            }
             onConfigRestarted={() => setReloadNonce((n) => n + 1)}
           />
         )}
@@ -316,12 +356,20 @@ function App() {
   );
 }
 
-function StubScreen({ label, icon }: { label: string; icon?: React.ReactNode }) {
+function StubScreen({
+  label,
+  icon,
+}: {
+  label: string;
+  icon?: React.ReactNode;
+}) {
   return (
     <div className="flex h-full items-center justify-center">
       <EmptyState icon={icon}>
         <span className="text-base font-medium text-foreground">{label}</span>
-        <span className="mt-1 block text-sm">This area isn't available yet.</span>
+        <span className="mt-1 block text-sm">
+          This area isn't available yet.
+        </span>
       </EmptyState>
     </div>
   );
@@ -338,11 +386,12 @@ function SearchScreen({
 }) {
   const [q, setQ] = useState("");
   const all = useMemo(
-    () =>
-      [
-        ...quickChats.map((w) => ({ w, project: "Quick chats" })),
-        ...projects.flatMap((p) => p.workspaces.map((w) => ({ w, project: p.name }))),
-      ],
+    () => [
+      ...quickChats.map((w) => ({ w, project: "Quick chats" })),
+      ...projects.flatMap((p) =>
+        p.workspaces.map((w) => ({ w, project: p.name })),
+      ),
+    ],
     [projects, quickChats],
   );
   const term = q.trim().toLowerCase();
@@ -368,7 +417,10 @@ function SearchScreen({
       </div>
       <div className="mt-4 min-h-0 flex-1 overflow-y-auto">
         {results.length === 0 ? (
-          <EmptyState className="py-16" icon={<Search className="size-6 text-muted-foreground/60" />}>
+          <EmptyState
+            className="py-16"
+            icon={<Search className="size-6 text-muted-foreground/60" />}
+          >
             No matching sessions.
           </EmptyState>
         ) : (
@@ -379,8 +431,12 @@ function SearchScreen({
                 onClick={() => onSelect(w)}
                 className="flex items-center gap-3 px-3 py-2.5 text-left text-sm hover:bg-accent"
               >
-                <span className="min-w-0 flex-1 truncate">{w.name ?? w.branch ?? "session"}</span>
-                <span className="shrink-0 text-xs text-muted-foreground">{project}</span>
+                <span className="min-w-0 flex-1 truncate">
+                  {w.name ?? w.branch ?? "session"}
+                </span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {project}
+                </span>
               </button>
             ))}
           </div>

@@ -67,7 +67,7 @@ export function HomeComposer({ projects, onCreateSession, onQuickChat, onAddProj
 
   return (
     <div className="w-full">
-      <div className="composer-shadow rounded-2xl border border-border bg-card transition-shadow focus-within:border-muted-foreground/40">
+      <div className="rounded-2xl border border-border bg-card transition-colors duration-150 focus-within:border-ring">
         <Textarea
           value={text}
           onChange={(e) => setText(e.target.value)}

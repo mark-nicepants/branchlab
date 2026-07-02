@@ -29,6 +29,10 @@ export interface Preferences {
   collapsedProjects: Record<string, boolean>;
   /** Vertical spacing density for chat messages. */
   chatDensity: ChatDensity;
+  /** Width of the session changes panel, as a % of the session body (shared across sessions). */
+  changesPanelWidthPct: number;
+  /** Whether the session changes panel is open (shared across sessions). */
+  changesPanelOpen: boolean;
 }
 
 const DEFAULTS: Preferences = {
@@ -38,6 +42,8 @@ const DEFAULTS: Preferences = {
   workspace: {},
   collapsedProjects: {},
   chatDensity: "loose",
+  changesPanelWidthPct: 34,
+  changesPanelOpen: false,
 };
 
 interface PrefsCtxValue {

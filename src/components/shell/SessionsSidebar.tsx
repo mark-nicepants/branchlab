@@ -1,4 +1,38 @@
-import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 import {
   CalendarClock,
   ChevronDown,
@@ -27,42 +61,16 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
-import { openExternal, removeProject, removeWorkspace } from "../../lib/api";
-import { workspaceLabel, type ProjectView, type Workspace } from "../../lib/types";
 import { useWorkspaceData } from "../../hooks/useWorkspaceData";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { EmptyState } from "@/components/ui/empty-state";
+import { openExternal, removeProject, removeWorkspace } from "../../lib/api";
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+  workspaceLabel,
+  type ProjectView,
+  type Workspace,
+} from "../../lib/types";
 import { usePreferences } from "../PreferencesProvider";
-import { cn } from "@/lib/utils";
 
 export type NavView = "home" | "my-work" | "automations" | "search";
 
@@ -76,7 +84,12 @@ interface NavItemDef {
 const NAV: NavItemDef[] = [
   { id: "home", label: "Home", icon: House, enabled: true },
   { id: "my-work", label: "My work", icon: ListTodo, enabled: false },
-  { id: "automations", label: "Automations", icon: CalendarClock, enabled: false },
+  {
+    id: "automations",
+    label: "Automations",
+    icon: CalendarClock,
+    enabled: false,
+  },
   { id: "search", label: "Search", icon: Search, enabled: true },
 ];
 
@@ -128,7 +141,12 @@ export function SessionsSidebar({
   const [filter, setFilter] = useState("");
   const [filterOpen, setFilterOpen] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<string>>(
-    () => new Set(Object.entries(prefs.collapsedProjects).filter(([, v]) => v).map(([k]) => k)),
+    () =>
+      new Set(
+        Object.entries(prefs.collapsedProjects)
+          .filter(([, v]) => v)
+          .map(([k]) => k),
+      ),
   );
 
   const toggleCollapsed = (id: string) =>
@@ -154,7 +172,9 @@ export function SessionsSidebar({
         action: {
           label: "Delete anyway",
           onClick: () =>
-            void removeWorkspace(w.id, true).then(onProjectsChanged).catch((e2) => toast.error(String(e2))),
+            void removeWorkspace(w.id, true)
+              .then(onProjectsChanged)
+              .catch((e2) => toast.error(String(e2))),
         },
       });
     }
@@ -172,29 +192,50 @@ export function SessionsSidebar({
   }
 
   function openIn(w: Workspace, app?: string) {
-    openExternal(w.path, app).catch((e) => toast.error("Could not open", { description: String(e) }));
+    openExternal(w.path, app).catch((e) =>
+      toast.error("Could not open", { description: String(e) }),
+    );
   }
 
   const q = filter.trim().toLowerCase();
-  const matches = (w: Workspace) => !q || workspaceLabel(w).toLowerCase().includes(q);
+  const matches = (w: Workspace) =>
+    !q || workspaceLabel(w).toLowerCase().includes(q);
   const shownQuickChats = quickChats.filter(matches);
 
   return (
-    <aside className="flex h-full w-full flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
+    <aside className="flex h-full w-[264px] flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
       {/* Top strip: clears the macOS traffic lights, holds window/panel controls. */}
-      <div data-tauri-drag-region className="flex h-11 shrink-0 items-center justify-end gap-0.5 pr-2 pl-20">
+      <div
+        data-tauri-drag-region
+        className="flex h-11 shrink-0 items-center justify-end gap-0.5 pr-2 pl-20"
+      >
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon-sm" className="text-muted-foreground" onClick={onToggleCollapse}>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground"
+              onClick={onToggleCollapse}
+            >
               <PanelLeft className="size-4" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>Toggle sidebar ⌘B</TooltipContent>
         </Tooltip>
-        <Button variant="ghost" size="icon-sm" className="text-muted-foreground/50" disabled>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="text-muted-foreground/50"
+          disabled
+        >
           <ChevronLeft className="size-4" />
         </Button>
-        <Button variant="ghost" size="icon-sm" className="text-muted-foreground/50" disabled>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="text-muted-foreground/50"
+          disabled
+        >
           <ChevronRight className="size-4" />
         </Button>
       </div>
@@ -256,7 +297,9 @@ export function SessionsSidebar({
         <div className="px-1 pb-2">
           {/* Quick chats */}
           <GroupHeader
-            icon={<MessagesSquare className="size-3.5 shrink-0 text-muted-foreground" />}
+            icon={
+              <MessagesSquare className="size-3.5 shrink-0 text-muted-foreground" />
+            }
             label="Quick chats"
             onAdd={onNewQuickChat}
             addHint="New quick chat"
@@ -305,14 +348,21 @@ export function SessionsSidebar({
                       <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
                     )}
                     <Folder className="size-3.5 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium" title={p.name}>
+                    <span
+                      className="min-w-0 flex-1 truncate text-[13px] font-medium"
+                      title={p.name}
+                    >
                       {p.name}
                     </span>
                   </button>
                   <span className="flex shrink-0 items-center text-muted-foreground">
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <Button variant="ghost" size="icon-sm" onClick={() => onQuickCreate(p)}>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => onQuickCreate(p)}
+                        >
                           <Plus className="size-3.5" />
                         </Button>
                       </TooltipTrigger>
@@ -333,21 +383,28 @@ export function SessionsSidebar({
                             <DropdownMenuItem onClick={() => onQuickCreate(p)}>
                               <GitBranch className="size-4" /> From base branch
                             </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => onNewFromBranch(p)}>
+                            <DropdownMenuItem
+                              onClick={() => onNewFromBranch(p)}
+                            >
                               <GitBranch className="size-4" /> From branch…
                             </DropdownMenuItem>
                             <DropdownMenuItem disabled>
-                              <GitPullRequest className="size-4" /> From pull request
+                              <GitPullRequest className="size-4" /> From pull
+                              request
                             </DropdownMenuItem>
                           </DropdownMenuSubContent>
                         </DropdownMenuSub>
-                        <DropdownMenuItem onClick={() => onOpenProjectSettings(p)}>
+                        <DropdownMenuItem
+                          onClick={() => onOpenProjectSettings(p)}
+                        >
                           <Settings className="size-4" /> Project settings
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
                           variant="destructive"
-                          onClick={() => void removeProject(p.id).then(onProjectsChanged)}
+                          onClick={() =>
+                            void removeProject(p.id).then(onProjectsChanged)
+                          }
                         >
                           <Trash2 className="size-4" /> Remove project
                         </DropdownMenuItem>
@@ -378,19 +435,22 @@ export function SessionsSidebar({
 
       {/* Bottom account / settings bar */}
       <div className="flex items-center gap-2 border-t border-sidebar-border p-2">
-        <img src="/app-icon.png" alt="BranchLab" className="size-6 shrink-0 rounded-full border border-sidebar-border" />
-        <span className="min-w-0 flex-1 truncate text-sm font-medium">BranchLab</span>
+        <img
+          src="/app-icon.png"
+          alt="BranchLab"
+          className="size-6 shrink-0 rounded-full border border-sidebar-border"
+        />
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">
+          BranchLab
+        </span>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon-sm" className="text-muted-foreground" onClick={onNewQuickChat}>
-              <MessagesSquare className="size-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>New quick chat</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon-sm" className="text-muted-foreground" onClick={onOpenSettings}>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground"
+              onClick={onOpenSettings}
+            >
               <Settings className="size-4" />
             </Button>
           </TooltipTrigger>
@@ -423,7 +483,15 @@ export function SessionsSidebar({
   );
 }
 
-function NavRow({ item, active, onClick }: { item: NavItemDef; active: boolean; onClick: () => void }) {
+function NavRow({
+  item,
+  active,
+  onClick,
+}: {
+  item: NavItemDef;
+  active: boolean;
+  onClick: () => void;
+}) {
   const row = (
     <button
       onClick={onClick}
@@ -433,7 +501,8 @@ function NavRow({ item, active, onClick }: { item: NavItemDef; active: boolean; 
         active
           ? "bg-sidebar-accent text-sidebar-accent-foreground"
           : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
-        !item.enabled && "opacity-40 hover:bg-transparent hover:text-muted-foreground",
+        !item.enabled &&
+          "opacity-40 hover:bg-transparent hover:text-muted-foreground",
       )}
     >
       <item.icon className="size-4 shrink-0" />
@@ -464,11 +533,18 @@ function GroupHeader({
     <div className="group/project flex min-w-0 items-center px-2 py-1">
       <div className="flex min-w-0 flex-1 items-center gap-1.5">
         {icon}
-        <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{label}</span>
+        <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
+          {label}
+        </span>
       </div>
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button variant="ghost" size="icon-sm" className="shrink-0 text-muted-foreground" onClick={onAdd}>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="shrink-0 text-muted-foreground"
+            onClick={onAdd}
+          >
             <Plus className="size-3.5" />
           </Button>
         </TooltipTrigger>
@@ -508,9 +584,15 @@ function WorkspaceRow({
         selected && "bg-sidebar-accent",
       )}
     >
-      <button className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left" onClick={onSelect}>
+      <button
+        className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left"
+        onClick={onSelect}
+      >
         <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate text-sm" title={workspaceLabel(w)}>
+        <span
+          className="min-w-0 flex-1 truncate text-sm"
+          title={workspaceLabel(w)}
+        >
           {workspaceLabel(w)}
         </span>
         {stat?.files ? (
@@ -520,7 +602,9 @@ function WorkspaceRow({
           </span>
         ) : (
           w.kind === "Base" && (
-            <span className="ml-auto shrink-0 text-[10px] uppercase text-muted-foreground">repo</span>
+            <span className="ml-auto shrink-0 text-[10px] uppercase text-muted-foreground">
+              repo
+            </span>
           )
         )}
       </button>
@@ -535,7 +619,9 @@ function WorkspaceRow({
             <X className="size-3.5" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>{isQuickChat ? "Delete quick chat" : "Delete session"}</TooltipContent>
+        <TooltipContent>
+          {isQuickChat ? "Delete quick chat" : "Delete session"}
+        </TooltipContent>
       </Tooltip>
     </div>
   );
@@ -560,7 +646,8 @@ function WorkspaceRow({
           <Pencil className="size-4" /> Rename
         </ContextMenuItem>
         <ContextMenuItem variant="destructive" onClick={onDelete}>
-          <Trash2 className="size-4" /> {w.kind === "Base" ? "Delete base workspace" : "Delete session"}
+          <Trash2 className="size-4" />{" "}
+          {w.kind === "Base" ? "Delete base workspace" : "Delete session"}
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
