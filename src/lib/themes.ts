@@ -7,6 +7,7 @@ export interface ThemeDef {
 }
 
 export const THEMES: ThemeDef[] = [
+  { id: "github-copilot-dark", label: "Github Co-pilot Dark", group: "Dark" },
   { id: "default-dark", label: "Default Dark", group: "Dark" },
   { id: "one-dark", label: "One Dark", group: "Dark" },
   { id: "tokyo-night", label: "Tokyo Night", group: "Dark" },
@@ -23,4 +24,4 @@ export const THEMES: ThemeDef[] = [
   { id: "rose-pine-dawn", label: "Rosé Pine Dawn", group: "Light" },
 ];
 
-export const DEFAULT_THEME = "default-dark";
+export const DEFAULT_THEME = "github-copilot-dark";

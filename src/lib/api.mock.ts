@@ -180,6 +180,23 @@ export function createWorkspace(
   return Promise.resolve(ws);
 }
 
+let quickChatSeq = 0;
+
+export function createQuickChat(): Promise<Workspace> {
+  quickChatSeq += 1;
+  const id = `quick-${quickChatSeq}`;
+  return Promise.resolve({
+    id,
+    project_id: "__quick__",
+    kind: "QuickChat",
+    path: `/mock/scratch/${id}`,
+    branch: null,
+    name: `Quick chat ${quickChatSeq}`,
+    base_branch: null,
+    init_prompt: null,
+  });
+}
+
 export function updateProject(projectId: string, update: ProjectUpdate): Promise<ProjectView> {
   const p = projects.find((x) => x.id === projectId);
   if (!p) return Promise.reject(new Error("unknown project"));

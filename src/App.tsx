@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
-import { usePanelRef, type Layout } from "react-resizable-panels";
 import {
   addProject,
+  createQuickChat,
   createWorkspace,
   listProjects,
   openDevtools,
@@ -11,83 +11,43 @@ import {
   renameWorkspace,
   touchServer,
 } from "./lib/api";
-import {
-  workspaceLabel,
-  type ContextInfo,
-  type EnvReport,
-  type ProjectView,
-  type Workspace,
-} from "./lib/types";
+import { type EnvReport, type ProjectView, type Workspace } from "./lib/types";
 import { useShortcuts } from "./hooks/useShortcuts";
 import { useDesktopBehaviors } from "./hooks/useDesktopBehaviors";
 import { useInterval } from "./hooks/useInterval";
 import { WorkspaceDataProvider } from "./hooks/useWorkspaceData";
 import { Onboarding } from "./components/Onboarding";
-import { Sidebar } from "./components/Sidebar";
-import { WorkspaceView, type CenterTab } from "./components/WorkspaceView";
-import { FleetDashboard } from "./components/FleetDashboard";
+import { SessionsSidebar, type NavView } from "./components/shell/SessionsSidebar";
+import { HomeScreen } from "./components/home/HomeScreen";
+import { SessionView } from "./components/session/SessionView";
+import { SettingsScreen, type SettingsTab } from "./components/settings/SettingsScreen";
 import { NewWorkspaceModal } from "./components/NewWorkspaceModal";
 import { ProjectSettingsDialog } from "./components/ProjectSettingsDialog";
-import { StatusBar } from "./components/StatusBar";
-import { Titlebar } from "./components/layout/Titlebar";
-import { ChangesPanel } from "./components/layout/ChangesPanel";
-import { SettingsDialog } from "./components/SettingsDialog";
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/components/ui/resizable";
+import { EmptyState } from "./components/ui/empty-state";
+import { ListTodo, PanelLeft, Search } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 type Phase =
   | { kind: "loading" }
   | { kind: "ready"; env: EnvReport }
   | { kind: "blocked"; env: EnvReport };
 
-const LAYOUT_KEY = "branchlab.layout.v1";
-const DEFAULT_LAYOUT: Layout = { left: 18, center: 82, right: 0 };
+type View = NavView | "session";
 
 function App() {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const [rechecking, setRechecking] = useState(false);
   const [projects, setProjects] = useState<ProjectView[]>([]);
+  const [quickChats, setQuickChats] = useState<Workspace[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [view, setView] = useState<View>("home");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
   const [branchModalProject, setBranchModalProject] = useState<ProjectView | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   const [settingsProject, setSettingsProject] = useState<ProjectView | null>(null);
-  const [centerTab, setCenterTab] = useState<CenterTab>("activity");
-  const [focusedFile, setFocusedFile] = useState<string | null>(null);
-  const [viewerFile, setViewerFile] = useState<string | null>(null);
-  const [viewedFiles, setViewedFiles] = useState<Set<string>>(new Set());
-  const [context, setContext] = useState<ContextInfo | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
-
-  const toggleViewed = useCallback((path: string) => {
-    setViewedFiles((prev) => {
-      const n = new Set(prev);
-      if (n.has(path)) n.delete(path);
-      else n.add(path);
-      return n;
-    });
-  }, []);
-  const markAllViewed = useCallback((paths: string[]) => setViewedFiles(new Set(paths)), []);
-
-  const leftRef = usePanelRef();
-  const rightRef = usePanelRef();
-  const [leftCollapsed, setLeftCollapsed] = useState(false);
-  const [rightCollapsed, setRightCollapsed] = useState(true);
-
-  const stored = useMemo<Layout | undefined>(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(LAYOUT_KEY) || "null");
-      if (!saved) return undefined;
-      // selectedId is never persisted, so we always start in Fleet view — keep right collapsed.
-      return { ...saved, right: 0 };
-    } catch {
-      return undefined;
-    }
-  }, []);
-  // Live layout (percentages per panel id) so the status bar segments can align.
-  const [layout, setLayout] = useState<Layout>(stored ?? DEFAULT_LAYOUT);
 
   useDesktopBehaviors();
 
@@ -124,86 +84,105 @@ function App() {
     if (phase.kind === "ready") void refreshProjects();
   }, [phase.kind, refreshProjects]);
 
-  const allWorkspaces = useMemo(() => projects.flatMap((p) => p.workspaces), [projects]);
-  const workspaceIds = useMemo(() => allWorkspaces.map((w) => w.id), [allWorkspaces]);
+  const allWorkspaces = useMemo(
+    () => [...projects.flatMap((p) => p.workspaces), ...quickChats],
+    [projects, quickChats],
+  );
+  // Only git-backed workspaces have diff stats to poll; quick chats have none.
+  const workspaceIds = useMemo(
+    () => projects.flatMap((p) => p.workspaces).map((w) => w.id),
+    [projects],
+  );
   const selected = selectedId ? allWorkspaces.find((w) => w.id === selectedId) ?? null : null;
   const selectedProject = selected
     ? projects.find((p) => p.id === selected.project_id) ?? null
     : null;
 
+  // Keep the active session's server warm.
   useEffect(() => {
-    if (selectedId) void touchServer(selectedId);
-  }, [selectedId]);
-  useInterval(() => {
-    if (selectedId) void touchServer(selectedId);
-  }, selectedId ? 60_000 : null);
+    if (selectedId && view === "session") void touchServer(selectedId);
+  }, [selectedId, view]);
+  useInterval(
+    () => {
+      if (selectedId && view === "session") void touchServer(selectedId);
+    },
+    selectedId && view === "session" ? 60_000 : null,
+  );
 
-  // Reset per-workspace UI state when switching workspaces.
-  useEffect(() => {
-    setCenterTab("activity");
-    setFocusedFile(null);
-    setViewerFile(null);
-    setViewedFiles(new Set());
-    setContext(null);
-  }, [selectedId]);
-
-  const openFileViewer = useCallback((path: string) => {
-    setViewerFile(path);
-    setCenterTab("file");
+  const openSession = useCallback((w: Workspace) => {
+    setSelectedId(w.id);
+    setView("session");
   }, []);
-  const closeFileViewer = useCallback(() => {
-    setViewerFile(null);
-    setCenterTab((t) => (t === "file" ? "activity" : t));
-  }, []);
-
-  // Hide the right (Changes) panel in the Fleet view; restore it in a workspace.
-  useEffect(() => {
-    const p = rightRef.current;
-    if (!p) return;
-    if (selectedId) p.expand();
-    else p.collapse();
-  }, [selectedId]);
 
   const onRenamed = useCallback(
     async (workspaceId: string, name: string) => {
+      // Quick chats live only in memory; rename locally. Others persist.
+      if (quickChats.some((q) => q.id === workspaceId)) {
+        setQuickChats((prev) => prev.map((q) => (q.id === workspaceId ? { ...q, name } : q)));
+        return;
+      }
       await renameWorkspace(workspaceId, name);
       await refreshProjects();
     },
-    [refreshProjects],
+    [quickChats, refreshProjects],
   );
 
-  const onWorkspaceCreated = useCallback(
-    async (ws: Workspace) => {
-      await refreshProjects();
-      setSelectedId(ws.id);
+  const createSession = useCallback(
+    async (projectId: string, base: string | undefined, prompt: string) => {
+      try {
+        const ws = await createWorkspace(projectId, base, prompt || undefined);
+        await refreshProjects();
+        openSession(ws);
+      } catch (e) {
+        toast.error("Could not create session", { description: String(e) });
+      }
     },
-    [refreshProjects],
+    [refreshProjects, openSession],
   );
 
   const quickCreate = useCallback(
     async (project: ProjectView) => {
       try {
         const ws = await createWorkspace(project.id);
-        await onWorkspaceCreated(ws);
+        await refreshProjects();
+        openSession(ws);
       } catch (e) {
-        toast.error("Could not create workspace", { description: String(e) });
+        toast.error("Could not create session", { description: String(e) });
       }
     },
-    [onWorkspaceCreated],
+    [refreshProjects, openSession],
   );
 
-  const toggle = (ref: ReturnType<typeof usePanelRef>) => () => {
-    const p = ref.current;
-    if (!p) return;
-    p.isCollapsed() ? p.expand() : p.collapse();
-  };
-  const toggleLeft = toggle(leftRef);
-  const toggleRight = toggle(rightRef);
+  const newQuickChat = useCallback(
+    async (prompt?: string) => {
+      try {
+        const ws = await createQuickChat();
+        const seeded = prompt ? { ...ws, init_prompt: prompt } : ws;
+        setQuickChats((prev) => [...prev, seeded]);
+        openSession(seeded);
+      } catch (e) {
+        toast.error("Could not start quick chat", { description: String(e) });
+      }
+    },
+    [openSession],
+  );
+
+  const removeQuickChat = useCallback(
+    (id: string) => {
+      setQuickChats((prev) => prev.filter((q) => q.id !== id));
+      setSelectedId((cur) => (cur === id ? null : cur));
+      setView((v) => (v === "session" && selectedId === id ? "home" : v));
+    },
+    [selectedId],
+  );
 
   useShortcuts({
-    toggleLeft,
-    toggleRight,
-    openSettings: () => setSettingsOpen(true),
+    toggleLeft: () => setSidebarCollapsed((c) => !c),
+    toggleRight: () => {},
+    openSettings: () => {
+      setSettingsTab("general");
+      setSettingsOpen(true);
+    },
     openInspector: () => void openDevtools(),
     newProject: () => void pickProject(),
   });
@@ -221,137 +200,193 @@ function App() {
   }
 
   return (
-    <WorkspaceDataProvider workspaceIds={workspaceIds} activeWorkspaceId={selectedId}>
-    <div className="flex h-screen flex-col bg-background text-foreground">
-      <Titlebar
-        project={selectedProject?.name ?? null}
-        branch={selected ? workspaceLabel(selected) : null}
-        leftCollapsed={leftCollapsed}
-        rightCollapsed={rightCollapsed}
-        rightAvailable={!!selected}
-        onToggleLeft={toggleLeft}
-        onToggleRight={toggleRight}
-        onOpenSettings={() => setSettingsOpen(true)}
-      />
-
-      <ResizablePanelGroup
-        orientation="horizontal"
-        defaultLayout={stored}
-        onLayoutChanged={(l) => {
-          localStorage.setItem(LAYOUT_KEY, JSON.stringify(l));
-          setLayout(l);
-        }}
-        className="min-h-0 flex-1"
-      >
-        <ResizablePanel
-          id="left"
-          panelRef={leftRef}
-          collapsible
-          collapsedSize="0"
-          minSize="14%"
-          defaultSize="18%"
-          onResize={(s) => setLeftCollapsed(s.asPercentage === 0)}
+    <WorkspaceDataProvider workspaceIds={workspaceIds} activeWorkspaceId={view === "session" ? selectedId : null}>
+      <div className="relative flex h-screen bg-background text-foreground">
+        <div
+          className={cn(
+            "shrink-0 overflow-hidden transition-[width] duration-150",
+            sidebarCollapsed ? "w-0" : "w-[264px]",
+          )}
         >
-          <Sidebar
+          <SessionsSidebar
+            view={view}
+            onNavigate={setView}
+            onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
+            onOpenSettings={() => {
+              setSettingsTab("general");
+              setSettingsOpen(true);
+            }}
             projects={projects}
-            selectedWorkspaceId={selectedId}
-            onSelectWorkspace={(w: Workspace) => setSelectedId(w.id)}
+            quickChats={quickChats}
+            selectedWorkspaceId={view === "session" ? selectedId : null}
+            onSelectWorkspace={openSession}
             onProjectsChanged={refreshProjects}
-            onShowFleet={() => setSelectedId(null)}
+            onRenamed={onRenamed}
             onQuickCreate={(p) => void quickCreate(p)}
             onNewFromBranch={setBranchModalProject}
+            onNewQuickChat={() => void newQuickChat()}
+            onRemoveQuickChat={removeQuickChat}
             onAddProject={() => void pickProject()}
-            onOpenSettings={setSettingsProject}
+            onOpenProjectSettings={setSettingsProject}
           />
-        </ResizablePanel>
+        </div>
 
-        <ResizableHandle />
+        {/* Detached "open sidebar" control shown only while collapsed. Its
+            vertical/horizontal position is independent of the in-sidebar
+            toggle — tune `top`/`left` here to sit beside the traffic lights. */}
+        {sidebarCollapsed && (
+          <button
+            onClick={() => setSidebarCollapsed(false)}
+            title="Show sidebar ⌘B"
+            className="absolute left-[80px] top-2 z-20 flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <PanelLeft className="size-4" />
+          </button>
+        )}
 
-        <ResizablePanel id="center" minSize="30%">
-          <main className="h-full min-w-0 overflow-hidden">
-            {selected && selectedProject ? (
-              <WorkspaceView
-                key={selected.id}
-                workspace={selected}
-                project={selectedProject}
-                onRenamed={onRenamed}
-                tab={centerTab}
-                onTabChange={setCenterTab}
-                focusedFile={focusedFile}
-                viewerFile={viewerFile}
-                onCloseFile={closeFileViewer}
-                viewed={viewedFiles}
-                onToggleViewed={toggleViewed}
-                onMarkAllViewed={markAllViewed}
-                onContext={setContext}
-                reloadNonce={reloadNonce}
-              />
-            ) : (
-              <FleetDashboard
-                projects={projects}
-                onOpenWorkspace={(w) => setSelectedId(w.id)}
-                onAddProject={() => void pickProject()}
-              />
-            )}
-          </main>
-        </ResizablePanel>
+        <main className="min-w-0 flex-1 overflow-hidden">
+          {view === "session" && selected ? (
+            <SessionView
+              key={selected.id}
+              workspace={selected}
+              project={selectedProject}
+              onRenamed={onRenamed}
+              reloadNonce={reloadNonce}
+              sidebarCollapsed={sidebarCollapsed}
+            />
+          ) : view === "search" ? (
+            <SearchScreen projects={projects} quickChats={quickChats} onSelect={openSession} />
+          ) : view === "my-work" || view === "automations" ? (
+            <StubScreen
+              icon={view === "my-work" ? <ListTodo className="size-7 text-muted-foreground/60" /> : undefined}
+              label={view === "my-work" ? "My work" : "Automations"}
+            />
+          ) : (
+            <HomeScreen
+              projects={projects}
+              onCreateSession={(pid, base, prompt) => void createSession(pid, base, prompt)}
+              onQuickChat={(prompt) => void newQuickChat(prompt)}
+              onAddProject={() => void pickProject()}
+            />
+          )}
+        </main>
 
-        <ResizableHandle />
-
-        <ResizablePanel
-          id="right"
-          panelRef={rightRef}
-          collapsible
-          collapsedSize="0"
-          minSize="16%"
-          defaultSize="24%"
-          onResize={(s) => setRightCollapsed(s.asPercentage === 0)}
-        >
-          <ChangesPanel
-            workspace={selected}
-            viewed={viewedFiles}
-            onToggleViewed={toggleViewed}
-            onOpenFile={(path) => {
-              setCenterTab("changes");
-              setFocusedFile(path);
-            }}
-            onViewFile={openFileViewer}
-          />
-        </ResizablePanel>
-      </ResizablePanelGroup>
-
-      <StatusBar
-        layout={layout}
-        projectCount={projects.length}
-        workspaceCount={allWorkspaces.length}
-        workspace={selected}
-        context={context}
-        opencodeVersion={phase.env.opencode.version}
-      />
-
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
-      {branchModalProject && (
-        <NewWorkspaceModal
-          project={branchModalProject}
-          onClose={() => setBranchModalProject(null)}
-          onCreated={(ws) => void onWorkspaceCreated(ws)}
-        />
-      )}
-      {settingsProject && (
-        <ProjectSettingsDialog
-          project={settingsProject}
-          open
-          onOpenChange={(open) => !open && setSettingsProject(null)}
-          onUpdated={(updated) => {
-            setProjects((prev) => prev.map((p) => (p.id === updated.id ? { ...updated, workspaces: p.workspaces } : p)));
-            setSettingsProject((current) => (current?.id === updated.id ? { ...updated, workspaces: current.workspaces } : current));
+        <SettingsScreen
+          open={settingsOpen}
+          onOpenChange={setSettingsOpen}
+          initialTab={settingsTab}
+          projects={projects}
+          onProjectsChanged={refreshProjects}
+          onAddProject={() => void pickProject()}
+          onOpenProjectSettings={(p) => {
+            setSettingsOpen(false);
+            setSettingsProject(p);
           }}
-          workspaceId={selected?.id ?? settingsProject.workspaces[0]?.id ?? ""}
-          onConfigRestarted={() => setReloadNonce((n) => n + 1)}
         />
-      )}
-    </div>
+
+        {branchModalProject && (
+          <NewWorkspaceModal
+            project={branchModalProject}
+            onClose={() => setBranchModalProject(null)}
+            onCreated={(ws) => {
+              void refreshProjects().then(() => openSession(ws));
+            }}
+          />
+        )}
+
+        {settingsProject && (
+          <ProjectSettingsDialog
+            project={settingsProject}
+            open
+            onOpenChange={(o) => !o && setSettingsProject(null)}
+            onUpdated={(updated) => {
+              setProjects((prev) =>
+                prev.map((p) => (p.id === updated.id ? { ...updated, workspaces: p.workspaces } : p)),
+              );
+              setSettingsProject((cur) =>
+                cur?.id === updated.id ? { ...updated, workspaces: cur.workspaces } : cur,
+              );
+            }}
+            workspaceId={selected?.id ?? settingsProject.workspaces[0]?.id ?? ""}
+            onConfigRestarted={() => setReloadNonce((n) => n + 1)}
+          />
+        )}
+      </div>
     </WorkspaceDataProvider>
+  );
+}
+
+function StubScreen({ label, icon }: { label: string; icon?: React.ReactNode }) {
+  return (
+    <div className="flex h-full items-center justify-center">
+      <EmptyState icon={icon}>
+        <span className="text-base font-medium text-foreground">{label}</span>
+        <span className="mt-1 block text-sm">This area isn't available yet.</span>
+      </EmptyState>
+    </div>
+  );
+}
+
+function SearchScreen({
+  projects,
+  quickChats,
+  onSelect,
+}: {
+  projects: ProjectView[];
+  quickChats: Workspace[];
+  onSelect: (w: Workspace) => void;
+}) {
+  const [q, setQ] = useState("");
+  const all = useMemo(
+    () =>
+      [
+        ...quickChats.map((w) => ({ w, project: "Quick chats" })),
+        ...projects.flatMap((p) => p.workspaces.map((w) => ({ w, project: p.name }))),
+      ],
+    [projects, quickChats],
+  );
+  const term = q.trim().toLowerCase();
+  const results = term
+    ? all.filter(
+        ({ w, project }) =>
+          (w.name ?? w.branch ?? "").toLowerCase().includes(term) ||
+          project.toLowerCase().includes(term),
+      )
+    : all;
+
+  return (
+    <div className="mx-auto flex h-full max-w-2xl flex-col px-6 pt-[8vh]">
+      <div className="flex items-center gap-2 rounded-xl border border-border bg-card px-3.5 py-2.5">
+        <Search className="size-4 text-muted-foreground" />
+        <input
+          autoFocus
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search sessions and projects…"
+          className="flex-1 select-text bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+        />
+      </div>
+      <div className="mt-4 min-h-0 flex-1 overflow-y-auto">
+        {results.length === 0 ? (
+          <EmptyState className="py-16" icon={<Search className="size-6 text-muted-foreground/60" />}>
+            No matching sessions.
+          </EmptyState>
+        ) : (
+          <div className="flex flex-col divide-y divide-border rounded-lg border border-border">
+            {results.map(({ w, project }) => (
+              <button
+                key={w.id}
+                onClick={() => onSelect(w)}
+                className="flex items-center gap-3 px-3 py-2.5 text-left text-sm hover:bg-accent"
+              >
+                <span className="min-w-0 flex-1 truncate">{w.name ?? w.branch ?? "session"}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">{project}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

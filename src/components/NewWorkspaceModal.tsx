@@ -80,7 +80,6 @@ export function NewWorkspaceModal({ project, onClose, onCreated }: Props) {
         </DialogHeader>
 
         <div className="space-y-4">
-        <div className="space-y-4">
           <div className="space-y-1.5">
             <label className="text-xs text-muted-foreground">From branch</label>
             <Command>
@@ -99,20 +98,6 @@ export function NewWorkspaceModal({ project, onClose, onCreated }: Props) {
               </CommandList>
             </Command>
           </div>
-
-          <div className="space-y-1.5">
-            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Sparkles className="size-3.5" />
-              Initial prompt (optional)
-            </label>
-            <Textarea
-              value={initPrompt}
-              onChange={(e) => setInitPrompt(e.target.value)}
-              placeholder="e.g. Run nvm use 22 and npm install"
-              className="min-h-[80px] text-xs"
-            />
-          </div>
-        </div>
 
           <div className="space-y-1.5">
             <label className="flex items-center gap-1.5 text-xs text-muted-foreground">

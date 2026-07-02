@@ -7,7 +7,9 @@
 
 @theme inline {
     --font-heading: var(--font-sans);
-    --font-sans: 'Geist Variable', sans-serif;
+    /* Native system UI font — renders crisp on macOS (SF Pro) and matches the
+       reference design far better than a webfont. */
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", system-ui, sans-serif;
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -280,6 +282,24 @@
   --sidebar-border: #1f1d2e; --sidebar-ring: #c4a7e7;
 }
 
+[data-theme="github-copilot-dark"] {
+  --background: #0a0c10; --foreground: #e6edf3;
+  --card: #0d1117; --card-foreground: #e6edf3;
+  --popover: #161b22; --popover-foreground: #e6edf3;
+  --primary: #2f81f7; --primary-foreground: #ffffff;
+  --secondary: #161b22; --secondary-foreground: #e6edf3;
+  --muted: #161b22; --muted-foreground: #8b949e;
+  --accent: #21262d; --accent-foreground: #e6edf3;
+  --destructive: #f85149;
+  --border: #21262d; --input: #30363d; --ring: #2f81f7;
+  --sidebar: #010409; --sidebar-foreground: #c9d1d9;
+  --sidebar-primary: #2f81f7; --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #161b22; --sidebar-accent-foreground: #e6edf3;
+  --sidebar-border: #21262d; --sidebar-ring: #2f81f7;
+  /* GitHub-accurate diff colors. */
+  --additions: #3fb950; --deletions: #f85149;
+}
+
 [data-theme="light"] {
   --background: #ffffff; --foreground: #0a0a0a;
   --card: #ffffff; --card-foreground: #0a0a0a;
@@ -366,10 +386,40 @@
     }
   body {
     @apply bg-background text-foreground overflow-hidden;
+    /* Crisp, thin text rendering on macOS (kills the "blurry" subpixel look). */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
     /* Desktop app: nothing selectable by default, default cursor. */
     -webkit-user-select: none;
     user-select: none;
     cursor: default;
+  }
+
+  /* Themed scrollbars for native (overflow) scroll containers. Radix
+     ScrollArea hides its own native scrollbar and renders a themed thumb, so
+     these rules only style plain overflow containers. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--foreground) 20%, transparent) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in oklab, var(--foreground) 20%, transparent);
+    background-clip: padding-box;
+    border: 2px solid transparent;
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklab, var(--foreground) 35%, transparent);
+    background-clip: padding-box;
   }
   html {
     @apply font-sans;

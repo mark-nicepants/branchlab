@@ -12,8 +12,16 @@ export default defineConfig(async ({ mode }) => ({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
-      // In browser debug mode, swap the Tauri API module for the mock implementation.
-      ...(mode === "browser" && { "./lib/api": path.resolve(__dirname, "./src/lib/api.mock.ts") }),
+      // In browser debug mode, swap the Tauri IPC API and the OpenCode HTTP
+      // client for their mock implementations. Aliases match the exact import
+      // specifier, so every relative form used across the tree is listed.
+      ...(mode === "browser" && {
+        "./lib/api": path.resolve(__dirname, "./src/lib/api.mock.ts"),
+        "../lib/api": path.resolve(__dirname, "./src/lib/api.mock.ts"),
+        "../../lib/api": path.resolve(__dirname, "./src/lib/api.mock.ts"),
+        "../lib/opencode": path.resolve(__dirname, "./src/lib/opencode.mock.ts"),
+        "../../lib/opencode": path.resolve(__dirname, "./src/lib/opencode.mock.ts"),
+      }),
     },
   },
 
@@ -25,7 +33,10 @@ export default defineConfig(async ({ mode }) => ({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
+    // Bind IPv4 explicitly. With `false`, Node >=17 resolves `localhost` to
+    // `::1` and Vite listens IPv6-only, but macOS WKWebView loads devUrl over
+    // IPv4 (127.0.0.1) first -> connection refused -> blank/hanging window.
+    host: host || "127.0.0.1",
     hmr: host
       ? {
           protocol: "ws",

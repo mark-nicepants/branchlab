@@ -14,7 +14,6 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -99,96 +98,85 @@ export function ProjectSettingsDialog({
     }
   }
 
+  const tabs: { id: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+    { id: "general", label: "General", icon: FileText },
+    { id: "prompts", label: "Prompts", icon: MessageSquare },
+    { id: "opencode", label: "OpenCode config", icon: Braces },
+  ];
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex h-[80vh] w-full max-w-4xl flex-row gap-0 overflow-hidden rounded-lg bg-card p-0 text-card-foreground">
-        <nav className="flex w-48 shrink-0 flex-col bg-card">
-          <NavItem tab="general" current={tab} icon={FileText} onClick={setTab}>
-            General
-          </NavItem>
-          <NavItem tab="opencode" current={tab} icon={Braces} onClick={setTab}>
-            OpenCode config
-          </NavItem>
-          <NavItem tab="prompts" current={tab} icon={MessageSquare} onClick={setTab}>
-            Prompts
-          </NavItem>
+      <DialogContent className="grid h-[80vh] w-[min(60rem,92vw)] grid-cols-[220px_1fr] gap-0 overflow-hidden p-0 sm:max-w-none">
+        <DialogTitle className="sr-only">Project settings</DialogTitle>
+        {/* Left nav — matches the app Settings screen */}
+        <nav className="flex flex-col gap-0.5 overflow-y-auto border-r border-border bg-sidebar p-2">
+          <div className="truncate px-2.5 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground" title={project.name}>
+            {project.name}
+          </div>
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={cn(
+                "flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors",
+                tab === t.id
+                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                  : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
+              )}
+            >
+              <t.icon className="size-4 shrink-0" />
+              {t.label}
+            </button>
+          ))}
         </nav>
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-card">
-          <DialogHeader className="border-b border-border/50 px-6 py-4">
-            <DialogTitle className="text-base font-medium">
-              {tab === "general" && "General"}
-              {tab === "opencode" && "OpenCode config"}
-              {tab === "prompts" && "Prompts"}
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="flex-1 overflow-y-auto px-6 py-5">
-            {tab === "general" && (
-              <GeneralTab
-                project={project}
-                name={name}
-                setName={setName}
-                defaultBranch={defaultBranch}
-                setDefaultBranch={setDefaultBranch}
-                defaultModelKey={defaultModelKey}
-                setDefaultModelKey={setDefaultModelKey}
-                models={models}
-                saving={saving}
-                onSave={() =>
-                  save({
-                    name: name.trim() || project.name,
-                    default_branch: defaultBranch.trim() || undefined,
-                    default_model_key: defaultModelKey.trim() || null,
-                  })
-                }
-              />
-            )}
-            {tab === "opencode" && (
-              <ConfigView workspaceId={workspaceId} baseUrl={baseUrl} onRestarted={onConfigRestarted} />
-            )}
-            {tab === "prompts" && (
-              <PromptsTab
-                prompts={prompts}
-                setPrompts={setPrompts}
-                saving={saving}
-                onSave={() => save({ prompts })}
-              />
-            )}
-          </div>
+        {/* Right pane */}
+        <div className="min-w-0 overflow-y-auto">
+          {tab === "opencode" ? (
+            <div className="flex h-full flex-col">
+              <div className="px-8 pb-3 pt-7">
+                <h2 className="text-lg font-semibold">OpenCode config</h2>
+              </div>
+              <div className="min-h-0 flex-1">
+                <ConfigView workspaceId={workspaceId} baseUrl={baseUrl} onRestarted={onConfigRestarted} />
+              </div>
+            </div>
+          ) : (
+            <div className="mx-auto max-w-2xl px-8 py-7">
+              <h2 className="mb-5 text-lg font-semibold">{tabs.find((t) => t.id === tab)?.label}</h2>
+              {tab === "general" && (
+                <GeneralTab
+                  project={project}
+                  name={name}
+                  setName={setName}
+                  defaultBranch={defaultBranch}
+                  setDefaultBranch={setDefaultBranch}
+                  defaultModelKey={defaultModelKey}
+                  setDefaultModelKey={setDefaultModelKey}
+                  models={models}
+                  saving={saving}
+                  onSave={() =>
+                    save({
+                      name: name.trim() || project.name,
+                      default_branch: defaultBranch.trim() || undefined,
+                      default_model_key: defaultModelKey.trim() || null,
+                    })
+                  }
+                />
+              )}
+              {tab === "prompts" && (
+                <PromptsTab
+                  prompts={prompts}
+                  setPrompts={setPrompts}
+                  saving={saving}
+                  onSave={() => save({ prompts })}
+                />
+              )}
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function NavItem({
-  tab,
-  current,
-  icon: Icon,
-  onClick,
-  children,
-}: {
-  tab: Tab;
-  current: Tab;
-  icon: React.ComponentType<{ className?: string }>;
-  onClick: (tab: Tab) => void;
-  children: React.ReactNode;
-}) {
-  const active = tab === current;
-  return (
-    <button
-      onClick={() => onClick(tab)}
-      className={cn(
-        "flex w-full items-center gap-3 px-5 py-2.5 text-left text-sm transition-colors",
-        active
-          ? "bg-accent text-accent-foreground font-medium"
-          : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-      )}
-    >
-      <Icon className="size-4" />
-      {children}
-    </button>
   );
 }
 

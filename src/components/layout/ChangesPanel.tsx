@@ -20,6 +20,7 @@ import { fileStatus } from "@/lib/status";
 import { buildTree, type TreeNode } from "@/lib/tree";
 import { useWorkspaceData } from "../../hooks/useWorkspaceData";
 import { usePreferences } from "../PreferencesProvider";
+import { ServerToolsPanel } from "../session/ServerToolsPanel";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -29,11 +30,23 @@ interface Props {
   onOpenFile: (path: string) => void;
   /** Open a file in the in-app viewer (center "file" tab). */
   onViewFile: (path: string) => void;
+  /** Base URL of the workspace's opencode server, for the Config (tools) tab. */
+  baseUrl?: string | null;
+  /** Restart the workspace's opencode server. */
+  onRestart?: () => void;
 }
 
-type Tab = "changes" | "files";
+type Tab = "changes" | "files" | "config";
 
-export function ChangesPanel({ workspace, viewed, onToggleViewed, onOpenFile, onViewFile }: Props) {
+export function ChangesPanel({
+  workspace,
+  viewed,
+  onToggleViewed,
+  onOpenFile,
+  onViewFile,
+  baseUrl = null,
+  onRestart,
+}: Props) {
   const [tab, setTab] = useState<Tab>("changes");
 
   return (
@@ -45,14 +58,19 @@ export function ChangesPanel({ workspace, viewed, onToggleViewed, onOpenFile, on
         <TabBarItem active={tab === "files"} onClick={() => setTab("files")}>
           Files
         </TabBarItem>
+        <TabBarItem active={tab === "config"} onClick={() => setTab("config")}>
+          Config
+        </TabBarItem>
       </header>
 
       {!workspace ? (
         <EmptyIcon>Select a workspace to see its changes.</EmptyIcon>
       ) : tab === "changes" ? (
         <ChangesTab workspace={workspace} viewed={viewed} onToggleViewed={onToggleViewed} onOpenFile={onOpenFile} />
-      ) : (
+      ) : tab === "files" ? (
         <FilesTab workspace={workspace} onViewFile={onViewFile} />
+      ) : (
+        <ServerToolsPanel baseUrl={baseUrl} onRestart={() => onRestart?.()} />
       )}
     </div>
   );

@@ -11,7 +11,7 @@ export interface EnvReport {
   git: ToolStatus;
 }
 
-export type WorkspaceKind = "Base" | "Worktree";
+export type WorkspaceKind = "Base" | "Worktree" | "QuickChat";
 
 export interface Workspace {
   id: string;
