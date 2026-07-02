@@ -7,7 +7,8 @@ import { useInterval } from "./useInterval";
 function sameTodoList(a: Todo[], b: Todo[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
-    if (a[i].content !== b[i].content || a[i].status !== b[i].status) return false;
+    if (a[i].content !== b[i].content || a[i].status !== b[i].status)
+      return false;
   }
   return true;
 }
@@ -49,7 +50,10 @@ export function useTodos(client: OpencodeClient, sessionId: string | null) {
   /** Call when the user starts a new turn while every todo is `completed`. */
   const dismissIfAllCompleted = useCallback(() => {
     setTodos((current) => {
-      if (current.length > 0 && current.every((t) => t.status === "completed")) {
+      if (
+        current.length > 0 &&
+        current.every((t) => t.status === "completed")
+      ) {
         setDismissedTodos(current);
         return [];
       }

@@ -32,7 +32,10 @@ export function useCommands(client: OpencodeClient | null) {
 
   const refresh = () => {
     if (!client) return;
-    client.listCommands().then(setCommands).catch(() => {});
+    client
+      .listCommands()
+      .then(setCommands)
+      .catch(() => {});
   };
 
   return { commands, refresh };

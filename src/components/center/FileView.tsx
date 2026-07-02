@@ -14,7 +14,13 @@ type State =
  * Center "file" tab: a read-only, line-numbered view of a single workspace
  * file. Handles loading, errors, binary files, and large (truncated) files.
  */
-export function FileView({ workspaceId, file }: { workspaceId: string; file: string }) {
+export function FileView({
+  workspaceId,
+  file,
+}: {
+  workspaceId: string;
+  file: string;
+}) {
   const [state, setState] = useState<State>({ kind: "loading" });
 
   useCancellableEffect(
@@ -22,7 +28,10 @@ export function FileView({ workspaceId, file }: { workspaceId: string; file: str
       setState({ kind: "loading" });
       readFile(workspaceId, file)
         .then((data) => !cancelled() && setState({ kind: "ready", data }))
-        .catch((e) => !cancelled() && setState({ kind: "error", message: String(e) }));
+        .catch(
+          (e) =>
+            !cancelled() && setState({ kind: "error", message: String(e) }),
+        );
     },
     [workspaceId, file],
   );
@@ -48,7 +57,9 @@ export function FileView({ workspaceId, file }: { workspaceId: string; file: str
 
   if (data.binary) {
     return (
-      <EmptyState icon={<FileWarning className="size-6 text-muted-foreground/60" />}>
+      <EmptyState
+        icon={<FileWarning className="size-6 text-muted-foreground/60" />}
+      >
         Binary file not shown ({formatBytes(data.size)}).
       </EmptyState>
     );
@@ -67,7 +78,9 @@ export function FileView({ workspaceId, file }: { workspaceId: string; file: str
         <span className="shrink-0">
           {lines.length} lines · {formatBytes(data.size)}
         </span>
-        {data.truncated && <span className="shrink-0 text-warning">truncated</span>}
+        {data.truncated && (
+          <span className="shrink-0 text-warning">truncated</span>
+        )}
       </div>
 
       <div className="flex-1 overflow-auto font-mono text-[12px] leading-[1.5]">

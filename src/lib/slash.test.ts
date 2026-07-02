@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { CommandOption } from "./types";
-import { expandTemplate, filterCommands, isSlashTyping, parseSlash } from "./slash";
+import {
+  expandTemplate,
+  filterCommands,
+  isSlashTyping,
+  parseSlash,
+} from "./slash";
 
 const cmd = (over: Partial<CommandOption> = {}): CommandOption => ({
   name: "review",
@@ -32,7 +37,9 @@ describe("parseSlash", () => {
 
 describe("expandTemplate", () => {
   it("substitutes every occurrence of $ARGUMENTS", () => {
-    expect(expandTemplate("a $ARGUMENTS b $ARGUMENTS c", "X")).toBe("a X b X c");
+    expect(expandTemplate("a $ARGUMENTS b $ARGUMENTS c", "X")).toBe(
+      "a X b X c",
+    );
   });
 
   it("appends args after a blank line when the template has no placeholder", () => {
@@ -75,8 +82,14 @@ describe("filterCommands", () => {
   ];
 
   it("matches case-insensitive prefix", () => {
-    expect(filterCommands(all, "re").map((c) => c.name)).toEqual(["release", "review"]);
-    expect(filterCommands(all, "RE").map((c) => c.name)).toEqual(["release", "review"]);
+    expect(filterCommands(all, "re").map((c) => c.name)).toEqual([
+      "release",
+      "review",
+    ]);
+    expect(filterCommands(all, "RE").map((c) => c.name)).toEqual([
+      "release",
+      "review",
+    ]);
   });
 
   it("returns everything when query is empty", () => {
@@ -85,6 +98,8 @@ describe("filterCommands", () => {
 
   it("ranks user-defined commands before skills", () => {
     const names = filterCommands(all, "").map((c) => c.name);
-    expect(names.indexOf("customize-opencode")).toBeGreaterThan(names.indexOf("review"));
+    expect(names.indexOf("customize-opencode")).toBeGreaterThan(
+      names.indexOf("review"),
+    );
   });
 });

@@ -37,9 +37,19 @@ export function parseDiff(diff: string): DiffHunk[] {
     if (raw.startsWith("\\")) continue; // "\ No newline at end of file"
 
     if (raw.startsWith("+")) {
-      cur.lines.push({ type: "add", oldNo: null, newNo: newNo++, text: raw.slice(1) });
+      cur.lines.push({
+        type: "add",
+        oldNo: null,
+        newNo: newNo++,
+        text: raw.slice(1),
+      });
     } else if (raw.startsWith("-")) {
-      cur.lines.push({ type: "del", oldNo: oldNo++, newNo: null, text: raw.slice(1) });
+      cur.lines.push({
+        type: "del",
+        oldNo: oldNo++,
+        newNo: null,
+        text: raw.slice(1),
+      });
     } else {
       const text = raw.startsWith(" ") ? raw.slice(1) : raw;
       cur.lines.push({ type: "context", oldNo: oldNo++, newNo: newNo++, text });

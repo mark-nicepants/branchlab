@@ -51,7 +51,13 @@ export function CommitButton({ workspace, project, onAction }: Props) {
       kind,
       prompt,
       display,
-      onFinish: kind === "merge" ? { kind: "remove_workspace", message: "Merge successful! Do you want to remove the workspace?" } : undefined,
+      onFinish:
+        kind === "merge"
+          ? {
+              kind: "remove_workspace",
+              message: "Merge successful! Do you want to remove the workspace?",
+            }
+          : undefined,
     });
   }
 
@@ -70,7 +76,10 @@ export function CommitButton({ workspace, project, onAction }: Props) {
       body: body.trim(),
       prompt: promptWithInputs,
       display,
-      onFinish: { kind: "remove_workspace", message: "Pull request opened! Do you want to remove the workspace?" },
+      onFinish: {
+        kind: "remove_workspace",
+        message: "Pull request opened! Do you want to remove the workspace?",
+      },
     });
     setPrOpen(false);
     setTitle("");
@@ -98,7 +107,11 @@ export function CommitButton({ workspace, project, onAction }: Props) {
               <ChevronDown className="size-3.5" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" side="bottom" className="min-w-[200px]">
+          <DropdownMenuContent
+            align="end"
+            side="bottom"
+            className="min-w-[200px]"
+          >
             <DropdownMenuItem onClick={() => send("commit")}>
               <Check className="size-4" />
               Commit changes
@@ -125,11 +138,16 @@ export function CommitButton({ workspace, project, onAction }: Props) {
           <DialogHeader>
             <DialogTitle>Open pull request</DialogTitle>
             <DialogDescription>
-              Push <span className="font-mono">{branch}</span> to origin and create a PR against{" "}
-              <span className="font-mono">{base}</span>.
+              Push <span className="font-mono">{branch}</span> to origin and
+              create a PR against <span className="font-mono">{base}</span>.
             </DialogDescription>
           </DialogHeader>
-          <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="PR title" className="mt-2" />
+          <Input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="PR title"
+            className="mt-2"
+          />
           <Textarea
             value={body}
             onChange={(e) => setBody(e.target.value)}
@@ -137,8 +155,16 @@ export function CommitButton({ workspace, project, onAction }: Props) {
             className="mt-2 min-h-[80px]"
           />
           <DialogFooter className="mt-4">
-            <Button variant="secondary" size="sm" onClick={() => setPrOpen(false)}>Cancel</Button>
-            <Button size="sm" onClick={openPr}>Create PR</Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setPrOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button size="sm" onClick={openPr}>
+              Create PR
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

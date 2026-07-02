@@ -17,11 +17,15 @@ function ws(overrides: Partial<Workspace>): Workspace {
 
 describe("workspaceLabel", () => {
   it("prefers the explicit name", () => {
-    expect(workspaceLabel(ws({ name: "Auth refactor", branch: "feat/auth" }))).toBe("Auth refactor");
+    expect(
+      workspaceLabel(ws({ name: "Auth refactor", branch: "feat/auth" })),
+    ).toBe("Auth refactor");
   });
 
   it("falls back to the branch when there is no name", () => {
-    expect(workspaceLabel(ws({ name: null, branch: "feat/auth" }))).toBe("feat/auth");
+    expect(workspaceLabel(ws({ name: null, branch: "feat/auth" }))).toBe(
+      "feat/auth",
+    );
   });
 
   it("falls back to a default when neither is set", () => {

@@ -7,15 +7,16 @@ import {
   Terminal,
 } from "lucide-react";
 import { toast } from "sonner";
-import type { ProjectView, ProjectPrompts, ProjectUpdate, ModelOption } from "../lib/types";
+import type {
+  ProjectView,
+  ProjectPrompts,
+  ProjectUpdate,
+  ModelOption,
+} from "../lib/types";
 import { openExternal, serverStatus, updateProject } from "../lib/api";
 import { OpencodeClient } from "../lib/opencode";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Field } from "@/components/ui/field";
@@ -49,8 +50,12 @@ export function ProjectSettingsDialog({
 }: Props) {
   const [tab, setTab] = useState<Tab>("general");
   const [name, setName] = useState(project.name);
-  const [defaultBranch, setDefaultBranch] = useState(project.default_branch ?? "");
-  const [defaultModelKey, setDefaultModelKey] = useState(project.default_model_key ?? "");
+  const [defaultBranch, setDefaultBranch] = useState(
+    project.default_branch ?? "",
+  );
+  const [defaultModelKey, setDefaultModelKey] = useState(
+    project.default_model_key ?? "",
+  );
   const [prompts, setPrompts] = useState<ProjectPrompts>(
     project.prompts ?? {
       init_workspace: "",
@@ -92,13 +97,19 @@ export function ProjectSettingsDialog({
       onUpdated(next);
       toast.success("Project settings saved");
     } catch (e) {
-      toast.error("Could not save project settings", { description: String(e) });
+      toast.error("Could not save project settings", {
+        description: String(e),
+      });
     } finally {
       setSaving(false);
     }
   }
 
-  const tabs: { id: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  const tabs: {
+    id: Tab;
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+  }[] = [
     { id: "general", label: "General", icon: FileText },
     { id: "prompts", label: "Prompts", icon: MessageSquare },
     { id: "opencode", label: "OpenCode config", icon: Braces },
@@ -110,7 +121,10 @@ export function ProjectSettingsDialog({
         <DialogTitle className="sr-only">Project settings</DialogTitle>
         {/* Left nav — matches the app Settings screen */}
         <nav className="flex flex-col gap-0.5 overflow-y-auto border-r border-border bg-sidebar p-2">
-          <div className="truncate px-2.5 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground" title={project.name}>
+          <div
+            className="truncate px-2.5 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+            title={project.name}
+          >
             {project.name}
           </div>
           {tabs.map((t) => (
@@ -138,12 +152,18 @@ export function ProjectSettingsDialog({
                 <h2 className="text-lg font-semibold">OpenCode config</h2>
               </div>
               <div className="min-h-0 flex-1">
-                <ConfigView workspaceId={workspaceId} baseUrl={baseUrl} onRestarted={onConfigRestarted} />
+                <ConfigView
+                  workspaceId={workspaceId}
+                  baseUrl={baseUrl}
+                  onRestarted={onConfigRestarted}
+                />
               </div>
             </div>
           ) : (
             <div className="mx-auto max-w-2xl px-8 py-7">
-              <h2 className="mb-5 text-lg font-semibold">{tabs.find((t) => t.id === tab)?.label}</h2>
+              <h2 className="mb-5 text-lg font-semibold">
+                {tabs.find((t) => t.id === tab)?.label}
+              </h2>
               {tab === "general" && (
                 <GeneralTab
                   project={project}
@@ -207,12 +227,20 @@ function GeneralTab({
     <div className="space-y-5">
       <Field label="Path">
         <div className="flex items-center gap-2">
-          <Input value={project.root_path} readOnly className="font-mono text-xs" />
+          <Input
+            value={project.root_path}
+            readOnly
+            className="font-mono text-xs"
+          />
           <Button
             variant="outline"
             size="icon"
             title="Open in Finder"
-            onClick={() => openExternal(project.root_path).catch((e) => toast.error(String(e)))}
+            onClick={() =>
+              openExternal(project.root_path).catch((e) =>
+                toast.error(String(e)),
+              )
+            }
           >
             <FolderOpen className="size-4" />
           </Button>
@@ -221,7 +249,9 @@ function GeneralTab({
             size="icon"
             title="Open in terminal"
             onClick={() =>
-              openExternal(project.root_path, "Terminal").catch((e) => toast.error(String(e)))
+              openExternal(project.root_path, "Terminal").catch((e) =>
+                toast.error(String(e)),
+              )
             }
           >
             <Terminal className="size-4" />
@@ -230,7 +260,11 @@ function GeneralTab({
       </Field>
 
       <Field label="Project name">
-        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Project name" />
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Project name"
+        />
       </Field>
 
       <Field label="Base branch">
@@ -309,5 +343,3 @@ function PromptsTab({
     </div>
   );
 }
-
-

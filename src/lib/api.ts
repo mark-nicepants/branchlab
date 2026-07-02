@@ -87,7 +87,10 @@ export function createQuickChat(): Promise<Workspace> {
 }
 
 /** Update project metadata, prompts, and default model. */
-export function updateProject(projectId: string, update: ProjectUpdate): Promise<ProjectView> {
+export function updateProject(
+  projectId: string,
+  update: ProjectUpdate,
+): Promise<ProjectView> {
   return invoke<ProjectView>("update_project", { projectId, update });
 }
 
@@ -97,7 +100,10 @@ export function getProjectPrompts(projectId: string): Promise<ProjectPrompts> {
 }
 
 /** Remove a worktree workspace (stops its server first). */
-export function removeWorkspace(workspaceId: string, force: boolean): Promise<void> {
+export function removeWorkspace(
+  workspaceId: string,
+  force: boolean,
+): Promise<void> {
   return invoke<void>("remove_workspace", { workspaceId, force });
 }
 
@@ -106,7 +112,10 @@ export function listWorkspaces(): Promise<Workspace[]> {
 }
 
 /** Set a workspace's display name (AI-generated once, or manual rename). */
-export function renameWorkspace(workspaceId: string, name: string): Promise<void> {
+export function renameWorkspace(
+  workspaceId: string,
+  name: string,
+): Promise<void> {
   return invoke<void>("rename_workspace", { workspaceId, name });
 }
 
@@ -115,8 +124,14 @@ export function workspaceDiffStat(workspaceId: string): Promise<DiffStat> {
 }
 
 /** Changed files for the diff panel. `against` defaults to HEAD (local). */
-export function workspaceChanges(workspaceId: string, against?: string): Promise<FileChange[]> {
-  return invoke<FileChange[]>("workspace_changes", { workspaceId, against: against ?? null });
+export function workspaceChanges(
+  workspaceId: string,
+  against?: string,
+): Promise<FileChange[]> {
+  return invoke<FileChange[]>("workspace_changes", {
+    workspaceId,
+    against: against ?? null,
+  });
 }
 
 /** Unified diff text for one file. */
@@ -125,7 +140,11 @@ export function workspaceFileDiff(
   file: string,
   against?: string,
 ): Promise<string> {
-  return invoke<string>("workspace_file_diff", { workspaceId, file, against: against ?? null });
+  return invoke<string>("workspace_file_diff", {
+    workspaceId,
+    file,
+    against: against ?? null,
+  });
 }
 
 /** Discard a file's local changes (restore to HEAD, or delete if untracked). */
@@ -139,12 +158,18 @@ export function workspaceFiles(workspaceId: string): Promise<string[]> {
 }
 
 /** Read a workspace file's contents for the in-app viewer. */
-export function readFile(workspaceId: string, file: string): Promise<FileContent> {
+export function readFile(
+  workspaceId: string,
+  file: string,
+): Promise<FileContent> {
   return invoke<FileContent>("read_file", { workspaceId, file });
 }
 
 /** Commit all changes in a workspace. */
-export function commitWorkspace(workspaceId: string, message: string): Promise<string> {
+export function commitWorkspace(
+  workspaceId: string,
+  message: string,
+): Promise<string> {
   return invoke<string>("commit_workspace", { workspaceId, message });
 }
 
@@ -159,7 +184,11 @@ export function pushWorkspace(workspaceId: string): Promise<PushResult> {
 }
 
 /** Push the branch and create a GitHub PR (requires `gh`). */
-export function createWorkspacePr(workspaceId: string, title: string, body: string): Promise<PrResult> {
+export function createWorkspacePr(
+  workspaceId: string,
+  title: string,
+  body: string,
+): Promise<PrResult> {
   return invoke<PrResult>("create_workspace_pr", { workspaceId, title, body });
 }
 
@@ -171,8 +200,14 @@ export function listRemotes(workspaceId: string): Promise<RemoteInfo[]> {
 // ── M3: config & internals ──
 
 /** Read the global or project opencode config file. */
-export function readConfig(scope: "global" | "project", workspaceId?: string): Promise<ConfigFile> {
-  return invoke<ConfigFile>("read_config", { scope, workspaceId: workspaceId ?? null });
+export function readConfig(
+  scope: "global" | "project",
+  workspaceId?: string,
+): Promise<ConfigFile> {
+  return invoke<ConfigFile>("read_config", {
+    scope,
+    workspaceId: workspaceId ?? null,
+  });
 }
 
 /** Write a config file; returns the written path. */
@@ -181,7 +216,11 @@ export function writeConfig(
   content: string,
   workspaceId?: string,
 ): Promise<string> {
-  return invoke<string>("write_config", { scope, workspaceId: workspaceId ?? null, content });
+  return invoke<string>("write_config", {
+    scope,
+    workspaceId: workspaceId ?? null,
+    content,
+  });
 }
 
 /** Restart a workspace's server (to apply config changes). */

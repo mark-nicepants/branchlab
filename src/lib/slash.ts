@@ -47,7 +47,10 @@ export function isSlashTyping(text: string): boolean {
  * Filter commands by case-insensitive prefix match on the typed name.
  * Sorts user-defined commands before skills, then alphabetically.
  */
-export function filterCommands(commands: CommandOption[], query: string): CommandOption[] {
+export function filterCommands(
+  commands: CommandOption[],
+  query: string,
+): CommandOption[] {
   const q = query.toLowerCase();
   return commands
     .filter((c) => c.name.toLowerCase().startsWith(q))

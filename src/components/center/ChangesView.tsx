@@ -49,12 +49,17 @@ export function ChangesView({
   const files: FileChange[] = changes ?? [];
   // Stable signature so we only refetch per-file diffs when the set changes,
   // not on every poll cycle even when the file list hasn't changed.
-  const signature = files.map((f) => `${f.path}:${f.insertions}/${f.deletions}`).join(",");
+  const signature = files
+    .map((f) => `${f.path}:${f.insertions}/${f.deletions}`)
+    .join(",");
 
   useCancellableEffect(
     async (cancelled) => {
       const entries = await Promise.all(
-        files.map(async (f) => [f.path, await workspaceFileDiff(workspaceId, f.path)] as const),
+        files.map(
+          async (f) =>
+            [f.path, await workspaceFileDiff(workspaceId, f.path)] as const,
+        ),
       );
       if (!cancelled()) setDiffs(Object.fromEntries(entries));
     },
@@ -63,9 +68,9 @@ export function ChangesView({
 
   useEffect(() => {
     if (!focusedFile) return;
-    const el = Array.from(scrollRef.current?.querySelectorAll("[data-file]") ?? []).find(
-      (e) => e.getAttribute("data-file") === focusedFile,
-    );
+    const el = Array.from(
+      scrollRef.current?.querySelectorAll("[data-file]") ?? [],
+    ).find((e) => e.getAttribute("data-file") === focusedFile);
     el?.scrollIntoView({ block: "start" });
   }, [focusedFile, files.length]);
 
@@ -90,7 +95,8 @@ export function ChangesView({
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-3 border-b border-border px-4 py-2 text-xs">
         <span className="text-muted-foreground">
-          {files.length} files <span className="text-additions">+{totalIns}</span>{" "}
+          {files.length} files{" "}
+          <span className="text-additions">+{totalIns}</span>{" "}
           <span className="text-deletions">−{totalDel}</span>
         </span>
         <span className="text-muted-foreground">
@@ -98,10 +104,16 @@ export function ChangesView({
         </span>
         <div className="ml-auto flex items-center gap-2">
           <Segmented>
-            <SegmentedItem active={view === "unified"} onClick={() => setView("unified")}>
+            <SegmentedItem
+              active={view === "unified"}
+              onClick={() => setView("unified")}
+            >
               <Rows3 className="size-3.5" /> Unified
             </SegmentedItem>
-            <SegmentedItem active={view === "split"} onClick={() => setView("split")}>
+            <SegmentedItem
+              active={view === "split"}
+              onClick={() => setView("split")}
+            >
               <Columns2 className="size-3.5" /> Split
             </SegmentedItem>
           </Segmented>
@@ -128,7 +140,9 @@ export function ChangesView({
               view={view}
               viewed={isViewed}
               open={open}
-              onToggleOpen={() => setOpenMap((m) => ({ ...m, [f.path]: !open }))}
+              onToggleOpen={() =>
+                setOpenMap((m) => ({ ...m, [f.path]: !open }))
+              }
               onToggleViewed={() => onToggleViewed(f.path)}
               onDiscard={() => void discard(f.path)}
             />
@@ -160,10 +174,20 @@ function DiffFile({
 }) {
   const hunks = useMemo(() => parseDiff(diff), [diff]);
   return (
-    <div data-file={file.path} className={cn("border-b border-border", viewed && "opacity-70")}>
+    <div
+      data-file={file.path}
+      className={cn("border-b border-border", viewed && "opacity-70")}
+    >
       <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-card px-2 py-1.5 text-xs">
-        <button onClick={onToggleOpen} className="shrink-0 text-muted-foreground hover:text-foreground">
-          {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+        <button
+          onClick={onToggleOpen}
+          className="shrink-0 text-muted-foreground hover:text-foreground"
+        >
+          {open ? (
+            <ChevronDown className="size-3.5" />
+          ) : (
+            <ChevronRight className="size-3.5" />
+          )}
         </button>
         <span className="min-w-0 flex-1 truncate font-mono" title={file.path}>
           {file.path}
@@ -172,10 +196,20 @@ function DiffFile({
           <span className="text-additions">+{file.insertions}</span>{" "}
           <span className="text-deletions">−{file.deletions}</span>
         </span>
-        <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={onDiscard}>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 text-xs"
+          onClick={onDiscard}
+        >
           <Undo2 className="size-3.5" /> Discard
         </Button>
-        <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={onToggleViewed}>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 text-xs"
+          onClick={onToggleViewed}
+        >
           {viewed ? (
             <>
               <Check className="size-3.5 text-additions" /> Viewed
@@ -187,7 +221,12 @@ function DiffFile({
           )}
         </Button>
       </div>
-      {open && (view === "unified" ? <UnifiedDiff hunks={hunks} /> : <SplitDiff hunks={hunks} />)}
+      {open &&
+        (view === "unified" ? (
+          <UnifiedDiff hunks={hunks} />
+        ) : (
+          <SplitDiff hunks={hunks} />
+        ))}
     </div>
   );
 }

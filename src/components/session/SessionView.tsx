@@ -17,8 +17,15 @@ import {
   Loader2,
   TriangleAlert,
 } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { useCancellableEffect } from "../../hooks/useCancellableEffect";
+import { useWorkspaceData } from "../../hooks/useWorkspaceData";
 import { openExternal, restartServer, startServer } from "../../lib/api";
 import { OpencodeClient } from "../../lib/opencode";
 import type { ContextInfo, ProjectView, Workspace } from "../../lib/types";
@@ -29,7 +36,6 @@ import { Chat, type WorkspaceAction } from "../Chat";
 import { CommitButton } from "../CommitButton";
 import { ChangesPanel } from "../layout/ChangesPanel";
 import { usePreferences } from "../PreferencesProvider";
-import { useWorkspaceData } from "../../hooks/useWorkspaceData";
 
 interface Props {
   workspace: Workspace;
@@ -119,7 +125,9 @@ export function SessionView({
     const el = bodyRef.current;
     if (!el) return;
     setBodyWidth(el.getBoundingClientRect().width);
-    const ro = new ResizeObserver(([entry]) => setBodyWidth(entry.contentRect.width));
+    const ro = new ResizeObserver(([entry]) =>
+      setBodyWidth(entry.contentRect.width),
+    );
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
@@ -139,7 +147,10 @@ export function SessionView({
       setDragging(true);
       document.body.style.cursor = "col-resize";
       const onMove = (ev: MouseEvent) => {
-        const pct = Math.min(70, Math.max(20, ((rect.right - ev.clientX) / rect.width) * 100));
+        const pct = Math.min(
+          70,
+          Math.max(20, ((rect.right - ev.clientX) / rect.width) * 100),
+        );
         changesPctRef.current = pct;
         setChangesPct(pct);
       };
@@ -212,7 +223,10 @@ export function SessionView({
           className="flex min-w-0 flex-1 items-center gap-1.5 text-sm"
         >
           {project && (
-            <span data-tauri-drag-region className="shrink-0 text-muted-foreground">
+            <span
+              data-tauri-drag-region
+              className="shrink-0 text-muted-foreground"
+            >
               {project.name}
             </span>
           )}
@@ -358,7 +372,7 @@ export function SessionView({
               "shrink-0 overflow-hidden",
               dragging || !animate
                 ? "transition-none"
-                : "transition-[width,opacity] duration-500 ease-out",
+                : "transition-[width,opacity] duration-100 ease-out",
               changesOpen ? "opacity-100" : "opacity-0",
             )}
           >

@@ -38,7 +38,13 @@ export function ModeSelector({ value, onChange }: Props) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" side="top" className="min-w-[100px]">
-        <DropdownMenuRadioGroup value={value} onValueChange={(v) => { onChange(v); setOpen(false); }}>
+        <DropdownMenuRadioGroup
+          value={value}
+          onValueChange={(v) => {
+            onChange(v);
+            setOpen(false);
+          }}
+        >
           {MODES.map((m) => (
             <DropdownMenuRadioItem key={m} value={m}>
               <span className="flex flex-1 items-center capitalize">{m}</span>

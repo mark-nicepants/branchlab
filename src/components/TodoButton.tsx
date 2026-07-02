@@ -48,10 +48,13 @@ export function TodoButton({ todos }: Props) {
                   key={i}
                   className={cn(
                     "flex items-start gap-2 rounded px-2 py-1.5 text-xs",
-                    todo.status === "completed" && "text-muted-foreground line-through",
-                    todo.status === "in_progress" && "bg-accent text-accent-foreground",
+                    todo.status === "completed" &&
+                      "text-muted-foreground line-through",
+                    todo.status === "in_progress" &&
+                      "bg-accent text-accent-foreground",
                     todo.status === "pending" && "text-foreground",
-                    todo.status === "cancelled" && "text-destructive line-through",
+                    todo.status === "cancelled" &&
+                      "text-destructive line-through",
                   )}
                 >
                   <StatusDot status={todo.status} />
@@ -67,5 +70,12 @@ export function TodoButton({ todos }: Props) {
 }
 
 function StatusDot({ status }: { status: string }) {
-  return <span className={cn("mt-1 block size-1.5 shrink-0 rounded-full", todoStatusBg(status))} />;
+  return (
+    <span
+      className={cn(
+        "mt-1 block size-1.5 shrink-0 rounded-full",
+        todoStatusBg(status),
+      )}
+    />
+  );
 }

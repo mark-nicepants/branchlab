@@ -1,10 +1,7 @@
 import { useEffect, useState } from "react";
 import { Check, GitBranch, Sparkles } from "lucide-react";
 import { toast } from "sonner";
-import {
-  createWorkspace,
-  listBranches,
-} from "../lib/api";
+import { createWorkspace, listBranches } from "../lib/api";
 import type { ProjectView, Workspace } from "../lib/types";
 import {
   Dialog,
@@ -41,7 +38,7 @@ export function NewWorkspaceModal({ project, onClose, onCreated }: Props) {
   const [branches, setBranches] = useState<string[]>([]);
   const [base, setBase] = useState<string>(project.default_branch ?? "");
   const [initPrompt, setInitPrompt] = useState(
-    project.prompts.init_workspace ?? ""
+    project.prompts.init_workspace ?? "",
   );
   const [busy, setBusy] = useState(false);
 
@@ -51,7 +48,9 @@ export function NewWorkspaceModal({ project, onClose, onCreated }: Props) {
         setBranches(bs);
         if (bs.length && !base) setBase(bs[0]);
       })
-      .catch((e) => toast.error("Could not list branches", { description: String(e) }));
+      .catch((e) =>
+        toast.error("Could not list branches", { description: String(e) }),
+      );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
 
@@ -62,7 +61,7 @@ export function NewWorkspaceModal({ project, onClose, onCreated }: Props) {
       const ws = await createWorkspace(
         project.id,
         base,
-        initPrompt.trim() || undefined
+        initPrompt.trim() || undefined,
       );
       onCreated(ws);
       onClose();
@@ -91,7 +90,12 @@ export function NewWorkspaceModal({ project, onClose, onCreated }: Props) {
                     <CommandItem key={b} value={b} onSelect={() => setBase(b)}>
                       <GitBranch className="size-3.5 text-muted-foreground" />
                       <span className="font-mono text-xs">{b}</span>
-                      <Check className={cn("ml-auto size-3.5", base === b ? "opacity-100" : "opacity-0")} />
+                      <Check
+                        className={cn(
+                          "ml-auto size-3.5",
+                          base === b ? "opacity-100" : "opacity-0",
+                        )}
+                      />
                     </CommandItem>
                   ))}
                 </CommandGroup>

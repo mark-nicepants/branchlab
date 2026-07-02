@@ -11,9 +11,16 @@ interface Props {
   disabled?: boolean;
 }
 
-export function QuestionView({ questions, onSubmit, onCancel, disabled }: Props) {
+export function QuestionView({
+  questions,
+  onSubmit,
+  onCancel,
+  disabled,
+}: Props) {
   // answers[i] holds the selected option labels for questions[i].
-  const [answers, setAnswers] = useState<string[][]>(() => questions.map(() => []));
+  const [answers, setAnswers] = useState<string[][]>(() =>
+    questions.map(() => []),
+  );
   const [custom, setCustom] = useState<string[]>(() => questions.map(() => ""));
 
   function toggle(qIndex: number, label: string, multiple: boolean) {
@@ -54,8 +61,12 @@ export function QuestionView({ questions, onSubmit, onCancel, disabled }: Props)
     <div className="flex w-full flex-col gap-4 rounded-xl border border-border bg-card p-4 text-sm shadow-sm">
       {questions.map((q, qIndex) => (
         <div key={qIndex} className="flex flex-col gap-2">
-          {q.header && <div className="font-medium text-foreground">{q.header}</div>}
-          {q.question && <div className="text-muted-foreground">{q.question}</div>}
+          {q.header && (
+            <div className="font-medium text-foreground">{q.header}</div>
+          )}
+          {q.question && (
+            <div className="text-muted-foreground">{q.question}</div>
+          )}
           <div className="flex flex-col gap-1.5">
             {q.options.map((opt) => {
               const selected = answers[qIndex].includes(opt.label);
@@ -75,7 +86,9 @@ export function QuestionView({ questions, onSubmit, onCancel, disabled }: Props)
                 >
                   <span className="font-medium">{opt.label}</span>
                   {opt.description && (
-                    <span className="text-xs text-muted-foreground">{opt.description}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {opt.description}
+                    </span>
                   )}
                 </button>
               );
@@ -85,7 +98,9 @@ export function QuestionView({ questions, onSubmit, onCancel, disabled }: Props)
             <Textarea
               value={custom[qIndex]}
               onChange={(e) =>
-                setCustom((prev) => prev.map((v, i) => (i === qIndex ? e.target.value : v)))
+                setCustom((prev) =>
+                  prev.map((v, i) => (i === qIndex ? e.target.value : v)),
+                )
               }
               placeholder="Or type your own answer…"
               disabled={disabled}
@@ -96,7 +111,12 @@ export function QuestionView({ questions, onSubmit, onCancel, disabled }: Props)
       ))}
       <div className="flex justify-end gap-2">
         {onCancel && (
-          <Button variant="ghost" size="sm" onClick={onCancel} disabled={disabled}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onCancel}
+            disabled={disabled}
+          >
             Cancel
           </Button>
         )}

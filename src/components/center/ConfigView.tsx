@@ -1,12 +1,12 @@
-import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { SectionLabel } from "@/components/ui/section-label";
+import { Segmented, SegmentedItem } from "@/components/ui/segmented";
+import { Textarea } from "@/components/ui/textarea";
 import { RotateCw, Save } from "lucide-react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { readConfig, restartServer, writeConfig } from "../../lib/api";
 import { OpencodeClient } from "../../lib/opencode";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { Segmented, SegmentedItem } from "@/components/ui/segmented";
-import { SectionLabel } from "@/components/ui/section-label";
 
 interface Props {
   workspaceId: string;
@@ -29,7 +29,9 @@ export function ConfigView({ workspaceId, baseUrl, onRestarted }: Props) {
 
   const [effective, setEffective] = useState("");
   const [agents, setAgents] = useState<{ name: string; mode?: string }[]>([]);
-  const [commands, setCommands] = useState<{ name: string; description?: string }[]>([]);
+  const [commands, setCommands] = useState<
+    { name: string; description?: string }[]
+  >([]);
 
   useEffect(() => {
     readConfig(scope, scope === "project" ? workspaceId : undefined)
@@ -37,7 +39,9 @@ export function ConfigView({ workspaceId, baseUrl, onRestarted }: Props) {
         setContent(f.content);
         setPath(f.path);
       })
-      .catch((e) => toast.error("Could not read config", { description: String(e) }));
+      .catch((e) =>
+        toast.error("Could not read config", { description: String(e) }),
+      );
   }, [scope, workspaceId]);
 
   useEffect(() => {
@@ -48,15 +52,25 @@ export function ConfigView({ workspaceId, baseUrl, onRestarted }: Props) {
       return;
     }
     const c = new OpencodeClient(baseUrl);
-    c.getConfig().then((cfg) => setEffective(JSON.stringify(cfg, null, 2))).catch(() => {});
-    c.listAgents().then((a) => setAgents(Array.isArray(a) ? a : [])).catch(() => {});
-    c.listCommands().then((a) => setCommands(Array.isArray(a) ? a : [])).catch(() => {});
+    c.getConfig()
+      .then((cfg) => setEffective(JSON.stringify(cfg, null, 2)))
+      .catch(() => {});
+    c.listAgents()
+      .then((a) => setAgents(Array.isArray(a) ? a : []))
+      .catch(() => {});
+    c.listCommands()
+      .then((a) => setCommands(Array.isArray(a) ? a : []))
+      .catch(() => {});
   }, [baseUrl]);
 
   async function save(restart: boolean) {
     setBusy(true);
     try {
-      await writeConfig(scope, content, scope === "project" ? workspaceId : undefined);
+      await writeConfig(
+        scope,
+        content,
+        scope === "project" ? workspaceId : undefined,
+      );
       if (restart) {
         await restartServer(workspaceId);
         onRestarted();
@@ -75,21 +89,41 @@ export function ConfigView({ workspaceId, baseUrl, onRestarted }: Props) {
       <div className="space-y-3 p-4">
         <div className="flex items-center gap-2">
           <Segmented>
-            <SegmentedItem active={scope === "project"} onClick={() => setScope("project")}>
+            <SegmentedItem
+              active={scope === "project"}
+              onClick={() => setScope("project")}
+            >
               Project
             </SegmentedItem>
-            <SegmentedItem active={scope === "global"} onClick={() => setScope("global")}>
+            <SegmentedItem
+              active={scope === "global"}
+              onClick={() => setScope("global")}
+            >
               Global
             </SegmentedItem>
           </Segmented>
-          <span className="truncate font-mono text-xs text-muted-foreground" title={path}>
+          <span
+            className="truncate font-mono text-xs text-muted-foreground"
+            title={path}
+          >
             {path}
           </span>
           <div className="ml-auto flex gap-1.5">
-            <Button variant="ghost" size="sm" className="h-7 text-xs" disabled={busy} onClick={() => void save(false)}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs"
+              disabled={busy}
+              onClick={() => void save(false)}
+            >
               <Save className="size-3.5" /> Save
             </Button>
-            <Button size="sm" className="h-7 text-xs" disabled={busy} onClick={() => void save(true)}>
+            <Button
+              size="sm"
+              className="h-7 text-xs"
+              disabled={busy}
+              onClick={() => void save(true)}
+            >
               <RotateCw className="size-3.5" /> Save & restart
             </Button>
           </div>
@@ -135,7 +169,9 @@ export function ConfigView({ workspaceId, baseUrl, onRestarted }: Props) {
             {commands.map((c) => (
               <li key={c.name} className="flex gap-3 py-0.5">
                 <span className="font-mono">{c.name}</span>
-                <span className="truncate text-muted-foreground">{c.description}</span>
+                <span className="truncate text-muted-foreground">
+                  {c.description}
+                </span>
               </li>
             ))}
           </ul>
@@ -147,7 +183,13 @@ export function ConfigView({ workspaceId, baseUrl, onRestarted }: Props) {
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="border-t border-border">
       <SectionLabel className="px-4 py-2">{title}</SectionLabel>

@@ -14,12 +14,18 @@ interface Props {
  * (Chat) owns the selected index and keyboard handling, so Up/Down/Enter/Tab
  * intercept inside the textarea's keydown without focus juggling.
  */
-export function SlashCommandPalette({ commands, selectedIndex, onHover, onPick }: Props) {
+export function SlashCommandPalette({
+  commands,
+  selectedIndex,
+  onHover,
+  onPick,
+}: Props) {
   const listRef = useRef<HTMLDivElement>(null);
 
   // Keep the highlighted row in view when the user arrows past the fold.
   useEffect(() => {
-    const el = listRef.current?.children[selectedIndex] as HTMLElement | undefined;
+    const el = listRef.current?.children[selectedIndex] as
+      HTMLElement | undefined;
     el?.scrollIntoView({ block: "nearest" });
   }, [selectedIndex]);
 
@@ -48,7 +54,9 @@ export function SlashCommandPalette({ commands, selectedIndex, onHover, onPick }
           onMouseEnter={() => onHover(i)}
           className={cn(
             "flex w-full items-baseline gap-3 px-3 py-1.5 text-left text-sm",
-            i === selectedIndex ? "bg-accent text-accent-foreground" : "hover:bg-accent/50",
+            i === selectedIndex
+              ? "bg-accent text-accent-foreground"
+              : "hover:bg-accent/50",
           )}
         >
           <span className="shrink-0 font-mono text-xs">/{c.name}</span>

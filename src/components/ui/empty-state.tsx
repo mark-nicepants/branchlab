@@ -17,7 +17,14 @@ export function EmptyState({
 }) {
   if (dense) {
     return (
-      <p className={cn("px-2 py-4 text-center text-xs text-muted-foreground", className)}>{children}</p>
+      <p
+        className={cn(
+          "px-2 py-4 text-center text-xs text-muted-foreground",
+          className,
+        )}
+      >
+        {children}
+      </p>
     );
   }
   return (

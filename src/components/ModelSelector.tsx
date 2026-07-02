@@ -3,7 +3,11 @@ import { Check, ChevronsUpDown, Search, SlidersHorizontal } from "lucide-react";
 import type { ModelOption } from "../lib/types";
 import { usePreferences } from "./PreferencesProvider";
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Command,
   CommandEmpty,
@@ -50,8 +54,14 @@ export function ModelSelector({ models, value, onChange }: Props) {
   const [open, setOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
 
-  const disabled = useMemo(() => new Set(prefs.disabledModels), [prefs.disabledModels]);
-  const visible = useMemo(() => models.filter((m) => !disabled.has(m.key)), [models, disabled]);
+  const disabled = useMemo(
+    () => new Set(prefs.disabledModels),
+    [prefs.disabledModels],
+  );
+  const visible = useMemo(
+    () => models.filter((m) => !disabled.has(m.key)),
+    [models, disabled],
+  );
   const groups = useMemo(() => groupByProvider(visible), [visible]);
 
   return (
@@ -63,11 +73,17 @@ export function ModelSelector({ models, value, onChange }: Props) {
             size="sm"
             className="h-7 max-w-[280px] gap-1.5 px-2 text-xs font-normal text-muted-foreground"
           >
-            <span className="truncate">{value ? value.name : "default model"}</span>
+            <span className="truncate">
+              {value ? value.name : "default model"}
+            </span>
             <ChevronsUpDown className="size-3.5 shrink-0 opacity-50" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent align="start" side="top" className="w-[320px] overflow-hidden rounded-xl p-0">
+        <PopoverContent
+          align="start"
+          side="top"
+          className="w-[320px] overflow-hidden rounded-xl p-0"
+        >
           <Command>
             <CommandInput placeholder="Search models" className="h-10" />
             <CommandList className="max-h-[320px] p-1.5">
@@ -91,7 +107,9 @@ export function ModelSelector({ models, value, onChange }: Props) {
                       className="gap-2 rounded-md px-2 py-1.5"
                     >
                       <span className="flex-1 truncate">{m.name}</span>
-                      {value?.key === m.key && <Check className="size-4 text-primary" />}
+                      {value?.key === m.key && (
+                        <Check className="size-4 text-primary" />
+                      )}
                     </CommandItem>
                   ))}
                 </CommandGroup>
@@ -114,7 +132,11 @@ export function ModelSelector({ models, value, onChange }: Props) {
         </PopoverContent>
       </Popover>
 
-      <ManageModelsDialog open={manageOpen} onOpenChange={setManageOpen} models={models} />
+      <ManageModelsDialog
+        open={manageOpen}
+        onOpenChange={setManageOpen}
+        models={models}
+      />
     </>
   );
 }
@@ -131,12 +153,17 @@ function ManageModelsDialog({
   const { prefs, setPref } = usePreferences();
   const [query, setQuery] = useState("");
 
-  const disabled = useMemo(() => new Set(prefs.disabledModels), [prefs.disabledModels]);
+  const disabled = useMemo(
+    () => new Set(prefs.disabledModels),
+    [prefs.disabledModels],
+  );
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return models;
     return models.filter(
-      (m) => m.name.toLowerCase().includes(q) || m.providerName.toLowerCase().includes(q),
+      (m) =>
+        m.name.toLowerCase().includes(q) ||
+        m.providerName.toLowerCase().includes(q),
     );
   }, [models, query]);
   const groups = useMemo(() => groupByProvider(filtered), [filtered]);
@@ -166,7 +193,9 @@ function ManageModelsDialog({
       <DialogContent className="flex h-[70vh] w-full max-w-lg flex-col gap-0 overflow-hidden p-0">
         <DialogHeader className="px-6 pb-4 pt-6">
           <DialogTitle>Manage models</DialogTitle>
-          <DialogDescription>Customize which models appear in the model selector.</DialogDescription>
+          <DialogDescription>
+            Customize which models appear in the model selector.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="flex items-center gap-2 border-y border-border px-6 py-3">
@@ -195,7 +224,9 @@ function ManageModelsDialog({
 
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
           {groups.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">No models found.</p>
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              No models found.
+            </p>
           ) : (
             groups.map(([provider, list]) => (
               <div key={provider} className="mb-2 last:mb-0">
@@ -210,7 +241,10 @@ function ManageModelsDialog({
                     )}
                   >
                     <span className="min-w-0 truncate">{m.name}</span>
-                    <Switch checked={!disabled.has(m.key)} onCheckedChange={(v) => toggle(m.key, v)} />
+                    <Switch
+                      checked={!disabled.has(m.key)}
+                      onCheckedChange={(v) => toggle(m.key, v)}
+                    />
                   </label>
                 ))}
               </div>

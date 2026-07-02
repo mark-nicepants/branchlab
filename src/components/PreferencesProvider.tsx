@@ -51,7 +51,9 @@ interface PrefsCtxValue {
   setPref: <K extends keyof Preferences>(key: K, value: Preferences[K]) => void;
   setWorkspacePref: (
     workspaceId: string,
-    update: Partial<WorkspacePreferences> | ((prev: WorkspacePreferences) => Partial<WorkspacePreferences>),
+    update:
+      | Partial<WorkspacePreferences>
+      | ((prev: WorkspacePreferences) => Partial<WorkspacePreferences>),
   ) => void;
 }
 
@@ -71,7 +73,9 @@ type LegacyPreferences = Partial<
 
 /** Migrate old flat per-workspace keys into the grouped `workspace` object. */
 function migrate(raw: LegacyPreferences): Preferences {
-  const workspace: Record<string, WorkspacePreferences> = { ...(raw.workspace ?? {}) };
+  const workspace: Record<string, WorkspacePreferences> = {
+    ...(raw.workspace ?? {}),
+  };
   if (raw.workspaceModels) {
     for (const [id, key] of Object.entries(raw.workspaceModels)) {
       workspace[id] = { ...workspace[id], modelKey: key };
@@ -92,14 +96,20 @@ function migrate(raw: LegacyPreferences): Preferences {
 
 function load(): Preferences {
   try {
-    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}") as LegacyPreferences;
+    const raw = JSON.parse(
+      localStorage.getItem(STORAGE_KEY) || "{}",
+    ) as LegacyPreferences;
     return migrate(raw);
   } catch {
     return DEFAULTS;
   }
 }
 
-export function PreferencesProvider({ children }: { children: React.ReactNode }) {
+export function PreferencesProvider({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const [prefs, setPrefs] = useState<Preferences>(load);
 
   const setPref = useCallback<PrefsCtxValue["setPref"]>((key, value) => {
@@ -110,20 +120,30 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
     });
   }, []);
 
-  const setWorkspacePref = useCallback<PrefsCtxValue["setWorkspacePref"]>((workspaceId, update) => {
-    setPrefs((prev) => {
-      const current = prev.workspace[workspaceId] ?? {};
-      const partial = typeof update === "function" ? update(current) : update;
-      const next: Preferences = {
-        ...prev,
-        workspace: { ...prev.workspace, [workspaceId]: { ...current, ...partial } },
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      return next;
-    });
-  }, []);
+  const setWorkspacePref = useCallback<PrefsCtxValue["setWorkspacePref"]>(
+    (workspaceId, update) => {
+      setPrefs((prev) => {
+        const current = prev.workspace[workspaceId] ?? {};
+        const partial = typeof update === "function" ? update(current) : update;
+        const next: Preferences = {
+          ...prev,
+          workspace: {
+            ...prev.workspace,
+            [workspaceId]: { ...current, ...partial },
+          },
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+        return next;
+      });
+    },
+    [],
+  );
 
-  return <PrefsCtx.Provider value={{ prefs, setPref, setWorkspacePref }}>{children}</PrefsCtx.Provider>;
+  return (
+    <PrefsCtx.Provider value={{ prefs, setPref, setWorkspacePref }}>
+      {children}
+    </PrefsCtx.Provider>
+  );
 }
 
 export function usePreferences() {
@@ -133,7 +153,14 @@ export function usePreferences() {
 // macOS-only: these are application names passed to `open -a` in
 // commands.rs::open_external. Cross-platform support will need a different
 // integration model (e.g. exec paths or freedesktop xdg-open).
-export const TERMINAL_APPS = ["Terminal", "iTerm", "Warp", "Ghostty", "Alacritty", "kitty"];
+export const TERMINAL_APPS = [
+  "Terminal",
+  "iTerm",
+  "Warp",
+  "Ghostty",
+  "Alacritty",
+  "kitty",
+];
 export const EDITOR_APPS = [
   "Visual Studio Code",
   "Cursor",

@@ -66,14 +66,27 @@ export function ServerToolsPanel({ baseUrl, onRestart }: Props) {
             <SectionEmpty>No MCP servers configured.</SectionEmpty>
           ) : (
             mcp.map((m) => {
-              const on = m.status !== "disabled" && m.status !== "failed" && m.status !== "error";
+              const on =
+                m.status !== "disabled" &&
+                m.status !== "failed" &&
+                m.status !== "error";
               return (
                 <Item key={m.name}>
-                  <span className={cn("size-1.5 shrink-0 rounded-full", runtimeStatusBg(m.status))} />
-                  <span className="min-w-0 flex-1 truncate" title={m.error ?? m.status}>
+                  <span
+                    className={cn(
+                      "size-1.5 shrink-0 rounded-full",
+                      runtimeStatusBg(m.status),
+                    )}
+                  />
+                  <span
+                    className="min-w-0 flex-1 truncate"
+                    title={m.error ?? m.status}
+                  >
                     {m.name}
                   </span>
-                  <span className="shrink-0 text-xs text-muted-foreground">{m.status}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {m.status}
+                  </span>
                   <Switch
                     checked={on}
                     disabled={busy === m.name}
@@ -91,9 +104,18 @@ export function ServerToolsPanel({ baseUrl, onRestart }: Props) {
           ) : (
             lsp.map((l) => (
               <Item key={l.id}>
-                <span className={cn("size-1.5 shrink-0 rounded-full", runtimeStatusBg(l.status))} />
+                <span
+                  className={cn(
+                    "size-1.5 shrink-0 rounded-full",
+                    runtimeStatusBg(l.status),
+                  )}
+                />
                 <span className="min-w-0 flex-1 truncate">{l.id}</span>
-                {l.status && <span className="shrink-0 text-xs text-muted-foreground">{l.status}</span>}
+                {l.status && (
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {l.status}
+                  </span>
+                )}
               </Item>
             ))
           )}
@@ -113,7 +135,12 @@ export function ServerToolsPanel({ baseUrl, onRestart }: Props) {
       </div>
 
       <div className="border-t border-border p-2">
-        <Button variant="ghost" size="sm" className="h-7 w-full justify-center gap-1.5 text-xs" onClick={onRestart}>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 w-full justify-center gap-1.5 text-xs"
+          onClick={onRestart}
+        >
           <RotateCw className="size-3.5" /> Restart server
         </Button>
       </div>
@@ -121,13 +148,25 @@ export function ServerToolsPanel({ baseUrl, onRestart }: Props) {
   );
 }
 
-function Section({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
+function Section({
+  title,
+  count,
+  children,
+}: {
+  title: string;
+  count: number;
+  children: React.ReactNode;
+}) {
   return (
     <section className="border-b border-border last:border-b-0">
       <div className="flex items-center gap-2 px-3 pb-1 pt-3">
-        <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{title}</span>
+        <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          {title}
+        </span>
         {count > 0 && (
-          <span className="rounded-full bg-muted px-1.5 text-[10px] text-muted-foreground">{count}</span>
+          <span className="rounded-full bg-muted px-1.5 text-[10px] text-muted-foreground">
+            {count}
+          </span>
         )}
       </div>
       <div className="px-1.5 pb-2">{children}</div>
@@ -136,9 +175,15 @@ function Section({ title, count, children }: { title: string; count: number; chi
 }
 
 function Item({ children }: { children: React.ReactNode }) {
-  return <div className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm">{children}</div>;
+  return (
+    <div className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm">
+      {children}
+    </div>
+  );
 }
 
 function SectionEmpty({ children }: { children: React.ReactNode }) {
-  return <p className="px-2 py-1.5 text-xs text-muted-foreground">{children}</p>;
+  return (
+    <p className="px-2 py-1.5 text-xs text-muted-foreground">{children}</p>
+  );
 }

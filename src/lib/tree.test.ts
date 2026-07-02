@@ -3,7 +3,11 @@ import { buildTree } from "./tree";
 
 describe("buildTree", () => {
   it("groups files into folders by path segment", () => {
-    const tree = buildTree(["src/App.tsx", "src/lib/diff.ts", "src/lib/tree.ts"]);
+    const tree = buildTree([
+      "src/App.tsx",
+      "src/lib/diff.ts",
+      "src/lib/tree.ts",
+    ]);
     expect(tree).toHaveLength(1);
     const [src] = tree;
     expect(src.name).toBe("src");

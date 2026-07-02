@@ -5,7 +5,14 @@
 // per workspace per cycle. This provider polls once and exposes the latest
 // snapshot via context.
 
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { workspaceChanges, workspaceDiffStat } from "../lib/api";
 import type { DiffStat, FileChange } from "../lib/types";
 
@@ -35,7 +42,11 @@ interface ProviderProps {
   children: React.ReactNode;
 }
 
-export function WorkspaceDataProvider({ workspaceIds, activeWorkspaceId, children }: ProviderProps) {
+export function WorkspaceDataProvider({
+  workspaceIds,
+  activeWorkspaceId,
+  children,
+}: ProviderProps) {
   const [diffStats, setDiffStats] = useState<Record<string, DiffStat>>({});
   const [changes, setChanges] = useState<FileChange[] | undefined>(undefined);
 
@@ -70,7 +81,9 @@ export function WorkspaceDataProvider({ workspaceIds, activeWorkspaceId, childre
     }
     let cancelled = false;
     const poll = async () => {
-      const data = await workspaceChanges(activeWorkspaceId).catch(() => [] as FileChange[]);
+      const data = await workspaceChanges(activeWorkspaceId).catch(
+        () => [] as FileChange[],
+      );
       if (!cancelled) setChanges(data);
     };
     void poll();
@@ -88,7 +101,11 @@ export function WorkspaceDataProvider({ workspaceIds, activeWorkspaceId, childre
       .catch(() => {});
   }, [activeWorkspaceId]);
 
-  return <Ctx.Provider value={{ diffStats, changes, refreshChanges }}>{children}</Ctx.Provider>;
+  return (
+    <Ctx.Provider value={{ diffStats, changes, refreshChanges }}>
+      {children}
+    </Ctx.Provider>
+  );
 }
 
 export function useWorkspaceData(): WorkspaceDataValue {

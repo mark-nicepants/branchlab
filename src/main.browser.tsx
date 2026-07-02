@@ -15,7 +15,9 @@ import "./index.css";
 (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
   invoke: async (cmd: string) => {
     // eslint-disable-next-line no-console
-    console.warn(`Tauri invoke("${cmd}") called in browser debug mode; returning null.`);
+    console.warn(
+      `Tauri invoke("${cmd}") called in browser debug mode; returning null.`,
+    );
     return null;
   },
 };

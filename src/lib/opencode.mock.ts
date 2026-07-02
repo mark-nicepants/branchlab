@@ -61,7 +61,12 @@ function mockHistory(sessionId: string): MessageWithParts[] {
     {
       info: { id: "m-user", role: "user" as const, sessionID: sessionId },
       parts: [
-        { ...mk("p-u1", "text", { text: "merge develop into this and fix the merge conflicts. Ensure all tests stay green" }), messageID: "m-user" },
+        {
+          ...mk("p-u1", "text", {
+            text: "merge develop into this and fix the merge conflicts. Ensure all tests stay green",
+          }),
+          messageID: "m-user",
+        },
       ],
     },
     {
@@ -72,12 +77,58 @@ function mockHistory(sessionId: string): MessageWithParts[] {
         tokens: { input: 48_200, output: 1_240, cache: { read: 12_000 } },
       },
       parts: [
-        { ...mk("p-a1", "text", { text: "I'll start by renaming the working branch to a clean kebab-case name, then merge `develop`, resolve conflicts, and run the test suite." }), messageID: "m-assistant" },
-        { ...mk("p-a2", "tool", { tool: "bash", state: { status: "completed", title: "git --no-pager status --short", output: "M src/App.tsx\nM vite.config.ts" } }), messageID: "m-assistant" },
-        { ...mk("p-a3", "tool", { tool: "bash", state: { status: "completed", title: "git merge origin/develop", output: "Auto-merging src/App.tsx\nCONFLICT (content): Merge conflict in src/App.tsx" } }), messageID: "m-assistant" },
-        { ...mk("p-a4", "text", { text: "There's a conflict in `src/App.tsx`. Resolving it by keeping both the new shell layout and the upstream provider changes." }), messageID: "m-assistant" },
-        { ...mk("p-a5", "tool", { tool: "edit", state: { status: "completed", title: "Resolve conflict in src/App.tsx" } }), messageID: "m-assistant" },
-        { ...mk("p-a6", "tool", { tool: "bash", state: { status: "running", title: "npm test" } }), messageID: "m-assistant" },
+        {
+          ...mk("p-a1", "text", {
+            text: "I'll start by renaming the working branch to a clean kebab-case name, then merge `develop`, resolve conflicts, and run the test suite.",
+          }),
+          messageID: "m-assistant",
+        },
+        {
+          ...mk("p-a2", "tool", {
+            tool: "bash",
+            state: {
+              status: "completed",
+              title: "git --no-pager status --short",
+              output: "M src/App.tsx\nM vite.config.ts",
+            },
+          }),
+          messageID: "m-assistant",
+        },
+        {
+          ...mk("p-a3", "tool", {
+            tool: "bash",
+            state: {
+              status: "completed",
+              title: "git merge origin/develop",
+              output:
+                "Auto-merging src/App.tsx\nCONFLICT (content): Merge conflict in src/App.tsx",
+            },
+          }),
+          messageID: "m-assistant",
+        },
+        {
+          ...mk("p-a4", "text", {
+            text: "There's a conflict in `src/App.tsx`. Resolving it by keeping both the new shell layout and the upstream provider changes.",
+          }),
+          messageID: "m-assistant",
+        },
+        {
+          ...mk("p-a5", "tool", {
+            tool: "edit",
+            state: {
+              status: "completed",
+              title: "Resolve conflict in src/App.tsx",
+            },
+          }),
+          messageID: "m-assistant",
+        },
+        {
+          ...mk("p-a6", "tool", {
+            tool: "bash",
+            state: { status: "running", title: "npm test" },
+          }),
+          messageID: "m-assistant",
+        },
       ],
     },
   ];
@@ -132,22 +183,46 @@ export class OpencodeClient {
   listAgents(): Promise<AgentOption[]> {
     return Promise.resolve([
       { name: "build", mode: "primary", description: "Full read/write agent" },
-      { name: "plan", mode: "primary", description: "Read-only planning agent" },
+      {
+        name: "plan",
+        mode: "primary",
+        description: "Read-only planning agent",
+      },
     ]);
   }
 
   listTodos(): Promise<Todo[]> {
     return Promise.resolve([
-      { content: "Merge origin/develop", status: "completed", priority: "high" },
-      { content: "Resolve conflicts in src/App.tsx", status: "completed", priority: "high" },
-      { content: "Run the test suite", status: "in_progress", priority: "medium" },
+      {
+        content: "Merge origin/develop",
+        status: "completed",
+        priority: "high",
+      },
+      {
+        content: "Resolve conflicts in src/App.tsx",
+        status: "completed",
+        priority: "high",
+      },
+      {
+        content: "Run the test suite",
+        status: "in_progress",
+        priority: "medium",
+      },
     ]);
   }
 
   listCommands(): Promise<CommandOption[]> {
     return Promise.resolve([
-      { name: "review", description: "Review the current diff", template: "Review: $ARGUMENTS" },
-      { name: "test", description: "Run the test suite", template: "Run the tests" },
+      {
+        name: "review",
+        description: "Review the current diff",
+        template: "Review: $ARGUMENTS",
+      },
+      {
+        name: "test",
+        description: "Run the test suite",
+        template: "Run the tests",
+      },
     ]);
   }
 
@@ -196,7 +271,10 @@ export class OpencodeClient {
   }
 
   listModels(): Promise<{ models: ModelOption[]; defaultKey?: string }> {
-    return Promise.resolve({ models: MOCK_MODELS, defaultKey: "anthropic/claude-opus-4-8" });
+    return Promise.resolve({
+      models: MOCK_MODELS,
+      defaultKey: "anthropic/claude-opus-4-8",
+    });
   }
 
   subscribeEvents(_onEvent: (e: BusEvent) => void): () => void {

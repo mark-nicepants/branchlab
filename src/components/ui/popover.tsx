@@ -7,7 +7,9 @@ function Popover(props: React.ComponentProps<typeof PopoverPrimitive.Root>) {
   return <PopoverPrimitive.Root {...props} />;
 }
 
-function PopoverTrigger(props: React.ComponentProps<typeof PopoverPrimitive.Trigger>) {
+function PopoverTrigger(
+  props: React.ComponentProps<typeof PopoverPrimitive.Trigger>,
+) {
   return <PopoverPrimitive.Trigger {...props} />;
 }
 

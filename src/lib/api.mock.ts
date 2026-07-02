@@ -96,7 +96,11 @@ let projects: ProjectView[] = [
 
 export function probeEnvironment(): Promise<EnvReport> {
   return Promise.resolve({
-    opencode: { found: true, path: "/usr/local/bin/opencode", version: "1.17.4" },
+    opencode: {
+      found: true,
+      path: "/usr/local/bin/opencode",
+      version: "1.17.4",
+    },
     git: { found: true, path: "/usr/bin/git", version: "2.45.0" },
   });
 }
@@ -142,7 +146,11 @@ export function removeProject(projectId: string): Promise<void> {
 }
 
 export function startServer(workspaceId: string): Promise<ServerInfo> {
-  return Promise.resolve({ workspace_id: workspaceId, base_url: "http://127.0.0.1:9999", port: 9999 });
+  return Promise.resolve({
+    workspace_id: workspaceId,
+    base_url: "http://127.0.0.1:9999",
+    port: 9999,
+  });
 }
 
 export function stopServer(): Promise<void> {
@@ -197,19 +205,31 @@ export function createQuickChat(): Promise<Workspace> {
   });
 }
 
-export function updateProject(projectId: string, update: ProjectUpdate): Promise<ProjectView> {
+export function updateProject(
+  projectId: string,
+  update: ProjectUpdate,
+): Promise<ProjectView> {
   const p = projects.find((x) => x.id === projectId);
   if (!p) return Promise.reject(new Error("unknown project"));
   if (update.name) p.name = update.name;
   if (update.default_branch) p.default_branch = update.default_branch;
-  if (update.default_model_key !== undefined) p.default_model_key = update.default_model_key;
+  if (update.default_model_key !== undefined)
+    p.default_model_key = update.default_model_key;
   if (update.prompts) p.prompts = update.prompts;
   return Promise.resolve(p);
 }
 
 export function getProjectPrompts(projectId: string): Promise<ProjectPrompts> {
   const p = projects.find((x) => x.id === projectId);
-  return Promise.resolve(p?.prompts ?? { init_workspace: null, commit: null, merge: null, push: null, create_pr: null });
+  return Promise.resolve(
+    p?.prompts ?? {
+      init_workspace: null,
+      commit: null,
+      merge: null,
+      push: null,
+      create_pr: null,
+    },
+  );
 }
 
 export function removeWorkspace(workspaceId: string): Promise<void> {
@@ -223,7 +243,10 @@ export function listWorkspaces(): Promise<Workspace[]> {
   return Promise.resolve(projects.flatMap((p) => p.workspaces));
 }
 
-export function renameWorkspace(workspaceId: string, name: string): Promise<void> {
+export function renameWorkspace(
+  workspaceId: string,
+  name: string,
+): Promise<void> {
   for (const p of projects) {
     const w = p.workspaces.find((x) => x.id === workspaceId);
     if (w) w.name = name;
@@ -238,13 +261,20 @@ const diffStats: Record<string, DiffStat> = {
 };
 
 export function workspaceDiffStat(workspaceId: string): Promise<DiffStat> {
-  return Promise.resolve(diffStats[workspaceId] ?? { files: 0, insertions: 0, deletions: 0 });
+  return Promise.resolve(
+    diffStats[workspaceId] ?? { files: 0, insertions: 0, deletions: 0 },
+  );
 }
 
 export function workspaceChanges(): Promise<FileChange[]> {
   return Promise.resolve([
     { path: "src/App.tsx", status: "modified", insertions: 10, deletions: 2 },
-    { path: "src/components/Sidebar.tsx", status: "modified", insertions: 20, deletions: 5 },
+    {
+      path: "src/components/Sidebar.tsx",
+      status: "modified",
+      insertions: 20,
+      deletions: 5,
+    },
   ]);
 }
 
@@ -261,7 +291,13 @@ export function workspaceFiles(): Promise<string[]> {
 }
 
 export function readFile(): Promise<FileContent> {
-  return Promise.resolve({ path: "mock", content: "mock content", binary: false, truncated: false, size: 12 });
+  return Promise.resolve({
+    path: "mock",
+    content: "mock content",
+    binary: false,
+    truncated: false,
+    size: 12,
+  });
 }
 
 export function commitWorkspace(): Promise<string> {
@@ -269,7 +305,11 @@ export function commitWorkspace(): Promise<string> {
 }
 
 export function mergeWorkspace(): Promise<MergeResult> {
-  return Promise.resolve({ branch: "feature", base: "main", summary: "merged" });
+  return Promise.resolve({
+    branch: "feature",
+    base: "main",
+    summary: "merged",
+  });
 }
 
 export function pushWorkspace(): Promise<PushResult> {
@@ -277,15 +317,25 @@ export function pushWorkspace(): Promise<PushResult> {
 }
 
 export function createWorkspacePr(): Promise<PrResult> {
-  return Promise.resolve({ branch: "feature", base: "main", url: "https://github.com/test/pr/1" });
+  return Promise.resolve({
+    branch: "feature",
+    base: "main",
+    url: "https://github.com/test/pr/1",
+  });
 }
 
 export function listRemotes(): Promise<RemoteInfo[]> {
-  return Promise.resolve([{ name: "origin", url: "git@github.com:test/repo.git" }]);
+  return Promise.resolve([
+    { name: "origin", url: "git@github.com:test/repo.git" },
+  ]);
 }
 
 export function readConfig(): Promise<ConfigFile> {
-  return Promise.resolve({ path: "/mock/opencode.json", content: "{}", exists: true });
+  return Promise.resolve({
+    path: "/mock/opencode.json",
+    content: "{}",
+    exists: true,
+  });
 }
 
 export function writeConfig(): Promise<string> {

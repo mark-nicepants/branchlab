@@ -10,7 +10,9 @@ export interface TreeNode {
 
 /** Folders first, then files; alphabetical within. */
 function sortTree(node: TreeNode) {
-  node.children.sort((a, b) => (a.isFile === b.isFile ? a.name.localeCompare(b.name) : a.isFile ? 1 : -1));
+  node.children.sort((a, b) =>
+    a.isFile === b.isFile ? a.name.localeCompare(b.name) : a.isFile ? 1 : -1,
+  );
   node.children.forEach(sortTree);
 }
 
@@ -23,7 +25,12 @@ export function buildTree(paths: string[]): TreeNode[] {
       const isFile = i === parts.length - 1;
       let child = node.children.find((c) => c.name === part);
       if (!child) {
-        child = { name: part, path: parts.slice(0, i + 1).join("/"), isFile, children: [] };
+        child = {
+          name: part,
+          path: parts.slice(0, i + 1).join("/"),
+          isFile,
+          children: [],
+        };
         node.children.push(child);
       }
       node = child;

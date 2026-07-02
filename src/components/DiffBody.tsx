@@ -4,7 +4,8 @@
 import { splitRows, type DiffHunk, type DiffLineType } from "@/lib/diff";
 import { cn } from "@/lib/utils";
 
-const GUTTER = "w-10 shrink-0 select-none px-1 text-right text-muted-foreground/50";
+const GUTTER =
+  "w-10 shrink-0 select-none px-1 text-right text-muted-foreground/50";
 const CODE = "min-w-0 flex-1 select-text whitespace-pre-wrap break-words px-1";
 
 function bgFor(type: DiffLineType): string {

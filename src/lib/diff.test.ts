@@ -41,7 +41,9 @@ describe("parseDiff", () => {
   it("ignores file headers before the first hunk", () => {
     // The +++/--- lines must not become diff lines.
     const texts = parseDiff(SAMPLE).flatMap((h) => h.lines.map((l) => l.text));
-    expect(texts.some((t) => t.startsWith("a/") || t.startsWith("b/"))).toBe(false);
+    expect(texts.some((t) => t.startsWith("a/") || t.startsWith("b/"))).toBe(
+      false,
+    );
   });
 
   it("returns no hunks for an empty diff", () => {
@@ -75,7 +77,10 @@ describe("splitRows", () => {
 +new one
 +new two`)[0];
     const rows = splitRows(hunk);
-    expect(rows[0]).toMatchObject({ left: { type: "del" }, right: { type: "add" } });
+    expect(rows[0]).toMatchObject({
+      left: { type: "del" },
+      right: { type: "add" },
+    });
     expect(rows[1].left).toBeNull();
     expect(rows[1].right?.type).toBe("add");
   });

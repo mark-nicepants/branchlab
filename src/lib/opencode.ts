@@ -84,7 +84,10 @@ export class OpencodeClient {
   }
 
   abort(sessionId: string): Promise<void> {
-    return this.json(`/session/${sessionId}/abort`, { method: "POST", body: "{}" });
+    return this.json(`/session/${sessionId}/abort`, {
+      method: "POST",
+      body: "{}",
+    });
   }
 
   getDiff(sessionId: string): Promise<unknown> {
@@ -104,23 +107,25 @@ export class OpencodeClient {
     let session: Session | null = null;
     try {
       session = await this.createSession();
-      const res = await this.json<{ parts?: { type: string; text?: string }[] }>(
-        `/session/${session.id}/message`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            agent: "title",
-            ...(model ? { model } : {}),
-            parts: [{ type: "text", text: firstUserText }],
-          }),
-        },
-      );
+      const res = await this.json<{
+        parts?: { type: string; text?: string }[];
+      }>(`/session/${session.id}/message`, {
+        method: "POST",
+        body: JSON.stringify({
+          agent: "title",
+          ...(model ? { model } : {}),
+          parts: [{ type: "text", text: firstUserText }],
+        }),
+      });
       const text = res.parts?.find((p) => p.type === "text")?.text?.trim();
       return text || null;
     } catch {
       return null;
     } finally {
-      if (session) await this.json(`/session/${session.id}`, { method: "DELETE" }).catch(() => {});
+      if (session)
+        await this.json(`/session/${session.id}`, { method: "DELETE" }).catch(
+          () => {},
+        );
     }
   }
 
@@ -151,9 +156,10 @@ export class OpencodeClient {
    */
   async listQuestionsV2(sessionId: string): Promise<QuestionV2Request[]> {
     try {
-      const data = await this.json<QuestionV2Request[] | { requests?: QuestionV2Request[]; questions?: QuestionV2Request[] }>(
-        `/api/session/${sessionId}/question`,
-      );
+      const data = await this.json<
+        | QuestionV2Request[]
+        | { requests?: QuestionV2Request[]; questions?: QuestionV2Request[] }
+      >(`/api/session/${sessionId}/question`);
       if (Array.isArray(data)) return data;
       return data?.requests ?? data?.questions ?? [];
     } catch {
@@ -162,7 +168,11 @@ export class OpencodeClient {
   }
 
   /** Submit answers to a V2 question request. `answers[i]` is the selected labels for question `i`. */
-  replyQuestionV2(sessionId: string, requestId: string, answers: string[][]): Promise<void> {
+  replyQuestionV2(
+    sessionId: string,
+    requestId: string,
+    answers: string[][],
+  ): Promise<void> {
     return this.json(`/api/session/${sessionId}/question/${requestId}/reply`, {
       method: "POST",
       body: JSON.stringify({ answers } satisfies QuestionV2Reply),
@@ -183,9 +193,10 @@ export class OpencodeClient {
    */
   async listQuestions(): Promise<QuestionRequest[]> {
     try {
-      const data = await this.json<QuestionRequest[] | { requests?: QuestionRequest[]; questions?: QuestionRequest[] }>(
-        "/question",
-      );
+      const data = await this.json<
+        | QuestionRequest[]
+        | { requests?: QuestionRequest[]; questions?: QuestionRequest[] }
+      >("/question");
       if (Array.isArray(data)) return data;
       return data?.requests ?? data?.questions ?? [];
     } catch {
@@ -203,31 +214,53 @@ export class OpencodeClient {
 
   /** Reject/dismiss a V1 question request. */
   rejectQuestion(requestId: string): Promise<void> {
-    return this.json(`/question/${requestId}/reject`, { method: "POST", body: "{}" });
+    return this.json(`/question/${requestId}/reject`, {
+      method: "POST",
+      body: "{}",
+    });
   }
 
   /** MCP servers with runtime status (`/mcp` → `{ name: { status, error? } }`). */
   async listMcp(): Promise<McpStatus[]> {
-    const data = await this.json<Record<string, { status?: string; error?: string }>>("/mcp");
+    const data =
+      await this.json<Record<string, { status?: string; error?: string }>>(
+        "/mcp",
+      );
     return Object.entries(data)
-      .map(([name, v]) => ({ name, status: v.status ?? "unknown", error: v.error }))
+      .map(([name, v]) => ({
+        name,
+        status: v.status ?? "unknown",
+        error: v.error,
+      }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   /** Connect (enable) an MCP server at runtime. */
   connectMcp(name: string): Promise<unknown> {
-    return this.json(`/mcp/${encodeURIComponent(name)}/connect`, { method: "POST", body: "{}" });
+    return this.json(`/mcp/${encodeURIComponent(name)}/connect`, {
+      method: "POST",
+      body: "{}",
+    });
   }
 
   /** Disconnect (disable) an MCP server at runtime. */
   disconnectMcp(name: string): Promise<unknown> {
-    return this.json(`/mcp/${encodeURIComponent(name)}/disconnect`, { method: "POST", body: "{}" });
+    return this.json(`/mcp/${encodeURIComponent(name)}/disconnect`, {
+      method: "POST",
+      body: "{}",
+    });
   }
 
   /** LSP servers with runtime status (`/lsp`). */
   async listLsp(): Promise<LspStatus[]> {
-    const data = await this.json<{ id?: string; status?: string; state?: string }[]>("/lsp");
-    return (data ?? []).map((l, i) => ({ id: l.id ?? `lsp-${i}`, status: l.status ?? l.state }));
+    const data =
+      await this.json<{ id?: string; status?: string; state?: string }[]>(
+        "/lsp",
+      );
+    return (data ?? []).map((l, i) => ({
+      id: l.id ?? `lsp-${i}`,
+      status: l.status ?? l.state,
+    }));
   }
 
   /** Configured plugin names, from the effective config's `plugin` array. */
@@ -269,11 +302,16 @@ export class OpencodeClient {
         });
       }
     }
-    models.sort((a, b) => a.providerName.localeCompare(b.providerName) || a.name.localeCompare(b.name));
+    models.sort(
+      (a, b) =>
+        a.providerName.localeCompare(b.providerName) ||
+        a.name.localeCompare(b.name),
+    );
 
     // Default is { providerID: modelID }; surface the first as the preselect.
     const [defProvider, defModel] = Object.entries(data.default)[0] ?? [];
-    const defaultKey = defProvider && defModel ? `${defProvider}/${defModel}` : undefined;
+    const defaultKey =
+      defProvider && defModel ? `${defProvider}/${defModel}` : undefined;
 
     return { models, defaultKey };
   }

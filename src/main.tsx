@@ -25,6 +25,8 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
 // once the first frame has painted.
 requestAnimationFrame(() =>
   requestAnimationFrame(() => {
-    getCurrentWindow().show().catch(() => {});
+    getCurrentWindow()
+      .show()
+      .catch(() => {});
   }),
 );

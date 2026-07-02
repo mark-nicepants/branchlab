@@ -23,7 +23,10 @@ interface MessageProps {
 // message matches the spacing between two adjacent messages (where each side
 // contributes its py). That keeps the rhythm visually uniform regardless of
 // whether the next item is in the same message or a new one.
-const DENSITY: Record<ChatDensity, { assistant: string; user: string; gap: string }> = {
+const DENSITY: Record<
+  ChatDensity,
+  { assistant: string; user: string; gap: string }
+> = {
   tight: { assistant: "py-1", user: "my-1 py-2", gap: "gap-2" },
   loose: { assistant: "py-3", user: "my-3 py-2.5", gap: "gap-6" },
   roomy: { assistant: "py-5", user: "my-5 py-3", gap: "gap-10" },
@@ -35,18 +38,21 @@ export function ChatMessage({ role, children }: MessageProps) {
   const d = DENSITY[prefs.chatDensity] ?? DENSITY.loose;
   return (
     <div
-      className={cn(
-        "flex w-full",
-        isUser ? "justify-end" : "justify-start",
-      )}
+      className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}
     >
       <div
         className={cn(
           "flex max-w-[85%] flex-col select-text text-sm",
           d.gap,
           isUser
-            ? cn("self-start rounded-2xl rounded-tl-sm border border-border bg-card px-4", d.user)
-            : cn("w-full rounded-2xl rounded-tr-sm px-0 text-foreground", d.assistant),
+            ? cn(
+                "self-start rounded-2xl rounded-tl-sm border border-border bg-card px-4",
+                d.user,
+              )
+            : cn(
+                "w-full rounded-2xl rounded-tr-sm px-0 text-foreground",
+                d.assistant,
+              ),
         )}
       >
         {children}
@@ -56,7 +62,12 @@ export function ChatMessage({ role, children }: MessageProps) {
 }
 
 export interface SystemMessageProps {
-  message: { id: string; content: string; kind: "info" | "success" | "error"; align?: "left" | "center" };
+  message: {
+    id: string;
+    content: string;
+    kind: "info" | "success" | "error";
+    align?: "left" | "center";
+  };
 }
 
 export function SystemMessageView({ message }: SystemMessageProps) {
@@ -90,27 +101,37 @@ export function PartView({ part }: PartViewProps) {
   if (part.type === "text") {
     return (
       <div className="markdown-content">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{part.text || ""}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+          {part.text || ""}
+        </ReactMarkdown>
       </div>
     );
   }
   if (part.type === "reasoning") {
     return (
-      <div className="text-xs italic text-muted-foreground">
-        {part.text}
-      </div>
+      <div className="text-xs italic text-muted-foreground">{part.text}</div>
     );
   }
   if (part.type === "tool") {
     return <ToolCallPart part={part} />;
   }
   if (part.type === "file") {
-    return <FilePart filename={part.filename} url={part.url} mime={part.mime} />;
+    return (
+      <FilePart filename={part.filename} url={part.url} mime={part.mime} />
+    );
   }
   return null;
 }
 
-function FilePart({ filename, url, mime }: { filename?: string; url?: string; mime?: string }) {
+function FilePart({
+  filename,
+  url,
+  mime,
+}: {
+  filename?: string;
+  url?: string;
+  mime?: string;
+}) {
   const isImage = mime?.startsWith("image/") ?? false;
   const [open, setOpen] = useState(false);
 
@@ -212,7 +233,9 @@ function ToolCallPart({ part }: { part: Part }) {
         <div className="flex w-full items-center gap-2">
           <span className="shrink-0 font-medium">{label}</span>
           {description && (
-            <span className="min-w-0 truncate text-muted-foreground">{description}</span>
+            <span className="min-w-0 truncate text-muted-foreground">
+              {description}
+            </span>
           )}
           <span className="ml-auto shrink-0 opacity-0 transition-opacity group-hover:opacity-100">
             {open ? (
@@ -274,9 +297,13 @@ function ToolCallDetails({ part }: { part: Part }) {
     if (!diff) {
       if (part.tool === "edit") {
         const oldStr =
-          asString(input.oldString) ?? asString((input as Record<string, unknown>).old_string) ?? "";
+          asString(input.oldString) ??
+          asString((input as Record<string, unknown>).old_string) ??
+          "";
         const newStr =
-          asString(input.newString) ?? asString((input as Record<string, unknown>).new_string) ?? "";
+          asString(input.newString) ??
+          asString((input as Record<string, unknown>).new_string) ??
+          "";
         if (oldStr || newStr) diff = synthesizeDiff(oldStr, newStr);
       } else {
         const content = asString(input.content) ?? "";
@@ -292,24 +319,32 @@ function ToolCallDetails({ part }: { part: Part }) {
           <div className="border-t border-destructive/30 bg-destructive/10 p-2 font-mono text-[12px] leading-[1.5]">
             {diagnostics.map(({ path, diag }, i) => (
               <div key={i} className="text-destructive">
-                <span className="font-semibold">{severityLabel(diag.severity)}</span>{" "}
+                <span className="font-semibold">
+                  {severityLabel(diag.severity)}
+                </span>{" "}
                 <span>
                   [{diag.range.start.line + 1}:{diag.range.start.character + 1}]
                 </span>{" "}
                 <span className="text-foreground/90">{diag.message}</span>
                 {diag.source && (
-                  <span className="ml-1 text-muted-foreground">({diag.source})</span>
+                  <span className="ml-1 text-muted-foreground">
+                    ({diag.source})
+                  </span>
                 )}
                 {/* Path footnote when diagnostics span multiple files. */}
                 {diagnostics.some((d) => d.path !== path) && (
-                  <div className="pl-4 text-[11px] text-muted-foreground">{path}</div>
+                  <div className="pl-4 text-[11px] text-muted-foreground">
+                    {path}
+                  </div>
                 )}
               </div>
             ))}
           </div>
         )}
         {state.error && (
-          <div className="border-t border-border p-2 text-destructive">{state.error}</div>
+          <div className="border-t border-border p-2 text-destructive">
+            {state.error}
+          </div>
         )}
       </div>
     );
@@ -325,7 +360,9 @@ function ToolCallDetails({ part }: { part: Part }) {
             <div key={key} className="grid grid-cols-[80px_1fr] gap-2">
               <span className="text-muted-foreground">{key}</span>
               <pre className="select-text overflow-x-auto whitespace-pre-wrap break-all font-mono text-[11px]">
-                {typeof value === "string" ? value : JSON.stringify(value, null, 2)}
+                {typeof value === "string"
+                  ? value
+                  : JSON.stringify(value, null, 2)}
               </pre>
             </div>
           ))}
@@ -336,9 +373,13 @@ function ToolCallDetails({ part }: { part: Part }) {
           {state.output}
         </pre>
       )}
-      {state.error && <div className="mt-2 text-destructive">{state.error}</div>}
+      {state.error && (
+        <div className="mt-2 text-destructive">{state.error}</div>
+      )}
       {state.status && (
-        <div className="mt-2 text-[11px] text-muted-foreground">Status: {state.status}</div>
+        <div className="mt-2 text-[11px] text-muted-foreground">
+          Status: {state.status}
+        </div>
       )}
     </div>
   );

@@ -9,7 +9,12 @@ export function SectionLabel({
   className?: string;
 }) {
   return (
-    <div className={cn("text-[11px] font-medium uppercase tracking-wider text-muted-foreground", className)}>
+    <div
+      className={cn(
+        "text-[11px] font-medium uppercase tracking-wider text-muted-foreground",
+        className,
+      )}
+    >
       {children}
     </div>
   );

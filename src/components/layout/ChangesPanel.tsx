@@ -52,7 +52,10 @@ export function ChangesPanel({
   return (
     <div className="flex h-full flex-col bg-sidebar">
       <header className="flex items-center gap-1 border-b border-border px-3">
-        <TabBarItem active={tab === "changes"} onClick={() => setTab("changes")}>
+        <TabBarItem
+          active={tab === "changes"}
+          onClick={() => setTab("changes")}
+        >
           Changes
         </TabBarItem>
         <TabBarItem active={tab === "files"} onClick={() => setTab("files")}>
@@ -66,7 +69,12 @@ export function ChangesPanel({
       {!workspace ? (
         <EmptyIcon>Select a workspace to see its changes.</EmptyIcon>
       ) : tab === "changes" ? (
-        <ChangesTab workspace={workspace} viewed={viewed} onToggleViewed={onToggleViewed} onOpenFile={onOpenFile} />
+        <ChangesTab
+          workspace={workspace}
+          viewed={viewed}
+          onToggleViewed={onToggleViewed}
+          onOpenFile={onOpenFile}
+        />
       ) : tab === "files" ? (
         <FilesTab workspace={workspace} onViewFile={onViewFile} />
       ) : (
@@ -78,7 +86,11 @@ export function ChangesPanel({
 
 /** Local: empty state with the file-diff icon used in this panel. */
 function EmptyIcon({ children }: { children: React.ReactNode }) {
-  return <EmptyState icon={<FileDiff className="size-6 text-muted-foreground/60" />}>{children}</EmptyState>;
+  return (
+    <EmptyState icon={<FileDiff className="size-6 text-muted-foreground/60" />}>
+      {children}
+    </EmptyState>
+  );
 }
 
 // ── Changes tab: the changed-files list ──
@@ -96,7 +108,9 @@ function ChangesTab({
   const [filter, setFilter] = useState("");
   const { changes } = useWorkspaceData();
   const files = changes ?? [];
-  const shown = files.filter((f) => f.path.toLowerCase().includes(filter.toLowerCase()));
+  const shown = files.filter((f) =>
+    f.path.toLowerCase().includes(filter.toLowerCase()),
+  );
 
   if (files.length === 0) return <EmptyIcon>No changes yet</EmptyIcon>;
 
@@ -120,20 +134,36 @@ function ChangesTab({
           return (
             <div
               key={f.path}
-              className={cn("flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent", viewed.has(f.path) && "opacity-60")}
+              className={cn(
+                "flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent",
+                viewed.has(f.path) && "opacity-60",
+              )}
             >
-              <span className={cn("w-3 shrink-0 text-center font-mono text-xs font-semibold", s.className)}>
+              <span
+                className={cn(
+                  "w-3 shrink-0 text-center font-mono text-xs font-semibold",
+                  s.className,
+                )}
+              >
                 {s.letter}
               </span>
-              <button className="flex min-w-0 flex-1 text-left" onClick={() => onOpenFile(f.path)} title={f.path}>
+              <button
+                className="flex min-w-0 flex-1 text-left"
+                onClick={() => onOpenFile(f.path)}
+                title={f.path}
+              >
                 <span className="min-w-0 flex-1 truncate">
                   {dir && <span className="text-muted-foreground">{dir}</span>}
                   {name}
                 </span>
               </button>
               <span className="shrink-0 font-mono text-[11px]">
-                {f.insertions > 0 && <span className="text-additions">+{f.insertions}</span>}{" "}
-                {f.deletions > 0 && <span className="text-deletions">−{f.deletions}</span>}
+                {f.insertions > 0 && (
+                  <span className="text-additions">+{f.insertions}</span>
+                )}{" "}
+                {f.deletions > 0 && (
+                  <span className="text-deletions">−{f.deletions}</span>
+                )}
               </span>
               <button
                 className="shrink-0 text-muted-foreground hover:text-foreground"
@@ -156,13 +186,21 @@ function ChangesTab({
 
 // ── Files tab: a browsable file tree ──
 
-function FilesTab({ workspace, onViewFile }: { workspace: Workspace; onViewFile: (path: string) => void }) {
+function FilesTab({
+  workspace,
+  onViewFile,
+}: {
+  workspace: Workspace;
+  onViewFile: (path: string) => void;
+}) {
   const { prefs } = usePreferences();
   const [paths, setPaths] = useState<string[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    workspaceFiles(workspace.id).then(setPaths).catch(() => {});
+    workspaceFiles(workspace.id)
+      .then(setPaths)
+      .catch(() => {});
   }, [workspace.id]);
 
   const tree = useMemo(() => buildTree(paths), [paths]);
@@ -225,7 +263,9 @@ function TreeRow({
       >
         <button
           className="flex min-w-0 flex-1 items-center gap-1.5 py-1 text-left"
-          onClick={() => (node.isFile ? onViewFile(node.path) : onToggle(node.path))}
+          onClick={() =>
+            node.isFile ? onViewFile(node.path) : onToggle(node.path)
+          }
           title={node.path}
         >
           {node.isFile ? (
@@ -235,7 +275,9 @@ function TreeRow({
           ) : (
             <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
           )}
-          {!node.isFile && <Folder className="size-3.5 shrink-0 text-muted-foreground" />}
+          {!node.isFile && (
+            <Folder className="size-3.5 shrink-0 text-muted-foreground" />
+          )}
           <span className="truncate">{node.name}</span>
         </button>
         {node.isFile && (
@@ -264,5 +306,3 @@ function TreeRow({
     </>
   );
 }
-
-

@@ -7,7 +7,12 @@ import { useClipboardImages } from "../hooks/useClipboardImages";
 import { useCommands } from "../hooks/useCommands";
 import { useTodos } from "../hooks/useTodos";
 import { OpencodeClient } from "../lib/opencode";
-import { expandTemplate, filterCommands, isSlashTyping, parseSlash } from "../lib/slash";
+import {
+  expandTemplate,
+  filterCommands,
+  isSlashTyping,
+  parseSlash,
+} from "../lib/slash";
 import type {
   BusEvent,
   ContextInfo,
@@ -19,10 +24,10 @@ import type {
   Workspace,
 } from "../lib/types";
 import { ChatMessage, PartView, SystemMessageView } from "./ChatMessage";
-import { QuestionView } from "./QuestionView";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector } from "./ModeSelector";
 import { usePreferences } from "./PreferencesProvider";
+import { QuestionView } from "./QuestionView";
 import { SlashCommandPalette } from "./SlashCommandPalette";
 import { ThinkingSelector } from "./ThinkingSelector";
 import { TodoButton } from "./TodoButton";
@@ -54,15 +59,55 @@ export interface SystemMessage {
 
 /** Lifecycle actions exposed to the parent by Chat. */
 export type WorkspaceAction =
-  | { kind: "commit"; message?: string; prompt: string; display: string; onFinish?: OnFinishAction }
-  | { kind: "merge"; prompt: string; display: string; onFinish?: OnFinishAction }
+  | {
+      kind: "commit";
+      message?: string;
+      prompt: string;
+      display: string;
+      onFinish?: OnFinishAction;
+    }
+  | {
+      kind: "merge";
+      prompt: string;
+      display: string;
+      onFinish?: OnFinishAction;
+    }
   | { kind: "push"; prompt: string; display: string; onFinish?: OnFinishAction }
-  | { kind: "pr"; title?: string; body?: string; prompt: string; display: string; onFinish?: OnFinishAction };
+  | {
+      kind: "pr";
+      title?: string;
+      body?: string;
+      prompt: string;
+      display: string;
+      onFinish?: OnFinishAction;
+    };
 
 /** Action presented to the user after a lifecycle action completes. */
 export type OnFinishAction =
   | { kind: "remove_workspace"; message: string }
   | { kind: "try_again"; message: string };
+
+/** Completion notice shown once a lifecycle action's assistant turn goes idle. */
+function lifecycleCompletion(action: WorkspaceAction, failed: boolean): string {
+  if (failed) {
+    const what = {
+      commit: "commit the changes",
+      merge: "merge the workspace",
+      push: "push the branch",
+      pr: "open the pull request",
+    }[action.kind];
+    return `Couldn't ${what}. See the output above.`;
+  }
+  if (action.onFinish) return action.onFinish.message;
+  switch (action.kind) {
+    case "commit":
+      return "Committed changes.";
+    case "push":
+      return "Pushed branch to remote.";
+    default:
+      return "Done.";
+  }
+}
 
 /**
  * Minimal streaming chat for one workspace. Renders assistant text as it
@@ -89,16 +134,25 @@ export function Chat({
   const [variant, setVariant] = useState<string | null>(null);
   // Selected OpenCode agent/mode; only "build" or "plan".
   const [agent, setAgent] = useState<string>("build");
-  const [input, setInput] = useState(prefs.workspace[workspace.id]?.inputText ?? "");
+  const [input, setInput] = useState(
+    prefs.workspace[workspace.id]?.inputText ?? "",
+  );
   const { todos, dismissIfAllCompleted } = useTodos(client, sessionId);
-  const { attachments, handlePaste, remove: removeAttachment, clear: clearAttachments } =
-    useClipboardImages();
+  const {
+    attachments,
+    handlePaste,
+    remove: removeAttachment,
+    clear: clearAttachments,
+  } = useClipboardImages();
   const { commands } = useCommands(client);
   const [slashIndex, setSlashIndex] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [systemMessages, setSystemMessages] = useState<SystemMessage[]>([]);
-  const [pendingOnFinish, setPendingOnFinish] = useState<OnFinishAction | null>(null);
+  // The lifecycle action currently running (commit/merge/push/pr), kept in a
+  // ref so we can show a success/failure completion notice when the assistant
+  // goes idle — regardless of whether the action defined an onFinish message.
+  const runningActionRef = useRef<WorkspaceAction | null>(null);
   const [pendingQuestions, setPendingQuestions] = useState<
     Array<{ request: QuestionRequest | QuestionV2Request; version: 1 | 2 }>
   >([]);
@@ -134,27 +188,43 @@ export function Chat({
     setError(null);
     try {
       if (entry.version === 2) {
-        await client.replyQuestionV2(entry.request.sessionID, entry.request.id, answers);
+        await client.replyQuestionV2(
+          entry.request.sessionID,
+          entry.request.id,
+          answers,
+        );
       } else {
         await client.replyQuestion(entry.request.id, answers);
       }
-      setPendingQuestions((prev) => prev.filter((p) => p.request.id !== entry.request.id));
+      setPendingQuestions((prev) =>
+        prev.filter((p) => p.request.id !== entry.request.id),
+      );
     } catch (e) {
       setError(String(e));
     }
   }
 
-  async function rejectQuestion(entry: { request: QuestionRequest | QuestionV2Request; version: 1 | 2 }) {
+  async function rejectQuestion(entry: {
+    request: QuestionRequest | QuestionV2Request;
+    version: 1 | 2;
+  }) {
     try {
       if (entry.version === 2) {
-        await client.rejectQuestionV2(entry.request.sessionID, entry.request.id);
+        await client.rejectQuestionV2(
+          entry.request.sessionID,
+          entry.request.id,
+        );
       } else {
         await client.rejectQuestion(entry.request.id);
       }
-      setPendingQuestions((prev) => prev.filter((p) => p.request.id !== entry.request.id));
+      setPendingQuestions((prev) =>
+        prev.filter((p) => p.request.id !== entry.request.id),
+      );
     } catch {
       // Dismiss locally even if the server call fails; the user explicitly cancelled.
-      setPendingQuestions((prev) => prev.filter((p) => p.request.id !== entry.request.id));
+      setPendingQuestions((prev) =>
+        prev.filter((p) => p.request.id !== entry.request.id),
+      );
     }
   }
 
@@ -167,37 +237,59 @@ export function Chat({
     const action = pendingAction;
     setSystemMessages((prev) => [
       ...prev,
-      { id: crypto.randomUUID(), content: action.display, kind: "info", align: "left" },
+      {
+        id: crypto.randomUUID(),
+        content: action.display,
+        kind: "info",
+        align: "left",
+      },
     ]);
     lifecycleBusy.current = true;
     lifecycleError.current = false;
     setBusy(true);
     setError(null);
-    if (action.onFinish) setPendingOnFinish(action.onFinish);
-    void client.sendPrompt(sessionId, action.prompt, model ?? undefined, variant ?? undefined, agent, []);
+    runningActionRef.current = action;
+    void client.sendPrompt(
+      sessionId,
+      action.prompt,
+      model ?? undefined,
+      variant ?? undefined,
+      agent,
+      [],
+    );
     onActionConsumed();
-  }, [pendingAction, sessionId, busy, client, model, variant, agent, onActionConsumed]);
+  }, [
+    pendingAction,
+    sessionId,
+    busy,
+    client,
+    model,
+    variant,
+    agent,
+    onActionConsumed,
+  ]);
 
-  // When the assistant finishes a lifecycle action, show the configured
-  // follow-up message. Success/failure is inferred from tool/session errors
-  // that occurred while the action was running.
+  // When the assistant finishes a lifecycle action, replace the in-progress
+  // notice with a success/failure completion. Success/failure is inferred from
+  // tool/session errors that occurred while the action was running. Actions
+  // with an onFinish message use it on success; the rest get a sensible default.
   useEffect(() => {
     if (!lifecycleBusy.current || busy) return;
     lifecycleBusy.current = false;
-    const action = pendingOnFinish;
+    const action = runningActionRef.current;
+    runningActionRef.current = null;
     if (!action) return;
-    setPendingOnFinish(null);
-    const kind = lifecycleError.current ? "error" : "success";
+    const failed = lifecycleError.current;
     setSystemMessages((prev) => [
       ...prev,
       {
         id: crypto.randomUUID(),
-        content: action.message,
-        kind,
+        content: lifecycleCompletion(action, failed),
+        kind: failed ? "error" : "success",
         align: "left",
       },
     ]);
-  }, [busy, pendingOnFinish]);
+  }, [busy]);
 
   const upsertPart = useCallback((part: Part) => {
     setMessages((prev) => {
@@ -219,7 +311,9 @@ export function Chat({
         },
       };
     });
-    setOrder((prev) => (prev.includes(part.messageID) ? prev : [...prev, part.messageID]));
+    setOrder((prev) =>
+      prev.includes(part.messageID) ? prev : [...prev, part.messageID],
+    );
   }, []);
 
   useEffect(() => {
@@ -304,7 +398,10 @@ export function Chat({
         ];
         setPendingQuestions((prev) => {
           const existing = new Set(prev.map((p) => p.request.id));
-          return [...prev, ...combined.filter((c) => !existing.has(c.request.id))];
+          return [
+            ...prev,
+            ...combined.filter((c) => !existing.has(c.request.id)),
+          ];
         });
 
         // Send the workspace init prompt once after the session is ready.
@@ -323,11 +420,20 @@ export function Chat({
           lifecycleBusy.current = true;
           lifecycleError.current = false;
           setBusy(true);
-          void client.sendPrompt(session.id, initPrompt, model ?? undefined, variant ?? undefined, agent, []);
+          void client.sendPrompt(
+            session.id,
+            initPrompt,
+            model ?? undefined,
+            variant ?? undefined,
+            agent,
+            [],
+          );
         }
 
         // Report context usage from the most recent assistant message in history.
-        const lastAssistant = [...history].reverse().find((m) => m.info.role === "assistant");
+        const lastAssistant = [...history]
+          .reverse()
+          .find((m) => m.info.role === "assistant");
         const tk = lastAssistant?.info.tokens;
         if (tk) {
           const used = (tk.input ?? 0) + (tk.cache?.read ?? 0);
@@ -351,7 +457,11 @@ export function Chat({
       switch (e.type) {
         case "message.part.updated": {
           const part = props.part as Part;
-          if (lifecycleBusy.current && part.type === "tool" && part.state?.status === "error") {
+          if (
+            lifecycleBusy.current &&
+            part.type === "tool" &&
+            part.state?.status === "error"
+          ) {
             lifecycleError.current = true;
           }
           upsertPart(part);
@@ -369,13 +479,17 @@ export function Chat({
                 order: [],
               },
             }));
-            setOrder((prev) => (prev.includes(info.id) ? prev : [...prev, info.id]));
+            setOrder((prev) =>
+              prev.includes(info.id) ? prev : [...prev, info.id],
+            );
 
             // Report context-window usage from the assistant message's tokens.
             const tk = info.tokens;
             if (info.role === "assistant" && tk) {
               const used = (tk.input ?? 0) + (tk.cache?.read ?? 0);
-              const max = modelsRef.current.find((m) => m.modelID === info.modelID)?.contextLimit ?? 0;
+              const max =
+                modelsRef.current.find((m) => m.modelID === info.modelID)
+                  ?.contextLimit ?? 0;
               if (used > 0 && max > 0) onContext({ used, max });
             }
           }
@@ -396,7 +510,10 @@ export function Chat({
           if (!q.id || !q.sessionID || !Array.isArray(q.questions)) break;
           setPendingQuestions((prev) => {
             if (prev.some((p) => p.request.id === q.id)) return prev;
-            return [...prev, { request: q, version: e.type === "question.v2.asked" ? 2 : 1 }];
+            return [
+              ...prev,
+              { request: q, version: e.type === "question.v2.asked" ? 2 : 1 },
+            ];
           });
           break;
         }
@@ -406,7 +523,9 @@ export function Chat({
         case "question.v2.rejected": {
           const requestID = (props.requestID as string) ?? (props.id as string);
           if (!requestID) break;
-          setPendingQuestions((prev) => prev.filter((p) => p.request.id !== requestID));
+          setPendingQuestions((prev) =>
+            prev.filter((p) => p.request.id !== requestID),
+          );
           break;
         }
       }
@@ -428,7 +547,9 @@ export function Chat({
     let effectiveAgent = agent;
     if (text.startsWith("/")) {
       const parsed = parseSlash(text);
-      const match = parsed ? commands.find((c) => c.name === parsed.name) : null;
+      const match = parsed
+        ? commands.find((c) => c.name === parsed.name)
+        : null;
       if (!match) {
         setError(`Unknown command: ${parsed?.name ? `/${parsed.name}` : text}`);
         return;
@@ -454,7 +575,12 @@ export function Chat({
     // First interaction → let the title agent name the workspace (background).
     // Skip for slash commands: their expanded templates are meta-prompts, not
     // representative of the user's actual intent.
-    if (!workspace.name && text && !text.startsWith("/") && !nameRequested.current) {
+    if (
+      !workspace.name &&
+      text &&
+      !text.startsWith("/") &&
+      !nameRequested.current
+    ) {
       nameRequested.current = true;
       void client
         .generateName(text, model ?? undefined)
@@ -468,7 +594,11 @@ export function Chat({
         model ?? undefined,
         variant ?? undefined,
         effectiveAgent,
-        sentAttachments.map((a) => ({ mime: a.mime, url: a.url, filename: a.filename })),
+        sentAttachments.map((a) => ({
+          mime: a.mime,
+          url: a.url,
+          filename: a.filename,
+        })),
       );
     } catch (e) {
       setError(String(e));
@@ -499,9 +629,12 @@ export function Chat({
   // Preserve the composer draft per workspace, but don't update the global
   // preference context on every keystroke — that re-renders the whole UI.
   // Save only when the prompt is sent or the component unmounts.
-  const saveDraft = useCallback((text: string) => {
-    setWorkspacePref(workspace.id, { inputText: text });
-  }, [workspace.id, setWorkspacePref]);
+  const saveDraft = useCallback(
+    (text: string) => {
+      setWorkspacePref(workspace.id, { inputText: text });
+    },
+    [workspace.id, setWorkspacePref],
+  );
 
   useEffect(() => {
     return () => saveDraft(inputRef.current);
@@ -510,7 +643,9 @@ export function Chat({
   // Slash autocomplete: visible while the user is still typing the command
   // name (before the first whitespace). Filtered by case-insensitive prefix.
   const showPalette = isSlashTyping(input);
-  const slashMatches = showPalette ? filterCommands(commands, input.slice(1)) : [];
+  const slashMatches = showPalette
+    ? filterCommands(commands, input.slice(1))
+    : [];
   // Reset selection when the filtered list changes so the highlight stays valid.
   useEffect(() => {
     setSlashIndex(0);
@@ -528,8 +663,14 @@ export function Chat({
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <GitBranch className="size-3.5" />
               <span>
-                Branched <span className="font-mono text-foreground">{workspace.branch}</span> from{" "}
-                <span className="font-mono text-foreground">{workspace.base_branch}</span>
+                Branched{" "}
+                <span className="font-mono text-foreground">
+                  {workspace.branch}
+                </span>{" "}
+                from{" "}
+                <span className="font-mono text-foreground">
+                  {workspace.base_branch}
+                </span>
               </span>
             </div>
           )}
@@ -554,7 +695,9 @@ export function Chat({
               <div className="w-full max-w-[85%]">
                 <QuestionView
                   questions={entry.request.questions}
-                  onSubmit={(answers) => void submitQuestionAnswers(entry, answers)}
+                  onSubmit={(answers) =>
+                    void submitQuestionAnswers(entry, answers)
+                  }
                   onCancel={() => void rejectQuestion(entry)}
                 />
               </div>
@@ -580,14 +723,18 @@ export function Chat({
         )}
         <div
           className={cn(
-            "relative mx-auto max-w-4xl rounded-2xl border border-border bg-card transition-colors duration-150 focus-within:border-ring",
+            "relative mx-auto max-w-4xl rounded-lg border border-border bg-card transition-colors duration-150 focus-within:border-ring",
             busy && "composer-loading",
           )}
         >
           {/* Controls on top (Polyscope-style), composer below. */}
           <div className="flex items-center gap-1.5 px-2 py-1.5">
             <ModeSelector value={agent} onChange={setAgent} />
-            <ModelSelector models={models} value={model} onChange={changeModel} />
+            <ModelSelector
+              models={models}
+              value={model}
+              onChange={changeModel}
+            />
             <ThinkingSelector
               variants={model?.variants ?? []}
               value={variant}
@@ -596,7 +743,12 @@ export function Chat({
             <div className="ml-auto flex items-center gap-1">
               <TodoButton todos={todos} />
               {busy ? (
-                <Button variant="destructive" size="icon" className="size-7" onClick={() => void abort()}>
+                <Button
+                  variant="destructive"
+                  size="icon"
+                  className="size-7"
+                  onClick={() => void abort()}
+                >
                   <Square className="size-3.5" />
                 </Button>
               ) : (
@@ -605,7 +757,9 @@ export function Chat({
                   variant="ghost"
                   className="size-7 text-primary hover:bg-primary/10 disabled:text-muted-foreground/40 disabled:hover:bg-transparent"
                   onClick={() => void send()}
-                  disabled={(!input.trim() && attachments.length === 0) || !sessionId}
+                  disabled={
+                    (!input.trim() && attachments.length === 0) || !sessionId
+                  }
                 >
                   <ArrowUp className="size-4" />
                 </Button>
@@ -650,7 +804,9 @@ export function Chat({
                   setSlashIndex((i) => (i + 1) % slashMatches.length);
                 } else if (e.key === "ArrowUp") {
                   e.preventDefault();
-                  setSlashIndex((i) => (i - 1 + slashMatches.length) % slashMatches.length);
+                  setSlashIndex(
+                    (i) => (i - 1 + slashMatches.length) % slashMatches.length,
+                  );
                 } else if (e.key === "Enter" || e.key === "Tab") {
                   e.preventDefault();
                   pickCommand(slashMatches[slashIndex].name);
@@ -668,5 +824,3 @@ export function Chat({
     </div>
   );
 }
-
-

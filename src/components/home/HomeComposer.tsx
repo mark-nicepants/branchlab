@@ -1,10 +1,21 @@
 import { useEffect, useState } from "react";
-import { ArrowUp, ChevronsUpDown, FolderPlus, GitBranch, Plus, Sparkles } from "lucide-react";
+import {
+  ArrowUp,
+  ChevronsUpDown,
+  FolderPlus,
+  GitBranch,
+  Plus,
+  Sparkles,
+} from "lucide-react";
 import { listBranches } from "../../lib/api";
 import type { ProjectView } from "../../lib/types";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,7 +28,11 @@ import { cn } from "@/lib/utils";
 interface Props {
   projects: ProjectView[];
   /** Create a worktree session in `projectId` off `base`, seeding `prompt`. */
-  onCreateSession: (projectId: string, base: string | undefined, prompt: string) => void;
+  onCreateSession: (
+    projectId: string,
+    base: string | undefined,
+    prompt: string,
+  ) => void;
   onQuickChat: (prompt: string) => void;
   onAddProject: () => void;
 }
@@ -28,9 +43,16 @@ interface Props {
  * agent with the typed prompt. Mode/model pills are display-only here — the
  * live selectors live inside the session composer.
  */
-export function HomeComposer({ projects, onCreateSession, onQuickChat, onAddProject }: Props) {
+export function HomeComposer({
+  projects,
+  onCreateSession,
+  onQuickChat,
+  onAddProject,
+}: Props) {
   const [text, setText] = useState("");
-  const [projectId, setProjectId] = useState<string | null>(projects[0]?.id ?? null);
+  const [projectId, setProjectId] = useState<string | null>(
+    projects[0]?.id ?? null,
+  );
   const [base, setBase] = useState<string>("");
   const [branches, setBranches] = useState<string[]>([]);
 
@@ -89,7 +111,10 @@ export function HomeComposer({ projects, onCreateSession, onQuickChat, onAddProj
             </TooltipTrigger>
             <TooltipContent>Attach · in session</TooltipContent>
           </Tooltip>
-          <DisplayPill label="Interactive" hint="Autonomy is chosen per session" />
+          <DisplayPill
+            label="Interactive"
+            hint="Autonomy is chosen per session"
+          />
           <DisplayPill label="Auto" hint="Model is chosen per session" />
           <div className="ml-auto">
             <Button
@@ -109,14 +134,24 @@ export function HomeComposer({ projects, onCreateSession, onQuickChat, onAddProj
       <div className="mt-3 flex flex-wrap items-center gap-1.5 text-sm">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm" className="gap-1.5" disabled={projects.length === 0}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              disabled={projects.length === 0}
+            >
               <FolderPlus className="size-3.5 opacity-70" />
-              <span className="max-w-40 truncate">{project?.name ?? "No project"}</span>
+              <span className="max-w-40 truncate">
+                {project?.name ?? "No project"}
+              </span>
               <ChevronsUpDown className="size-3.5 opacity-50" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="min-w-[200px]">
-            <DropdownMenuRadioGroup value={projectId ?? ""} onValueChange={setProjectId}>
+            <DropdownMenuRadioGroup
+              value={projectId ?? ""}
+              onValueChange={setProjectId}
+            >
               {projects.map((p) => (
                 <DropdownMenuRadioItem key={p.id} value={p.id}>
                   <span className="truncate">{p.name}</span>
@@ -132,12 +167,22 @@ export function HomeComposer({ projects, onCreateSession, onQuickChat, onAddProj
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm" className="gap-1.5" disabled={!project || branches.length === 0}>
-              <span className="max-w-32 truncate font-mono text-xs">{base || "branch"}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              disabled={!project || branches.length === 0}
+            >
+              <span className="max-w-32 truncate font-mono text-xs">
+                {base || "branch"}
+              </span>
               <ChevronsUpDown className="size-3.5 opacity-50" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="max-h-72 overflow-y-auto">
+          <DropdownMenuContent
+            align="start"
+            className="max-h-72 overflow-y-auto"
+          >
             <DropdownMenuRadioGroup value={base} onValueChange={setBase}>
               {branches.map((b) => (
                 <DropdownMenuRadioItem key={b} value={b}>
@@ -148,14 +193,20 @@ export function HomeComposer({ projects, onCreateSession, onQuickChat, onAddProj
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <Button variant="ghost" size="sm" className="ml-auto gap-1.5 text-muted-foreground" onClick={onAddProject}>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="ml-auto gap-1.5 text-muted-foreground"
+          onClick={onAddProject}
+        >
           <Plus className="size-3.5" /> Add project
         </Button>
       </div>
 
       {projects.length === 0 && (
         <p className="mt-3 flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
-          <Sparkles className="size-3.5" /> No project selected — your prompt starts a context-free quick chat.
+          <Sparkles className="size-3.5" /> No project selected — your prompt
+          starts a context-free quick chat.
         </p>
       )}
     </div>
