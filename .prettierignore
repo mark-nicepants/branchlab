@@ -1,0 +1,8 @@
+# Build output & generated files
+dist
+src-tauri/target
+src-tauri/gen
+node_modules
+
+# Lockfiles / generated data
+*.lock
