@@ -13,20 +13,34 @@ import { THEMES } from "@/lib/themes";
 import { cn } from "@/lib/utils";
 import {
   Accessibility,
+  Boxes,
   Check,
+  ChevronDown,
+  ChevronRight,
   CircleUser,
   FlaskConical,
   FolderCog,
   FolderPlus,
   MessagesSquare,
   Palette,
+  Search,
   Settings as SettingsIcon,
   Sparkles,
   Trash2,
 } from "lucide-react";
-import { useEffect, useState } from "react";
-import { removeProject } from "../../lib/api";
+import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
+import {
+  getDefaultModel,
+  getModelReasoning,
+  removeProject,
+  setDefaultModel,
+  setModelReasoning,
+} from "../../lib/api";
+import { groupByProvider, shortName } from "../../lib/models";
 import type { ProjectView } from "../../lib/types";
+import { Input } from "@/components/ui/input";
+import { AccountsTab } from "./AccountsTab";
 import {
   EDITOR_APPS,
   TERMINAL_APPS,
@@ -37,6 +51,7 @@ import { useTheme } from "../ThemeProvider";
 export type SettingsTab =
   | "general"
   | "accounts"
+  | "models"
   | "sessions"
   | "themes"
   | "accessibility"
@@ -64,6 +79,7 @@ interface NavItem {
 const NAV: NavItem[] = [
   { id: "general", label: "General", icon: SettingsIcon, group: "top" },
   { id: "accounts", label: "Accounts", icon: CircleUser, group: "top" },
+  { id: "models", label: "Models", icon: Boxes, group: "top" },
   { id: "sessions", label: "Sessions", icon: MessagesSquare, group: "top" },
   { id: "themes", label: "Themes", icon: Palette, group: "top" },
   {
@@ -151,9 +167,8 @@ export function SettingsScreen({
                 onOpenProjectSettings={onOpenProjectSettings}
               />
             )}
-            {tab === "accounts" && (
-              <ComingSoon label="Account sign-in and identity" />
-            )}
+            {tab === "accounts" && <AccountsTab />}
+            {tab === "models" && <ModelsTab />}
             {tab === "sessions" && (
               <ComingSoon label="Session defaults and retention" />
             )}
@@ -384,6 +399,296 @@ function ProjectsTab({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Models ──
+
+// Providers we have a reasoning-config mapping for (mirrors config.rs). Others
+// hide the effort control.
+const REASONING_PROVIDERS = new Set([
+  "anthropic",
+  "anthropic-vertex",
+  "bedrock",
+  "google",
+  "google-vertex",
+  "vertex",
+  "github-copilot",
+  "copilot",
+  "openai",
+  "openai-compatible",
+  "azure",
+]);
+const REASONING_LEVELS: { value: string; label: string }[] = [
+  { value: "default", label: "Default (model's own)" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "max", label: "Max" },
+];
+
+function ModelsTab() {
+  const { prefs, setPref } = usePreferences();
+  const catalog = prefs.modelCatalog;
+  const [query, setQuery] = useState("");
+  const [defaultModel, setDefault] = useState<string>("");
+
+  // Reasoning configurator state.
+  const [rModel, setRModel] = useState("");
+  const [rLevel, setRLevel] = useState("default");
+  const [rBusy, setRBusy] = useState(false);
+
+  // Which provider groups are expanded in the available-models list.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggleProvider = (provider: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(provider)) next.delete(provider);
+      else next.add(provider);
+      return next;
+    });
+
+  useEffect(() => {
+    getDefaultModel()
+      .then((m) => setDefault(m ?? ""))
+      .catch(() => setDefault(""));
+  }, []);
+
+  // Seed the reasoning model once the catalog is known (prefer the default).
+  useEffect(() => {
+    if (!rModel && catalog.length) setRModel(defaultModel || catalog[0].value);
+  }, [catalog, defaultModel, rModel]);
+  // Prefill the effort from what's already in the config for that model.
+  useEffect(() => {
+    if (!rModel) return;
+    getModelReasoning(rModel)
+      .then(setRLevel)
+      .catch(() => setRLevel("default"));
+  }, [rModel]);
+
+  const rProvider = rModel.split("/")[0] ?? "";
+  const rSupported = REASONING_PROVIDERS.has(rProvider);
+
+  async function saveReasoning() {
+    setRBusy(true);
+    try {
+      await setModelReasoning(rModel, rLevel);
+      toast.success("Reasoning saved — start a new session to apply it.");
+    } catch (e) {
+      toast.error(`Could not save reasoning: ${e}`);
+    } finally {
+      setRBusy(false);
+    }
+  }
+
+  const disabled = useMemo(
+    () => new Set(prefs.disabledModels),
+    [prefs.disabledModels],
+  );
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return catalog;
+    return catalog.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) || c.value.toLowerCase().includes(q),
+    );
+  }, [catalog, query]);
+  const groups = useMemo(() => groupByProvider(filtered), [filtered]);
+  const defaultGroups = useMemo(() => groupByProvider(catalog), [catalog]);
+
+  const enabledCount = filtered.filter((c) => !disabled.has(c.value)).length;
+  const allEnabled = filtered.length > 0 && enabledCount === filtered.length;
+
+  function toggle(value: string, enabled: boolean) {
+    const next = new Set(prefs.disabledModels);
+    if (enabled) next.delete(value);
+    else next.add(value);
+    setPref("disabledModels", [...next]);
+  }
+
+  function toggleAll() {
+    const next = new Set(prefs.disabledModels);
+    for (const c of filtered) {
+      if (allEnabled) next.add(c.value);
+      else next.delete(c.value);
+    }
+    setPref("disabledModels", [...next]);
+  }
+
+  function changeDefault(value: string) {
+    setDefault(value);
+    void setDefaultModel(value).catch(() => {});
+  }
+
+  if (catalog.length === 0) {
+    return (
+      <EmptyState
+        className="py-16"
+        icon={<Boxes className="size-6 text-muted-foreground/60" />}
+      >
+        Open a workspace once to load the available models.
+      </EmptyState>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-6">
+      <Field
+        title="Default model"
+        desc="Applied to every new workspace session. Individual workspaces can still switch models."
+      >
+        <select
+          value={defaultModel}
+          onChange={(e) => changeDefault(e.target.value)}
+          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+        >
+          <option value="">Automatic (opencode default)</option>
+          {defaultGroups.map(([provider, list]) => (
+            <optgroup key={provider} label={provider}>
+              {list.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {shortName(c.name)}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+      </Field>
+
+      <Field
+        title="Reasoning effort"
+        desc="opencode doesn't expose reasoning over ACP, so BranchLab writes it per-model into your opencode config. Pick a model and effort, then Save — it applies on the model's next session."
+      >
+        <div className="flex flex-col gap-2">
+          <select
+            value={rModel}
+            onChange={(e) => setRModel(e.target.value)}
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+          >
+            {defaultGroups.map(([provider, list]) => (
+              <optgroup key={provider} label={provider}>
+                {list.map((c) => (
+                  <option key={c.value} value={c.value}>
+                    {shortName(c.name)}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+          <div className="flex items-center gap-2">
+            <select
+              value={rLevel}
+              onChange={(e) => setRLevel(e.target.value)}
+              disabled={!rSupported}
+              className="h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm disabled:opacity-50"
+            >
+              {REASONING_LEVELS.map((l) => (
+                <option key={l.value} value={l.value}>
+                  {l.label}
+                </option>
+              ))}
+            </select>
+            <Button
+              size="sm"
+              disabled={!rSupported || rBusy}
+              onClick={() => void saveReasoning()}
+            >
+              Save
+            </Button>
+          </div>
+          {!rSupported && rModel && (
+            <p className="text-xs text-muted-foreground">
+              Reasoning isn't configurable for the{" "}
+              <span className="font-mono">{rProvider}</span> provider.
+            </p>
+          )}
+        </div>
+      </Field>
+
+      <div>
+        <div className="text-sm font-medium">Available models</div>
+        <div className="mb-2.5 mt-0.5 text-xs text-muted-foreground">
+          Choose which models appear in the composer's model picker.
+        </div>
+        <div className="mb-2 flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search models"
+              className="h-8 pl-8"
+            />
+          </div>
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+            {enabledCount}/{filtered.length}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            disabled={filtered.length === 0}
+            onClick={toggleAll}
+          >
+            {allEnabled ? "Disable all" : "Enable all"}
+          </Button>
+        </div>
+        <div className="overflow-hidden rounded-lg border border-border">
+          {groups.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              No models found.
+            </p>
+          ) : (
+            groups.map(([provider, list]) => {
+              const enabled = list.filter((c) => !disabled.has(c.value)).length;
+              // Collapsed by default; searching forces every matching group open.
+              const isOpen = query.trim() !== "" || expanded.has(provider);
+              return (
+                <div
+                  key={provider}
+                  className="border-b border-border last:border-b-0"
+                >
+                  <button
+                    onClick={() => toggleProvider(provider)}
+                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-accent/50"
+                  >
+                    {isOpen ? (
+                      <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                    )}
+                    <span className="flex-1 text-sm font-medium">
+                      {provider}
+                    </span>
+                    <span className="text-xs tabular-nums text-muted-foreground">
+                      {enabled} of {list.length} enabled
+                    </span>
+                  </button>
+                  {isOpen && (
+                    <div className="border-t border-border bg-muted/20 px-1.5 py-1">
+                      {list.map((c) => (
+                        <label
+                          key={c.value}
+                          className="flex cursor-pointer items-center justify-between gap-3 rounded-md px-3 py-2 text-sm hover:bg-accent"
+                        >
+                          <span className="min-w-0 truncate">
+                            {shortName(c.name)}
+                          </span>
+                          <Switch
+                            checked={!disabled.has(c.value)}
+                            onCheckedChange={(v) => toggle(c.value, v)}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
     </div>
   );
 }

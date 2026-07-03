@@ -30,9 +30,7 @@ interface Props {
   onOpenFile: (path: string) => void;
   /** Open a file in the in-app viewer (center "file" tab). */
   onViewFile: (path: string) => void;
-  /** Base URL of the workspace's opencode server, for the Config (tools) tab. */
-  baseUrl?: string | null;
-  /** Restart the workspace's opencode server. */
+  /** Restart the workspace's ACP engine (Config tab). */
   onRestart?: () => void;
 }
 
@@ -44,7 +42,6 @@ export function ChangesPanel({
   onToggleViewed,
   onOpenFile,
   onViewFile,
-  baseUrl = null,
   onRestart,
 }: Props) {
   const [tab, setTab] = useState<Tab>("changes");
@@ -78,7 +75,10 @@ export function ChangesPanel({
       ) : tab === "files" ? (
         <FilesTab workspace={workspace} onViewFile={onViewFile} />
       ) : (
-        <ServerToolsPanel baseUrl={baseUrl} onRestart={() => onRestart?.()} />
+        <ServerToolsPanel
+          workspaceId={workspace.id}
+          onRestart={() => onRestart?.()}
+        />
       )}
     </div>
   );

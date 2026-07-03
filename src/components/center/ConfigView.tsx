@@ -6,11 +6,9 @@ import { RotateCw, Save } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { readConfig, restartServer, writeConfig } from "../../lib/api";
-import { OpencodeClient } from "../../lib/opencode";
 
 interface Props {
   workspaceId: string;
-  baseUrl: string | null;
   onRestarted: () => void;
 }
 
@@ -18,10 +16,11 @@ type Scope = "project" | "global";
 
 /**
  * Config & internals: edit the global/project opencode config files and apply
- * by restarting the server; view the effective merged config and the server's
- * agents/commands (read-only). The "see and update opencode internals" goal.
+ * by restarting the engine. Effective-config / agents / commands are now
+ * advertised per-session over ACP (see the composer selectors), not fetched
+ * over HTTP here.
  */
-export function ConfigView({ workspaceId, baseUrl, onRestarted }: Props) {
+export function ConfigView({ workspaceId, onRestarted }: Props) {
   const [scope, setScope] = useState<Scope>("project");
   const [content, setContent] = useState("");
   const [path, setPath] = useState("");
@@ -45,23 +44,11 @@ export function ConfigView({ workspaceId, baseUrl, onRestarted }: Props) {
   }, [scope, workspaceId]);
 
   useEffect(() => {
-    if (!baseUrl) {
-      setEffective("");
-      setAgents([]);
-      setCommands([]);
-      return;
-    }
-    const c = new OpencodeClient(baseUrl);
-    c.getConfig()
-      .then((cfg) => setEffective(JSON.stringify(cfg, null, 2)))
-      .catch(() => {});
-    c.listAgents()
-      .then((a) => setAgents(Array.isArray(a) ? a : []))
-      .catch(() => {});
-    c.listCommands()
-      .then((a) => setCommands(Array.isArray(a) ? a : []))
-      .catch(() => {});
-  }, [baseUrl]);
+    // Effective config / agents / commands come over ACP now, not HTTP.
+    setEffective("");
+    setAgents([]);
+    setCommands([]);
+  }, [workspaceId]);
 
   async function save(restart: boolean) {
     setBusy(true);

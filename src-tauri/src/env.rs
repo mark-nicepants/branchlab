@@ -30,6 +30,8 @@ impl ToolStatus {
 pub struct EnvReport {
     pub opencode: ToolStatus,
     pub git: ToolStatus,
+    /// `gh` CLI — used for GitHub account authentication (data goes over the API).
+    pub gh: ToolStatus,
 }
 
 /// Resolve a binary on PATH and ask it for its version.
@@ -67,6 +69,7 @@ pub fn probe() -> EnvReport {
     EnvReport {
         opencode: probe_tool("opencode", &["--version"], extract_opencode_version),
         git: probe_tool("git", &["--version"], extract_git_version),
+        gh: probe_tool("gh", &["--version"], crate::github::auth::extract_gh_version),
     }
 }
 

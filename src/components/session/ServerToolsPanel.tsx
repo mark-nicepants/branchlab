@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { RotateCw } from "lucide-react";
-import { OpencodeClient } from "../../lib/opencode";
+import { FileText, RotateCw } from "lucide-react";
+import {
+  logPath,
+  mcpConnect,
+  mcpDisconnect,
+  openExternal,
+  workspaceTools,
+} from "../../lib/api";
 import type { LspStatus, McpStatus } from "../../lib/types";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
@@ -9,61 +15,78 @@ import { runtimeStatusBg } from "@/lib/status";
 import { cn } from "@/lib/utils";
 
 interface Props {
-  baseUrl: string | null;
+  workspaceId: string;
   onRestart: () => void;
 }
 
 /**
- * The workspace server's runtime tools — MCP servers, LSP servers and plugins —
- * shown in the session's side panel (Config tab) as stacked sections. These are
- * per-workspace (they belong to that server), so they live here rather than in
- * global settings. MCP servers can be connected/disconnected live.
+ * The workspace engine's runtime tools — MCP + LSP servers. ACP doesn't expose
+ * runtime status, so this reads it from a supplemental on-demand `opencode serve`
+ * (started lazily when this panel opens, idle-reaped afterward). MCP servers can
+ * be connected/disconnected live.
  */
-export function ServerToolsPanel({ baseUrl, onRestart }: Props) {
+export function ServerToolsPanel({ workspaceId, onRestart }: Props) {
   const [mcp, setMcp] = useState<McpStatus[]>([]);
   const [lsp, setLsp] = useState<LspStatus[]>([]);
-  const [plugins, setPlugins] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    if (!baseUrl) return;
-    const c = new OpencodeClient(baseUrl);
-    const [m, l, p] = await Promise.all([
-      c.listMcp().catch(() => []),
-      c.listLsp().catch(() => []),
-      c.listPlugins().catch(() => []),
-    ]);
-    setMcp(m);
-    setLsp(l);
-    setPlugins(p);
-  }, [baseUrl]);
+    setLoading(true);
+    setError(null);
+    try {
+      const t = await workspaceTools(workspaceId);
+      setMcp(t.mcp);
+      setLsp(t.lsp);
+    } catch (e) {
+      // Surface the reason instead of silently showing "none configured" — the
+      // supplemental `opencode serve` may have failed to start (see logs).
+      setError(String(e));
+      setMcp([]);
+      setLsp([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [workspaceId]);
+
+  const openLogs = useCallback(async () => {
+    const p = await logPath();
+    if (p) void openExternal(p);
+  }, []);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
   async function toggleMcp(m: McpStatus, on: boolean) {
-    if (!baseUrl) return;
     setBusy(m.name);
-    const c = new OpencodeClient(baseUrl);
     try {
-      await (on ? c.connectMcp(m.name) : c.disconnectMcp(m.name));
+      await (on
+        ? mcpConnect(workspaceId, m.name)
+        : mcpDisconnect(workspaceId, m.name));
       await refresh();
     } finally {
       setBusy(null);
     }
   }
 
-  if (!baseUrl) {
-    return <EmptyState className="py-10">Server not running.</EmptyState>;
-  }
-
   return (
     <div className="flex h-full flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto">
+        {error && (
+          <p
+            className="border-b border-border px-3 py-2 text-xs text-destructive"
+            title={error}
+          >
+            Couldn't reach the engine server: {error}
+          </p>
+        )}
         <Section title="MCP servers" count={mcp.length}>
           {mcp.length === 0 ? (
-            <SectionEmpty>No MCP servers configured.</SectionEmpty>
+            <SectionEmpty>
+              {loading ? "Loading…" : "No MCP servers configured."}
+            </SectionEmpty>
           ) : (
             mcp.map((m) => {
               const on =
@@ -100,7 +123,9 @@ export function ServerToolsPanel({ baseUrl, onRestart }: Props) {
 
         <Section title="Language servers" count={lsp.length}>
           {lsp.length === 0 ? (
-            <SectionEmpty>No LSP servers running.</SectionEmpty>
+            <SectionEmpty>
+              {loading ? "Loading…" : "No LSP servers running."}
+            </SectionEmpty>
           ) : (
             lsp.map((l) => (
               <Item key={l.id}>
@@ -121,27 +146,29 @@ export function ServerToolsPanel({ baseUrl, onRestart }: Props) {
           )}
         </Section>
 
-        <Section title="Plugins" count={plugins.length}>
-          {plugins.length === 0 ? (
-            <SectionEmpty>No plugins loaded.</SectionEmpty>
-          ) : (
-            plugins.map((p) => (
-              <Item key={p}>
-                <span className="min-w-0 flex-1 truncate">{p}</span>
-              </Item>
-            ))
-          )}
-        </Section>
+        {!loading && mcp.length === 0 && lsp.length === 0 && (
+          <EmptyState className="py-6">
+            Runtime tools appear here when the engine's server is reachable.
+          </EmptyState>
+        )}
       </div>
 
-      <div className="border-t border-border p-2">
+      <div className="flex flex-col gap-1 border-t border-border p-2">
         <Button
           variant="ghost"
           size="sm"
           className="h-7 w-full justify-center gap-1.5 text-xs"
           onClick={onRestart}
         >
-          <RotateCw className="size-3.5" /> Restart server
+          <RotateCw className="size-3.5" /> Restart engine
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 w-full justify-center gap-1.5 text-xs text-muted-foreground"
+          onClick={() => void openLogs()}
+        >
+          <FileText className="size-3.5" /> Open debug log
         </Button>
       </div>
     </div>

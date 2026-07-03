@@ -10,12 +10,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import {
-  ArrowLeft,
-  Columns2,
-  Loader2,
-  TriangleAlert
-} from "lucide-react";
+import { ArrowLeft, Columns2 } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -23,11 +18,9 @@ import {
   useRef,
   useState,
 } from "react";
-import { useCancellableEffect } from "../../hooks/useCancellableEffect";
 import { usePrPipeline } from "../../hooks/usePrPipeline";
 import { useWorkspaceData } from "../../hooks/useWorkspaceData";
-import { restartServer, setAutofixMode, startServer } from "../../lib/api";
-import { OpencodeClient } from "../../lib/opencode";
+import { chatNewSession, setAutofixMode } from "../../lib/api";
 import type {
   AutofixMode,
   ContextInfo,
@@ -51,12 +44,9 @@ interface Props {
   reloadNonce?: number;
   /** When the sidebar is collapsed, pad the header to clear traffic lights. */
   sidebarCollapsed?: boolean;
+  /** Open Settings → Models (from the model picker's "Manage models"). */
+  onManageModels: () => void;
 }
-
-type State =
-  | { kind: "starting" }
-  | { kind: "ready"; baseUrl: string }
-  | { kind: "error"; message: string };
 
 /** Right-panel content mode. */
 type PanelMode =
@@ -65,21 +55,19 @@ type PanelMode =
   | { kind: "file"; file: string };
 
 /**
- * A session = one workspace's opencode server + streaming chat, with an
- * on-demand git changes panel that slides in from the right. Quick chats have
- * no git, so the changes panel and commit actions are hidden for them.
+ * A session = one workspace's chat (driven by the Rust ACP engine + SQLite
+ * cache), with an on-demand git changes panel that slides in from the right.
+ * Quick chats have no git, so the changes panel and commit actions are hidden.
  */
 export function SessionView({
   workspace,
   project,
   onRenamed,
-  reloadNonce = 0,
   sidebarCollapsed = false,
+  onManageModels,
 }: Props) {
   const { prefs, setPref } = usePreferences();
   const { diffStats, prByWorkspace } = useWorkspaceData();
-  const [state, setState] = useState<State>({ kind: "starting" });
-  const [attempt, setAttempt] = useState(0);
   const [pendingAction, setPendingAction] = useState<WorkspaceAction | null>(
     null,
   );
@@ -87,12 +75,11 @@ export function SessionView({
 
   const isQuickChat = workspace.kind === "QuickChat";
   const isWorktree = workspace.kind === "Worktree";
-  const baseUrl = state.kind === "ready" ? state.baseUrl : null;
   const changedCount = diffStats[workspace.id]?.files ?? 0;
 
   // PR pipeline state is pushed by the backend supervisor (which also runs the
   // autofix/superfix loop). This is a pure view over it.
-  const pipeline = usePrPipeline(workspace.id, isWorktree && state.kind === "ready");
+  const pipeline = usePrPipeline(workspace.id, isWorktree);
   // Autofix mode is backend-owned. The `workspace:pr` payload carries the
   // authoritative mode (persisted in the registry), so it survives workspace
   // switches; fall back to the registry snapshot on the workspace prop. Mirror
@@ -195,40 +182,10 @@ export function SessionView({
     [setPref],
   );
 
-  useCancellableEffect(
-    async (cancelled) => {
-      setState({ kind: "starting" });
-      try {
-        const info = await startServer(workspace.id);
-        const client = new OpencodeClient(info.base_url);
-        let ok = false;
-        for (let i = 0; i < 40 && !cancelled(); i++) {
-          try {
-            await client.health();
-            ok = true;
-            break;
-          } catch {
-            await new Promise((r) => setTimeout(r, 150));
-          }
-        }
-        if (cancelled()) return;
-        setState(
-          ok
-            ? { kind: "ready", baseUrl: info.base_url }
-            : { kind: "error", message: "server did not become healthy" },
-        );
-      } catch (e) {
-        if (!cancelled()) setState({ kind: "error", message: String(e) });
-      }
-    },
-    [workspace.id, attempt, reloadNonce],
-  );
-
+  // "Restart engine" from the tools panel: start a fresh ACP session (keeps all
+  // prior transcript entries; picks up config changes).
   const restart = useCallback(() => {
-    setState({ kind: "starting" });
-    void restartServer(workspace.id)
-      .then(() => setAttempt((a) => a + 1))
-      .catch(() => setAttempt((a) => a + 1));
+    void chatNewSession(workspace.id, "cleared");
   }, [workspace.id]);
 
   const pct =
@@ -298,7 +255,7 @@ export function SessionView({
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
-          {isWorktree && project && state.kind === "ready" && (
+          {isWorktree && project && (
             <CommitButton
               workspace={workspace}
               project={project}
@@ -334,7 +291,7 @@ export function SessionView({
       {/* Body: chat + sliding, resizable changes panel */}
       <div ref={bodyRef} className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
-          {isWorktree && state.kind === "ready" && (
+          {isWorktree && (
             <PrPipeline
               status={pipeline.status}
               phase={pipeline.phase}
@@ -343,35 +300,15 @@ export function SessionView({
               onModeChange={changeAutofixMode}
             />
           )}
-          {state.kind === "ready" ? (
-            <Chat
-              key={workspace.id}
-              workspace={workspace}
-              baseUrl={state.baseUrl}
-              onRenamed={onRenamed}
-              onContext={setContext}
-              pendingAction={pendingAction}
-              onActionConsumed={() => setPendingAction(null)}
-            />
-          ) : state.kind === "error" ? (
-            <div className="flex h-full flex-col items-center justify-center gap-3 text-sm">
-              <TriangleAlert className="size-6 text-destructive" />
-              <p className="text-muted-foreground">
-                Could not start the session.
-              </p>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setAttempt((a) => a + 1)}
-              >
-                Retry
-              </Button>
-            </div>
-          ) : (
-            <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" /> Starting session…
-            </div>
-          )}
+          <Chat
+            key={workspace.id}
+            workspace={workspace}
+            onRenamed={onRenamed}
+            onContext={setContext}
+            pendingAction={pendingAction}
+            onActionConsumed={() => setPendingAction(null)}
+            onManageModels={onManageModels}
+          />
         </div>
 
         {!isQuickChat && changesOpen && (
@@ -406,7 +343,6 @@ export function SessionView({
                   onViewFile={(path) =>
                     setPanelMode({ kind: "file", file: path })
                   }
-                  baseUrl={baseUrl}
                   onRestart={restart}
                 />
               ) : (

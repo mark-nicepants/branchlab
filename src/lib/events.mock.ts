@@ -6,9 +6,20 @@
 
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  AccountsPayload,
+  ChatBlockEvent,
+  ChatCommandsEvent,
+  ChatConfigEvent,
+  ChatContextEvent,
+  ChatEntryEvent,
+  ChatPermissionEvent,
+  ChatResetEvent,
+  ChatTurnEvent,
+  GitHubLoginEvent,
   GitPayload,
   NotifyPayload,
   PrPayload,
+  ReviewInboxPayload,
   SessionPayload,
   TodosPayload,
 } from "./types";
@@ -42,4 +53,39 @@ export function onWorkspaceTodos(cb: (p: TodosPayload) => void) {
 }
 export function onWorkspaceNotify(cb: (p: NotifyPayload) => void) {
   return on<NotifyPayload>("workspace:notify", cb);
+}
+
+export function onGitHubAccounts(cb: (p: AccountsPayload) => void) {
+  return on<AccountsPayload>("github:accounts", cb);
+}
+export function onReviewInbox(cb: (p: ReviewInboxPayload) => void) {
+  return on<ReviewInboxPayload>("github:review_inbox", cb);
+}
+export function onGitHubLogin(cb: (p: GitHubLoginEvent) => void) {
+  return on<GitHubLoginEvent>("github:login", cb);
+}
+
+export function onChatEntry(cb: (p: ChatEntryEvent) => void) {
+  return on<ChatEntryEvent>("chat:entry", cb);
+}
+export function onChatBlock(cb: (p: ChatBlockEvent) => void) {
+  return on<ChatBlockEvent>("chat:block", cb);
+}
+export function onChatTurn(cb: (p: ChatTurnEvent) => void) {
+  return on<ChatTurnEvent>("chat:turn", cb);
+}
+export function onChatPermission(cb: (p: ChatPermissionEvent) => void) {
+  return on<ChatPermissionEvent>("chat:permission", cb);
+}
+export function onChatConfig(cb: (p: ChatConfigEvent) => void) {
+  return on<ChatConfigEvent>("chat:config", cb);
+}
+export function onChatReset(cb: (p: ChatResetEvent) => void) {
+  return on<ChatResetEvent>("chat:reset", cb);
+}
+export function onChatContext(cb: (p: ChatContextEvent) => void) {
+  return on<ChatContextEvent>("chat:context", cb);
+}
+export function onChatCommands(cb: (p: ChatCommandsEvent) => void) {
+  return on<ChatCommandsEvent>("chat:commands", cb);
 }

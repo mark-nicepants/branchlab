@@ -1,3 +1,5 @@
+import { useGitHub } from "@/hooks/useGitHub";
+import { AccountAvatar } from "@/components/github/AccountAvatar";
 import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
@@ -100,6 +102,8 @@ interface Props {
   onNavigate: (v: NavView) => void;
   onToggleCollapse: () => void;
   onOpenSettings: () => void;
+  /** Open Settings on the Accounts tab (from the identity indicator). */
+  onOpenAccounts: () => void;
   projects: ProjectView[];
   quickChats: Workspace[];
   /** Highlighted only while the session view is active. */
@@ -109,6 +113,7 @@ interface Props {
   onRenamed: (workspaceId: string, name: string) => void;
   onQuickCreate: (project: ProjectView) => void;
   onNewFromBranch: (project: ProjectView) => void;
+  onNewFromPr: (project: ProjectView) => void;
   onNewQuickChat: () => void;
   onRemoveQuickChat: (id: string) => void;
   onAddProject: () => void;
@@ -124,6 +129,7 @@ export function SessionsSidebar({
   onNavigate,
   onToggleCollapse,
   onOpenSettings,
+  onOpenAccounts,
   projects,
   quickChats,
   selectedWorkspaceId,
@@ -132,6 +138,7 @@ export function SessionsSidebar({
   onRenamed,
   onQuickCreate,
   onNewFromBranch,
+  onNewFromPr,
   onNewQuickChat,
   onRemoveQuickChat,
   onAddProject,
@@ -390,9 +397,9 @@ export function SessionsSidebar({
                             >
                               <GitBranch className="size-4" /> From branch…
                             </DropdownMenuItem>
-                            <DropdownMenuItem disabled>
+                            <DropdownMenuItem onClick={() => onNewFromPr(p)}>
                               <GitPullRequest className="size-4" /> From pull
-                              request
+                              request…
                             </DropdownMenuItem>
                           </DropdownMenuSubContent>
                         </DropdownMenuSub>
@@ -437,14 +444,7 @@ export function SessionsSidebar({
 
       {/* Bottom account / settings bar */}
       <div className="flex items-center gap-2 border-t border-sidebar-border p-2">
-        <img
-          src="/app-icon.png"
-          alt="BranchLab"
-          className="size-6 shrink-0 rounded-full border border-sidebar-border"
-        />
-        <span className="min-w-0 flex-1 truncate text-sm font-medium">
-          BranchLab
-        </span>
+        <AccountIndicator onOpenAccounts={onOpenAccounts} />
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -722,6 +722,73 @@ function NewSessionMenu({
         </DropdownMenuItem>
         <DropdownMenuItem disabled>
           <MonitorSmartphone className="size-4" /> Resume remote session…
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/**
+ * The bottom-bar GitHub identity indicator. Zero accounts → a "Sign in" prompt;
+ * one → avatar + login; several → a stacked avatar with a dropdown to switch
+ * focus / manage. All routes open Settings → Accounts.
+ */
+function AccountIndicator({ onOpenAccounts }: { onOpenAccounts: () => void }) {
+  const { accounts } = useGitHub();
+
+  if (accounts.length === 0) {
+    return (
+      <button
+        onClick={onOpenAccounts}
+        className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-0.5 text-left text-sm text-muted-foreground transition-colors hover:text-sidebar-foreground"
+      >
+        <img
+          src="/app-icon.png"
+          alt="BranchLab"
+          className="size-6 shrink-0 rounded-full border border-sidebar-border"
+        />
+        <span className="min-w-0 flex-1 truncate">Sign in to GitHub</span>
+      </button>
+    );
+  }
+
+  if (accounts.length === 1) {
+    const a = accounts[0];
+    return (
+      <button
+        onClick={onOpenAccounts}
+        className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-sidebar-accent/60"
+      >
+        <AccountAvatar account={a} className="size-6" />
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">
+          @{a.login}
+        </span>
+      </button>
+    );
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-sidebar-accent/60">
+          <AccountAvatar account={accounts[0]} className="size-6" />
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">
+            {accounts.length} accounts
+          </span>
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" side="top" className="w-56">
+        <DropdownMenuLabel>GitHub accounts</DropdownMenuLabel>
+        {accounts.map((a) => (
+          <DropdownMenuItem key={a.id} onClick={onOpenAccounts}>
+            <AccountAvatar account={a} className="size-4" />
+            <span className="min-w-0 flex-1 truncate">@{a.login}</span>
+            <span className="text-xs text-muted-foreground">{a.host}</span>
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={onOpenAccounts}>
+          Manage accounts…
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

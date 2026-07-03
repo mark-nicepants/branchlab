@@ -1,8 +1,9 @@
-import { CalendarClock, CheckCircle2, Blocks } from "lucide-react";
+import { CalendarClock, Blocks } from "lucide-react";
 import type { ProjectView } from "../../lib/types";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Logo } from "../Logo";
 import { HomeComposer } from "./HomeComposer";
+import { ReviewInbox } from "./ReviewInbox";
 
 interface Props {
   projects: ProjectView[];
@@ -13,18 +14,23 @@ interface Props {
   ) => void;
   onQuickChat: (prompt: string) => void;
   onAddProject: () => void;
+  /** Check a review-inbox PR out into a fresh worktree. */
+  onCheckoutPr: (projectId: string, prNumber: number) => void;
+  /** Open Settings → Accounts (from the inbox connect CTA). */
+  onOpenAccounts: () => void;
 }
 
 /**
- * Landing screen: brand mark, the prompt composer that starts sessions, an
- * "Up next" feed (empty until a GitHub PR/issue backend exists) and cards for
- * extending the app.
+ * Landing screen: brand mark, the prompt composer that starts sessions, the
+ * review inbox ("Up next"), and cards for extending the app.
  */
 export function HomeScreen({
   projects,
   onCreateSession,
   onQuickChat,
   onAddProject,
+  onCheckoutPr,
+  onOpenAccounts,
 }: Props) {
   return (
     <div className="relative h-full">
@@ -43,21 +49,10 @@ export function HomeScreen({
             onAddProject={onAddProject}
           />
 
-          {/* Up next */}
-          <section className="mt-12">
-            <h2 className="text-sm font-semibold">Up next</h2>
-            <p className="mt-0.5 text-sm text-muted-foreground">
-              Recently updated pull requests and issues across your connected
-              repos.
-            </p>
-            <div className="mt-4 flex flex-col items-center justify-center gap-2 rounded-xl border border-border bg-card/40 py-12 text-center">
-              <CheckCircle2 className="size-6 text-muted-foreground/60" />
-              <p className="text-sm font-medium">You're all caught up</p>
-              <p className="max-w-xs text-xs text-muted-foreground">
-                The GitHub activity feed isn't connected yet.
-              </p>
-            </div>
-          </section>
+          <ReviewInbox
+            onCheckoutPr={onCheckoutPr}
+            onOpenAccounts={onOpenAccounts}
+          />
 
           {/* Extend your experience */}
           <section className="mt-10">

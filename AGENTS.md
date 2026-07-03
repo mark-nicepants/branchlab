@@ -48,6 +48,8 @@ npm run dev:browser           # run the frontend in a browser with mocked backen
 npm run build                 # tsc type-check + vite production build
 npm test                      # frontend unit tests (Vitest, run once)
 npm run test:watch            # Vitest watch mode
+npm run test:integration      # real-engine ACP e2e (spawns `opencode acp`; needs auth+network, costs tokens)
+npm run test:probe            # real-engine diagnostics (dumps config/updates opencode emits)
 cd src-tauri && cargo test --lib   # Rust unit tests
 cd src-tauri && cargo build        # backend build
 ```
@@ -92,20 +94,32 @@ before committing.
 - **`src/lib/events.ts` is the only place that calls `listen`.** It is the event
   analogue of `api.ts`: every backend→frontend event gets a typed wrapper here.
   Components/hooks subscribe through it, never with a raw event-name string.
-- **The backend owns OpenCode.** The supervisor (`supervisor.rs`) consumes each
-  server's SSE for coarse state and sends prompts via `src-tauri/src/opencode.rs`.
-  The one thing the frontend still does directly is keep a `src/lib/opencode.ts`
-  SSE connection to render the **active chat's live stream** — never to derive
-  app state or trigger actions. Tauri manages server lifecycle (`server.rs`).
+- **The backend owns OpenCode — the frontend never talks to it.** The chat
+  subsystem (`src-tauri/src/chat/`) drives OpenCode over **ACP** (`opencode acp`,
+  stdio JSON-RPC via the `agent-client-protocol` crate; see `src-tauri/src/engine/`),
+  normalizes it into a BranchLab domain model, caches it in **SQLite** (`chat.db`,
+  independent of the engine so the transcript survives restarts + session
+  compaction/clear), tracks a formal **turn** lifecycle, and pushes `chat:*`
+  deltas to the UI. The frontend renders those deltas via `useChat` — it holds no
+  connection to any engine. (This replaces the old frontend `opencode.ts` SSE.)
 - **Session-driving logic runs for all enabled workspaces regardless of what's
-  on screen.** Monitoring, PR autofix/superfix, and notification signals are
-  backend background work in `supervisor.rs`, not tied to a mounted component.
+  on screen.** The supervisor (`supervisor.rs`) subscribes to the chat manager's
+  `TurnEvent` broadcast for coarse session state (`workspace:session`/`notify`)
+  and runs the PR autofix/superfix loop, sending fix prompts *through the chat
+  manager* (origin=Autofix). No second engine connection.
 - **Backend modules** are single-purpose: `git.rs` (git CLI), `project.rs`
-  (registry), `server.rs` (process lifecycle), `opencode.rs` (OpenCode HTTP/SSE
-  client), `watcher.rs` (filesystem watch → `workspace:git` events),
-  `supervisor.rs` (SSE ingest + autofix loop → `workspace:{pr,session,todos,notify}`
-  events), `config.rs` (opencode config), `env.rs` (PATH probe), `commands.rs`
-  (the IPC surface). Put new logic in the matching module.
+  (registry), `chat/` (ACP chat layer: `model`/`store`/`assembler`/`manager`/
+  `events`/`commands`), `engine/acp.rs` (the `opencode acp` driver — the only
+  place ACP crate types appear), `watcher.rs` (filesystem watch → `workspace:git`),
+  `supervisor.rs` (turn-state ingest + PR autofix → `workspace:{pr,session,notify}`),
+  `server.rs` (legacy `opencode serve` lifecycle, no longer used by chat),
+  `config.rs` (opencode config), `env.rs` (PATH probe), `commands.rs` (IPC surface).
+  Put new logic in the matching module.
+- **Adding a chat command/event:** chat IPC lives in `chat/commands.rs` (wrapped
+  in `api.ts` as `chatOpen`/`chatSend`/…) and chat deltas in `chat/events.rs`
+  (wrapped in `events.ts` as `onChat*`). The `useChat` hook seeds once via
+  `chatOpen` then applies deltas — same "events aren't buffered" discipline as
+  `useWorkspaceData`/`resync`.
 
 ## Adding a Tauri command (the common task)
 
@@ -187,15 +201,51 @@ as a Tauri event:
   unsupported — the build/test commands will fail on it). If `node -v` shows 18,
   use a newer Node (e.g. Homebrew `node@22`) on your `PATH`.
 
-## OpenCode API notes
+## OpenCode / ACP notes
 
-- **Model reasoning effort** is exposed per-model in `/config/providers` as the
-  `variants` object. Its keys (e.g. `low`, `medium`, `high`, `xhigh`, `max` for
-  Claude Opus 4.8) are sent to `/session/{id}/prompt_async` as the top-level
-  `variant` string. Omitting `variant` uses the model's default. Not all models
-  expose variants; render the selector only when `variants.length > 0` and
-  reset the selection when switching to a model that doesn't support it.
-- **Agents / modes** are listed by `/agent` but are not the same as the model's
-  reasoning effort. Avoid confusing the two in the UI.
-- **Model keys** are stable as `${providerID}/${modelID}`; persist these, not
-  display names, when remembering per-workspace settings.
+- **Config options** are advertised over ACP as **Session Config Options**
+  (`session/new` response + `config_option_update`), surfaced as `ConfigOption`s
+  and driven by the `ConfigSelect` composer control; change one via
+  `chat_set_config(id, value)`. opencode currently advertises **`model` and `mode`
+  only** — **not reasoning effort** (`thoughtLevel`), and ACP has no per-prompt
+  channel to set it, so there is no reasoning selector today. `ConfigSelect`
+  renders whatever categories arrive, so a reasoning selector appears
+  automatically if a future opencode advertises `thoughtLevel`.
+- **Reasoning effort ("variant")** is a real opencode feature but is *not*
+  reachable over ACP (opencode rejects `set_config` for `variant`/`thoughtLevel`
+  as "unknown config option"; its TUI variant picker is session-local). A model's
+  *base* options in `opencode.json` DO apply to every turn incl. ACP, so BranchLab
+  ships a synthetic composer selector (`chat_set_reasoning` →
+  `config::set_model_reasoning`) that writes the level into the **global** opencode
+  config (Anthropic `thinking.budgetTokens` / OpenAI `reasoningEffort` / Gemini
+  `thinkingConfig.thinkingBudget`) — never the repo worktree — and restarts the
+  engine session to reload. Shown only for providers with a known mapping.
+- **AI titles:** opencode does not auto-title (no `SessionInfoUpdate`). The
+  `chat_generate_title` command generates one via a **throwaway session on the
+  workspace's existing ACP connection** (no extra process; its text is collected
+  in the engine, not shown as transcript); the frontend falls back to a
+  deterministic first-few-words title if it fails.
+- **Slash commands** arrive over ACP as `AvailableCommandsUpdate` (`chat:commands`);
+  opencode expands `/cmd args` server-side, so the composer sends raw text
+  (display === sent). **Todos**: opencode emits its plan as a `todowrite` **tool
+  call** (rendered inline) rather than an ACP `Plan`, so the manager also derives
+  the composer's TodoButton list from that tool's `todos` input (keyed on the
+  input shape, since ACP reports it as `ToolKind::Other`); the `Plan` path is kept
+  as a fallback. Both emit `workspace:todos`. **Permissions** come from
+  `session/request_permission` (`chat:permission` → `PermissionView`).
+- **Config changes** (model/mode) are applied optimistically in `ChatManager`
+  and re-emitted as `chat:config` — opencode does not reliably echo a
+  `config_option_update` for `set_config`, so relying on it left the selector
+  snapping back. The `model` option uses the searchable `ModelSelector`
+  (enabled-set stored in prefs `disabledModels`); other options use `ConfigSelect`.
+  Engine restarts and config changes append a **System** entry to the transcript.
+- **Backend debug log:** `src-tauri/src/logx.rs` writes a timestamped, tailable
+  logfile to `<app_data_dir>/branchlab.log` (truncated per launch, mirrored to
+  stderr). Use `crate::logf!("area", "…")` for off-screen paths (ACP updates,
+  set_config, MCP/LSP serve, PR poll). The `log_path` command + the tools panel's
+  "Open debug log" button expose it to the user.
+- **MCP/LSP status** is the one thing ACP doesn't expose. The `workspace_tools` /
+  `mcp_connect` / `mcp_disconnect` commands read it from a **supplemental,
+  on-demand `opencode serve`** (started by `ServerManager` when the ServerTools
+  panel opens, idle-reaped) via the thin `engine/opencode_http.rs` client — the
+  sole remaining OpenCode HTTP surface.

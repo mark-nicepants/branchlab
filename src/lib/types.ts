@@ -9,6 +9,8 @@ export interface ToolStatus {
 export interface EnvReport {
   opencode: ToolStatus;
   git: ToolStatus;
+  /** `gh` CLI — used for GitHub account authentication. */
+  gh: ToolStatus;
 }
 
 export type WorkspaceKind = "Base" | "Worktree" | "QuickChat";
@@ -31,6 +33,11 @@ export interface Workspace {
   autofix_mode?: AutofixMode;
   /** OpenCode session id the backend drives for this workspace, if registered. */
   session_id?: string | null;
+  /** Set when this workspace was checked out from an existing PR. */
+  pr_number?: number | null;
+  pr_url?: string | null;
+  /** A fork PR — read-only (no push/autofix back to the fork). */
+  pr_is_fork?: boolean;
 }
 
 /** PR pipeline autofix mode. Persisted per-workspace in the Rust registry. */
@@ -58,6 +65,8 @@ export interface Project {
   default_branch: string | null;
   default_model_key: string | null;
   prompts: ProjectPrompts;
+  /** GitHub account override (`"{host}/{login}"`); null = use auto-detected. */
+  account_id: string | null;
 }
 
 export interface ProjectPrompts {
@@ -73,6 +82,9 @@ export interface ProjectUpdate {
   default_branch?: string;
   default_model_key?: string | null;
   prompts?: ProjectPrompts;
+  /** GitHub account override: "" clears it (auto-detect), an id sets it,
+   *  undefined leaves it unchanged. */
+  account_id?: string;
 }
 
 // `ProjectView` flattens Project fields + a workspaces array.
@@ -180,6 +192,96 @@ export interface TodosPayload {
 export interface NotifyPayload {
   workspaceId: string;
   kind: "turn_done" | "awaiting_input" | "pipeline_failed" | "pipeline_green";
+}
+
+// ── GitHub accounts, identity & review inbox ──
+//    Backend: src-tauri/src/github/. Command returns + event payloads are
+//    camelCase. Auth is via `gh`; data is over the GitHub API.
+
+/** A connected GitHub account (public identity only — never the token). */
+export interface Account {
+  /** Stable id: "{host}/{login}", e.g. "github.com/octocat". */
+  id: string;
+  host: string;
+  login: string;
+  name: string | null;
+  avatarUrl: string | null;
+  orgs: string[];
+  /** True when authenticated and usable; false → re-auth needed. */
+  active: boolean;
+  /** Human-readable status detail when not active. */
+  status: string | null;
+}
+
+/** Coarse CI rollup — mirrors PrStatus.rollup buckets. */
+export type CiRollup = "success" | "failure" | "pending" | "none";
+
+/** Why a PR is in the review inbox. */
+export type ReviewReason = "review_requested" | "assigned";
+
+/** One PR in the cross-repo review inbox (PRs awaiting your review). */
+export interface ReviewInboxItem {
+  /** Stable id: "{repo}#{number}". */
+  id: string;
+  accountId: string;
+  repo: string;
+  number: number;
+  title: string;
+  url: string;
+  author: string;
+  authorAvatar: string | null;
+  reason: ReviewReason;
+  headRef: string;
+  rollup: CiRollup;
+  isDraft: boolean;
+  updatedAt: string;
+  /** projectId whose bound repo matches this PR (enables in-app checkout);
+   *  null → open-on-GitHub only. */
+  projectId: string | null;
+}
+
+/** One PR selectable in the "create workspace from PR" picker. */
+export interface PrSummary {
+  number: number;
+  title: string;
+  url: string;
+  author: string;
+  authorAvatar: string | null;
+  repo: string;
+  headRef: string;
+  baseRef: string;
+  isFork: boolean;
+  isDraft: boolean;
+  updatedAt: string;
+  /** "mine" | "review_requested" | "assigned" — the picker groups by this. */
+  bucket: "mine" | "review_requested" | "assigned";
+}
+
+/** `github:accounts` — the account list changed (add/remove/re-auth). */
+export interface AccountsPayload {
+  accounts: Account[];
+}
+
+/** `github:review_inbox` — full review-inbox snapshot (replace). */
+export interface ReviewInboxPayload {
+  items: ReviewInboxItem[];
+  refreshedAt: number | null;
+  error: string | null;
+}
+
+/** Phases of a backend-driven `gh auth login --web` flow. */
+export type LoginPhase =
+  "starting" | "awaitingCode" | "polling" | "success" | "failed";
+
+/** `github:login` — one step of a device-flow login. `awaitingCode` carries
+ *  `code`+`url`; `success` carries the new `account`; `failed` carries `error`. */
+export interface GitHubLoginEvent {
+  loginId: string;
+  phase: LoginPhase;
+  code: string | null;
+  url: string | null;
+  account: Account | null;
+  error: string | null;
 }
 
 export interface DiffStat {
@@ -439,4 +541,222 @@ export interface CommandOption {
   source?: string;
   /** Run as a sub-agent (delegated task) instead of in the user's current mode. */
   subtask?: boolean;
+}
+
+// ── New chat layer (Rust `chat` module) — mirrors src-tauri/src/chat/model.rs.
+//    The frontend renders these normalized DTOs; it never sees ACP/OpenCode
+//    shapes. Field names are camelCase (serde rename_all). ──
+
+export type TurnStatus =
+  | "queued"
+  | "streaming"
+  | "awaitingPermission"
+  | "completed"
+  | "cancelled"
+  | "failed";
+
+export type TurnOrigin = "user" | "slash" | "lifecycle" | "init" | "autofix";
+
+export type BlockToolStatus = "pending" | "running" | "completed" | "failed";
+
+/** A file edit surfaced by a tool call (ACP diff → rendered via DiffBody). */
+export interface DiffBlock {
+  path: string;
+  oldText: string | null;
+  newText: string;
+  /** A ready-made unified diff, when the engine provided one. */
+  unified: string | null;
+}
+
+/** A tool-call block. When `type: "tool"`, these fields are flattened in. */
+export interface ToolBlock {
+  blockId: string;
+  callId: string;
+  /** Normalized tool name (e.g. "edit", "bash", "read"). */
+  name: string;
+  title: string | null;
+  status: BlockToolStatus;
+  input: unknown;
+  output: string | null;
+  diff: DiffBlock | null;
+  error: string | null;
+}
+
+/** One rendered unit inside an assistant turn; discriminated by `type`. */
+export type Block =
+  | { type: "text"; blockId: string; text: string }
+  | { type: "reasoning"; blockId: string; text: string }
+  | ({ type: "tool" } & ToolBlock)
+  | {
+      type: "file";
+      blockId: string;
+      name: string | null;
+      mime: string | null;
+      url: string;
+    };
+
+/** Deterministic collapse summary for a finished assistant turn. */
+export interface CollapseSummary {
+  collapsed: boolean;
+  stepCount: number;
+  filesEdited: string[];
+  commandsRun: number;
+  headline: string;
+}
+
+export interface ChatAttachment {
+  mime: string;
+  url: string;
+  filename: string | null;
+}
+
+export interface UsageInfo {
+  input?: number | null;
+  output?: number | null;
+  reasoning?: number | null;
+  cacheRead?: number | null;
+  cacheWrite?: number | null;
+}
+
+export interface UserEntry {
+  type: "user";
+  seq: number;
+  entryId: string;
+  /** What the UI shows. */
+  display: string;
+  /** What was actually sent to the AI (differs for slash/lifecycle/init/skills). */
+  sent: string;
+  attachments: ChatAttachment[];
+  model: string | null;
+  variant: string | null;
+  agent: string | null;
+  origin: TurnOrigin;
+  createdAt: number;
+}
+
+export interface AssistantEntry {
+  type: "assistant";
+  seq: number;
+  entryId: string;
+  engineSessionId: number | null;
+  status: TurnStatus;
+  origin: TurnOrigin;
+  blocks: Block[];
+  summary: CollapseSummary;
+  usage: UsageInfo | null;
+  startedAt: number;
+  endedAt: number | null;
+}
+
+export interface SystemEntry {
+  type: "system";
+  seq: number;
+  entryId: string;
+  kind: "info" | "success" | "error";
+  text: string;
+  createdAt: number;
+}
+
+/** One item in a conversation timeline; discriminated by `type`. */
+export type Entry = UserEntry | AssistantEntry | SystemEntry;
+
+/** A selectable choice within a config option. */
+export interface ConfigChoice {
+  value: string;
+  name: string;
+  description: string | null;
+  group: string | null;
+}
+
+/** A session config option — drives the model / reasoning / mode selectors.
+ *  `category` is "model" | "thoughtLevel" | "mode" | "modelConfig" | other. */
+export interface ConfigOption {
+  id: string;
+  name: string;
+  description: string | null;
+  category: string | null;
+  currentValue: string;
+  choices: ConfigChoice[];
+}
+
+/** The initial payload loaded on mount / paged for history. */
+export interface ChatSnapshot {
+  conversationId: string;
+  entries: Entry[];
+  headSeq: number;
+  hasMore: boolean;
+  config: ConfigOption[];
+  /** Slash commands / skills advertised by the engine (seeded so a re-mount
+   *  keeps them even though the engine only pushes `chat:commands` once). */
+  commands: ChatCommand[];
+}
+
+// ── chat:* event payloads (see src/lib/events.ts) ──
+
+export interface ChatEntryEvent {
+  workspaceId: string;
+  entry: Entry;
+}
+
+export interface ChatBlockEvent {
+  workspaceId: string;
+  entrySeq: number;
+  block: Block;
+  /** Incremental text to append (streaming); null = replace the whole block. */
+  textAppend: string | null;
+}
+
+export interface ChatTurnEvent {
+  workspaceId: string;
+  entrySeq: number;
+  status: TurnStatus;
+  summary: CollapseSummary;
+  usage: UsageInfo | null;
+}
+
+export interface ChatPermChoice {
+  optionId: string;
+  name: string;
+  /** "allowOnce" | "allowAlways" | "rejectOnce" | "rejectAlways". */
+  kind: string;
+}
+
+export interface ChatPermissionEvent {
+  workspaceId: string;
+  entrySeq: number;
+  requestId: string;
+  toolCallId: string;
+  title: string | null;
+  options: ChatPermChoice[];
+}
+
+export interface ChatConfigEvent {
+  workspaceId: string;
+  options: ConfigOption[];
+}
+
+export interface ChatResetEvent {
+  workspaceId: string;
+}
+
+export interface ChatContextEvent {
+  workspaceId: string;
+  used: number;
+  max: number;
+}
+
+export interface ChatCommand {
+  name: string;
+  description: string;
+}
+
+export interface ChatCommandsEvent {
+  workspaceId: string;
+  commands: ChatCommand[];
+}
+
+/** Runtime MCP + LSP status for a workspace (supplemental `opencode serve`). */
+export interface ToolsStatus {
+  mcp: McpStatus[];
+  lsp: LspStatus[];
 }

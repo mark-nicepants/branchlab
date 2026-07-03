@@ -24,16 +24,28 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 which = "8"
-# HTTP/SSE client for talking to each workspace's OpenCode server from Rust.
-# default-features = false drops TLS (OpenCode servers are plain HTTP on
-# localhost), avoiding an openssl/native-tls build dependency.
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }
-reqwest-eventsource = "0.6"
-futures-util = "0.3"
-# Tauri bundles tokio; we depend on it directly only for `time::sleep` in the
-# supervisor's async reconcile loop.
-tokio = { version = "1", features = ["time"] }
+# Thin HTTP client for the *supplemental* `opencode serve` (active workspace
+# only) that backs the MCP/LSP status panel — ACP doesn't expose runtime tool
+# status. default-features = false drops TLS (localhost plain HTTP).
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+# Tauri bundles tokio; we use it for the supervisor's reconcile loop and the
+# chat engine's async command loop (channels, select, task spawning).
+tokio = { version = "1", features = ["time", "rt", "macros", "sync"] }
 # Filesystem watching for git state (replaces frontend diff-stat/changes polling).
 notify = "6"
 notify-debouncer-full = "0.3"
+# Persistent chat cache — a BranchLab-owned SQLite store, independent of the
+# OpenCode engine, so the transcript survives restarts and engine session
+# compaction/clear. `bundled` compiles SQLite in-tree (no system libsqlite dep).
+rusqlite = { version = "0.32", features = ["bundled"] }
+# Stable, sortable ids for conversations/entries/blocks (monotonic ULIDs).
+ulid = "1"
+# ACP (Agent Client Protocol) client — the engine transport. Pinned exactly:
+# the crate's high-level API is still evolving, and all its types are isolated
+# behind `crate::engine::acp` so an upgrade touches only that module.
+agent-client-protocol = "=1.0.1"
+# GitHub API client (REST + GraphQL). Brings its own rustls-backed reqwest, so
+# it can reach api.github.com / GHE — the bare `reqwest` above is localhost-only.
+# One `Octocrab` per account (token from `gh auth token`) gives clean isolation.
+octocrab = "0.53.1"
 

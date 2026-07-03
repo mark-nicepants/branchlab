@@ -1,64 +1,32 @@
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { ArrowUp, GitBranch, Square, X } from "lucide-react";
+import { ArrowUp, ChevronUp, GitBranch, Square, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useChat } from "../hooks/useChat";
 import { useClipboardImages } from "../hooks/useClipboardImages";
-import { useCommands } from "../hooks/useCommands";
 import { useTodos } from "../hooks/useTodos";
-import { registerSession } from "../lib/api";
-import { OpencodeClient } from "../lib/opencode";
-import {
-  expandTemplate,
-  filterCommands,
-  isSlashTyping,
-  parseSlash,
-} from "../lib/slash";
+import { chatGenerateTitle, renameWorkspace } from "../lib/api";
+import { filterCommands, isSlashTyping } from "../lib/slash";
 import type {
-  BusEvent,
+  CommandOption,
   ContextInfo,
-  ModelOption,
-  Part,
-  QuestionRequest,
-  QuestionV2Request,
-  Session,
+  UserEntry,
   Workspace,
 } from "../lib/types";
-import { ChatMessage, PartView, SystemMessageView } from "./ChatMessage";
+import {
+  AssistantTurnView,
+  ChatMessage,
+  SystemMessageView,
+} from "./ChatMessage";
+import { ConfigSelect } from "./ConfigSelect";
 import { ModelSelector } from "./ModelSelector";
-import { ModeSelector } from "./ModeSelector";
+import { PermissionView } from "./PermissionView";
 import { usePreferences } from "./PreferencesProvider";
-import { QuestionView } from "./QuestionView";
 import { SlashCommandPalette } from "./SlashCommandPalette";
-import { ThinkingSelector } from "./ThinkingSelector";
 import { TodoButton } from "./TodoButton";
 
-interface Props {
-  workspace: Workspace;
-  baseUrl: string;
-  onRenamed: (workspaceId: string, name: string) => void;
-  onContext: (info: ContextInfo | null) => void;
-  /** A workspace lifecycle action to run; Chat fires it then calls onActionConsumed. */
-  pendingAction: WorkspaceAction | null;
-  onActionConsumed: () => void;
-}
-
-interface UiMessage {
-  id: string;
-  role: "user" | "assistant";
-  partsById: Record<string, Part>;
-  order: string[];
-}
-
-/** Local-only system notice inserted for workspace lifecycle actions. */
-export interface SystemMessage {
-  id: string;
-  content: string;
-  kind: "info" | "success" | "error";
-  align?: "left" | "center";
-}
-
-/** Lifecycle actions exposed to the parent by Chat. */
+/** Lifecycle actions exposed to the parent by the composer (commit/merge/push/pr). */
 export type WorkspaceAction =
   | {
       kind: "commit";
@@ -88,497 +56,112 @@ export type OnFinishAction =
   | { kind: "remove_workspace"; message: string }
   | { kind: "try_again"; message: string };
 
-/** Completion notice shown once a lifecycle action's assistant turn goes idle. */
-function lifecycleCompletion(action: WorkspaceAction, failed: boolean): string {
-  if (failed) {
-    const what = {
-      commit: "commit the changes",
-      merge: "merge the workspace",
-      push: "push the branch",
-      pr: "open the pull request",
-    }[action.kind];
-    return `Couldn't ${what}. See the output above.`;
-  }
-  if (action.onFinish) return action.onFinish.message;
-  switch (action.kind) {
-    case "commit":
-      return "Committed changes.";
-    case "push":
-      return "Pushed branch to remote.";
-    default:
-      return "Done.";
-  }
+interface Props {
+  workspace: Workspace;
+  onContext: (info: ContextInfo | null) => void;
+  onRenamed: (workspaceId: string, name: string) => void;
+  /** A workspace lifecycle action to run; fired then onActionConsumed is called. */
+  pendingAction: WorkspaceAction | null;
+  onActionConsumed: () => void;
+  /** Open Settings → Models (from the model picker's "Manage models"). */
+  onManageModels: () => void;
+}
+
+/** Derive a deterministic workspace title from the first user prompt. */
+function deriveTitle(text: string): string {
+  const words = text.trim().split(/\s+/).slice(0, 6).join(" ");
+  return words.length > 48 ? `${words.slice(0, 48)}…` : words;
 }
 
 /**
- * Minimal streaming chat for one workspace. Renders assistant text as it
- * streams over SSE; tool/reasoning parts get a one-line summary. On the first
- * user prompt (for an unnamed workspace) it asks opencode's title agent for a
- * name and reports it back via onRenamed.
+ * The chat view for one workspace: a thin projection over the Rust chat layer
+ * (`useChat`). All transcript state, streaming, turn tracking, and persistence
+ * live in the backend; this renders entries + a composer and issues commands.
  */
 export function Chat({
   workspace,
-  baseUrl,
-  onRenamed,
   onContext,
+  onRenamed,
   pendingAction,
   onActionConsumed,
+  onManageModels,
 }: Props) {
   const { prefs, setWorkspacePref } = usePreferences();
-  const client = useMemo(() => new OpencodeClient(baseUrl), [baseUrl]);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Record<string, UiMessage>>({});
-  const [order, setOrder] = useState<string[]>([]);
-  const [models, setModels] = useState<ModelOption[]>([]);
-  const [model, setModel] = useState<ModelOption | null>(null);
-  // Selected reasoning effort for the active model; null = the model's default.
-  const [variant, setVariant] = useState<string | null>(null);
-  // Selected OpenCode agent/mode; only "build" or "plan".
-  const [agent, setAgent] = useState<string>("build");
-  const [input, setInput] = useState(
-    prefs.workspace[workspace.id]?.inputText ?? "",
-  );
-  const { todos, dismissIfAllCompleted } = useTodos(workspace.id);
+  const chat = useChat(workspace.id);
+  const { todos } = useTodos(workspace.id);
   const {
     attachments,
     handlePaste,
     remove: removeAttachment,
     clear: clearAttachments,
   } = useClipboardImages();
-  const { commands } = useCommands(client);
+
+  const [input, setInput] = useState(
+    prefs.workspace[workspace.id]?.inputText ?? "",
+  );
   const [slashIndex, setSlashIndex] = useState(0);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [systemMessages, setSystemMessages] = useState<SystemMessage[]>([]);
-  // The lifecycle action currently running (commit/merge/push/pr), kept in a
-  // ref so we can show a success/failure completion notice when the assistant
-  // goes idle — regardless of whether the action defined an onFinish message.
-  const runningActionRef = useRef<WorkspaceAction | null>(null);
-  const [pendingQuestions, setPendingQuestions] = useState<
-    Array<{ request: QuestionRequest | QuestionV2Request; version: 1 | 2 }>
-  >([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const nameRequested = useRef(false);
-  // Tracks whether we are currently running a lifecycle action so we can detect
-  // when the assistant goes idle and present the follow-up UI.
-  const lifecycleBusy = useRef(false);
-  // Set to true if any tool error or session error occurs during a lifecycle action.
-  const lifecycleError = useRef(false);
-  // Kept in a ref so the SSE handler (registered once) reads current models.
-  const modelsRef = useRef<ModelOption[]>([]);
-  modelsRef.current = models;
-  // Tracks whether the workspace init prompt has already been sent.
-  const initPromptSent = useRef(false);
-  // Mirror the composer draft so we can persist it on unmount without causing
-  // a context update (and therefore global re-render) on every keystroke.
-  const inputRef = useRef(input);
-  inputRef.current = input;
 
-  const clearSystemMessages = useCallback(() => setSystemMessages([]), []);
-
-  // Clear transient lifecycle notices when the workspace changes.
+  // Report context-window usage up to the session header.
   useEffect(() => {
-    clearSystemMessages();
-    setPendingQuestions([]);
-  }, [workspace.id, clearSystemMessages]);
+    onContext(chat.context);
+  }, [chat.context, onContext]);
 
-  async function submitQuestionAnswers(
-    entry: { request: QuestionRequest | QuestionV2Request; version: 1 | 2 },
-    answers: string[][],
-  ) {
-    setError(null);
-    try {
-      if (entry.version === 2) {
-        await client.replyQuestionV2(
-          entry.request.sessionID,
-          entry.request.id,
-          answers,
-        );
-      } else {
-        await client.replyQuestion(entry.request.id, answers);
-      }
-      setPendingQuestions((prev) =>
-        prev.filter((p) => p.request.id !== entry.request.id),
-      );
-    } catch (e) {
-      setError(String(e));
-    }
-  }
-
-  async function rejectQuestion(entry: {
-    request: QuestionRequest | QuestionV2Request;
-    version: 1 | 2;
-  }) {
-    try {
-      if (entry.version === 2) {
-        await client.rejectQuestionV2(
-          entry.request.sessionID,
-          entry.request.id,
-        );
-      } else {
-        await client.rejectQuestion(entry.request.id);
-      }
-      setPendingQuestions((prev) =>
-        prev.filter((p) => p.request.id !== entry.request.id),
-      );
-    } catch {
-      // Dismiss locally even if the server call fails; the user explicitly cancelled.
-      setPendingQuestions((prev) =>
-        prev.filter((p) => p.request.id !== entry.request.id),
-      );
-    }
-  }
-
-  // Lifecycle actions come from the workspace header buttons via the
-  // `pendingAction` prop. We send the technical prompt to the AI but surface
-  // a friendly message in the chat. The parent clears pendingAction once we
-  // call onActionConsumed.
-  useEffect(() => {
-    if (!pendingAction || !sessionId || busy) return;
-    const action = pendingAction;
-    setSystemMessages((prev) => [
-      ...prev,
-      {
-        id: crypto.randomUUID(),
-        content: action.display,
-        kind: "info",
-        align: "left",
-      },
-    ]);
-    lifecycleBusy.current = true;
-    lifecycleError.current = false;
-    setBusy(true);
-    setError(null);
-    runningActionRef.current = action;
-    void client.sendPrompt(
-      sessionId,
-      action.prompt,
-      model ?? undefined,
-      variant ?? undefined,
-      agent,
-      [],
-    );
-    onActionConsumed();
-  }, [
-    pendingAction,
-    sessionId,
-    busy,
-    client,
-    model,
-    variant,
-    agent,
-    onActionConsumed,
-  ]);
-
-  // When the assistant finishes a lifecycle action, replace the in-progress
-  // notice with a success/failure completion. Success/failure is inferred from
-  // tool/session errors that occurred while the action was running. Actions
-  // with an onFinish message use it on success; the rest get a sensible default.
-  useEffect(() => {
-    if (!lifecycleBusy.current || busy) return;
-    lifecycleBusy.current = false;
-    const action = runningActionRef.current;
-    runningActionRef.current = null;
-    if (!action) return;
-    const failed = lifecycleError.current;
-    setSystemMessages((prev) => [
-      ...prev,
-      {
-        id: crypto.randomUUID(),
-        content: lifecycleCompletion(action, failed),
-        kind: failed ? "error" : "success",
-        align: "left",
-      },
-    ]);
-  }, [busy]);
-
-  const upsertPart = useCallback((part: Part) => {
-    setMessages((prev) => {
-      const existing = prev[part.messageID] ?? {
-        id: part.messageID,
-        role: "assistant" as const,
-        partsById: {},
-        order: [],
-      };
-      const order = existing.order.includes(part.id)
-        ? existing.order
-        : [...existing.order, part.id];
-      return {
-        ...prev,
-        [part.messageID]: {
-          ...existing,
-          partsById: { ...existing.partsById, [part.id]: part },
-          order,
-        },
-      };
-    });
-    setOrder((prev) =>
-      prev.includes(part.messageID) ? prev : [...prev, part.messageID],
-    );
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const sessions = await client.listSessions();
-        const savedId = prefs.workspace[workspace.id]?.sessionId;
-
-        // Reuse the persisted session only if the server still knows about it.
-        let session: Session | undefined = savedId
-          ? sessions.find((s) => s.id === savedId)
-          : undefined;
-
-        // Otherwise create a fresh session for this workspace so worktrees never
-        // inherit the base repo's chat history. opencode stores sessions in a
-        // directory-keyed DB, and git worktrees share the same underlying git
-        // directory, so `sessions[0]` on a new worktree would otherwise be the
-        // base workspace's session.
-        if (!session) {
-          session = await client.createSession();
-          setWorkspacePref(workspace.id, { sessionId: session.id });
-        }
-
-        if (cancelled) return;
-        setSessionId(session.id);
-        // Tell the backend which session drives this workspace, so the
-        // supervisor's autofix loop uses the same session the user sees.
-        void registerSession(workspace.id, session.id);
-
-        const { models, defaultKey } = await client.listModels();
-        if (cancelled) return;
-        setModels(models);
-
-        // Restore the workspace's last selected model, or fall back to default.
-        const savedKey = prefs.workspace[workspace.id]?.modelKey;
-        const initialModel =
-          models.find((m) => m.key === savedKey) ??
-          models.find((m) => m.key === defaultKey) ??
-          models[0] ??
-          null;
-        setModel(initialModel);
-
-        // Restore the workspace's last reasoning-effort variant, if the model
-        // still supports it.
-        const savedVariant = prefs.workspace[workspace.id]?.variant;
-        if (savedVariant && initialModel?.variants.includes(savedVariant)) {
-          setVariant(savedVariant);
-        }
-
-        const history = await client.listMessages(session.id);
-        if (cancelled) return;
-        // Build the message map directly from history so each message keeps
-        // its correct role. (Going through upsertPart would default every
-        // history message to "assistant".)
-        const loadedMessages: Record<string, UiMessage> = {};
-        const loadedOrder: string[] = [];
-        for (const m of history) {
-          const ui: UiMessage = {
-            id: m.info.id,
-            role: m.info.role,
-            partsById: {},
-            order: [],
-          };
-          for (const p of m.parts) {
-            const part = { ...p, messageID: m.info.id };
-            ui.partsById[p.id] = part;
-            ui.order.push(p.id);
-          }
-          loadedMessages[m.info.id] = ui;
-          loadedOrder.push(m.info.id);
-        }
-        setMessages(loadedMessages);
-        setOrder(loadedOrder);
-
-        // Pick up any questions that were asked while we were disconnected.
-        const [v1Questions, v2Questions] = await Promise.all([
-          client.listQuestions(),
-          client.listQuestionsV2(session.id),
-        ]);
-        if (cancelled) return;
-        const combined = [
-          ...v1Questions.map((q) => ({ request: q, version: 1 as const })),
-          ...v2Questions.map((q) => ({ request: q, version: 2 as const })),
-        ];
-        setPendingQuestions((prev) => {
-          const existing = new Set(prev.map((p) => p.request.id));
-          return [
-            ...prev,
-            ...combined.filter((c) => !existing.has(c.request.id)),
-          ];
-        });
-
-        // Send the workspace init prompt once after the session is ready.
-        const initPrompt = workspace.init_prompt?.trim();
-        if (initPrompt && !initPromptSent.current && !cancelled) {
-          initPromptSent.current = true;
-          setSystemMessages((prev) => [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              content: "Initializing workspace…",
-              kind: "info",
-              align: "left",
-            },
-          ]);
-          lifecycleBusy.current = true;
-          lifecycleError.current = false;
-          setBusy(true);
-          void client.sendPrompt(
-            session.id,
-            initPrompt,
-            model ?? undefined,
-            variant ?? undefined,
-            agent,
-            [],
-          );
-        }
-
-        // Report context usage from the most recent assistant message in history.
-        const lastAssistant = [...history]
-          .reverse()
-          .find((m) => m.info.role === "assistant");
-        const tk = lastAssistant?.info.tokens;
-        if (tk) {
-          const used = (tk.input ?? 0) + (tk.cache?.read ?? 0);
-          const max = models.find((m) => m.key === savedKey)?.contextLimit ?? 0;
-          if (used > 0 && max > 0) onContext({ used, max });
-        }
-      } catch (e) {
-        if (!cancelled) setError(String(e));
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [client, upsertPart]);
-
-  useEffect(() => {
-    if (!sessionId) return;
-    const unsub = client.subscribeEvents((e: BusEvent) => {
-      const props = e.properties as Record<string, any>;
-      if (props?.sessionID && props.sessionID !== sessionId) return;
-      switch (e.type) {
-        case "message.part.updated": {
-          const part = props.part as Part;
-          if (
-            lifecycleBusy.current &&
-            part.type === "tool" &&
-            part.state?.status === "error"
-          ) {
-            lifecycleError.current = true;
-          }
-          upsertPart(part);
-          break;
-        }
-        case "message.updated":
-          if (props.info) {
-            const info = props.info;
-            setMessages((prev) => ({
-              ...prev,
-              [info.id]: prev[info.id] ?? {
-                id: info.id,
-                role: info.role,
-                partsById: {},
-                order: [],
-              },
-            }));
-            setOrder((prev) =>
-              prev.includes(info.id) ? prev : [...prev, info.id],
-            );
-
-            // Report context-window usage from the assistant message's tokens.
-            const tk = info.tokens;
-            if (info.role === "assistant" && tk) {
-              const used = (tk.input ?? 0) + (tk.cache?.read ?? 0);
-              const max =
-                modelsRef.current.find((m) => m.modelID === info.modelID)
-                  ?.contextLimit ?? 0;
-              if (used > 0 && max > 0) onContext({ used, max });
-            }
-          }
-          break;
-        case "session.idle":
-          setBusy(false);
-          break;
-        case "session.error":
-          if (lifecycleBusy.current) {
-            lifecycleError.current = true;
-          }
-          setError(JSON.stringify(props.error));
-          setBusy(false);
-          break;
-        case "question.asked":
-        case "question.v2.asked": {
-          const q = props as QuestionRequest | QuestionV2Request;
-          if (!q.id || !q.sessionID || !Array.isArray(q.questions)) break;
-          setPendingQuestions((prev) => {
-            if (prev.some((p) => p.request.id === q.id)) return prev;
-            return [
-              ...prev,
-              { request: q, version: e.type === "question.v2.asked" ? 2 : 1 },
-            ];
-          });
-          break;
-        }
-        case "question.replied":
-        case "question.v2.replied":
-        case "question.rejected":
-        case "question.v2.rejected": {
-          const requestID = (props.requestID as string) ?? (props.id as string);
-          if (!requestID) break;
-          setPendingQuestions((prev) =>
-            prev.filter((p) => p.request.id !== requestID),
-          );
-          break;
-        }
-      }
-    });
-    return unsub;
-  }, [client, sessionId, upsertPart]);
-
+  // Auto-scroll to the newest content.
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [messages, order]);
+  }, [chat.entries]);
+
+  // Run a lifecycle action: show `display`, send `prompt`.
+  useEffect(() => {
+    if (!pendingAction || chat.busy) return;
+    const action = pendingAction;
+    void chat.send({
+      display: action.display,
+      sent: action.prompt,
+      origin: "lifecycle",
+    });
+    onActionConsumed();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingAction, chat.busy]);
+
+  const saveDraft = useCallback(
+    (text: string) => setWorkspacePref(workspace.id, { inputText: text }),
+    [workspace.id, setWorkspacePref],
+  );
+
+  // Slash palette: OpenCode expands `/cmd args` server-side over ACP, so we send
+  // the raw text (display === sent) — no client-side template expansion.
+  const paletteCommands: CommandOption[] = useMemo(
+    () =>
+      chat.commands.map((c) => ({
+        name: c.name,
+        description: c.description,
+        template: "",
+      })),
+    [chat.commands],
+  );
+  const showPalette = isSlashTyping(input);
+  const slashMatches = showPalette
+    ? filterCommands(paletteCommands, input.slice(1))
+    : [];
+  useEffect(() => setSlashIndex(0), [showPalette, slashMatches.length]);
+
+  // Reasoning effort is NOT set here: opencode doesn't expose it over ACP, so it
+  // is configured per-model in the opencode config (Settings → Models explains
+  // how). We render whatever config options ACP advertises (model, mode, and
+  // reasoning too if opencode ever adds it) — see the config map below.
 
   async function send() {
     const text = input.trim();
-    if ((!text && attachments.length === 0) || !sessionId || busy) return;
+    if ((!text && attachments.length === 0) || chat.busy) return;
+    const origin = text.startsWith("/") ? "slash" : "user";
 
-    // Slash-command path: expand the template, then send like a normal prompt.
-    // Unknown commands surface an inline error and don't send.
-    let finalText = text;
-    let effectiveAgent = agent;
-    if (text.startsWith("/")) {
-      const parsed = parseSlash(text);
-      const match = parsed
-        ? commands.find((c) => c.name === parsed.name)
-        : null;
-      if (!match) {
-        setError(`Unknown command: ${parsed?.name ? `/${parsed.name}` : text}`);
-        return;
-      }
-      finalText = expandTemplate(match.template, parsed!.args);
-      if (match.subtask) effectiveAgent = "general";
-    }
-
-    const sentAttachments = attachments;
-    setInput("");
-    clearAttachments();
-    saveDraft("");
-    setError(null);
-    setBusy(true);
-
-    // If every current todo is completed, treat the new turn as a fresh start
-    // and hide them from the badge until the assistant produces a new list.
-    dismissIfAllCompleted();
-
-    // Note: we do not optimistically render the user message. OpenCode echoes
-    // it back via SSE as a real message, so adding it here would duplicate it.
-
-    // First interaction → let the title agent name the workspace (background).
-    // Skip for slash commands: their expanded templates are meta-prompts, not
-    // representative of the user's actual intent.
+    // First interaction → title the workspace: ask the engine for an AI title
+    // (throwaway session on the same connection), falling back to a deterministic
+    // one if that fails or is empty.
     if (
       !workspace.name &&
       text &&
@@ -586,74 +169,37 @@ export function Chat({
       !nameRequested.current
     ) {
       nameRequested.current = true;
-      void client
-        .generateName(text, model ?? undefined)
-        .then((name) => name && onRenamed(workspace.id, name));
+      void chatGenerateTitle(workspace.id, text)
+        .then((t) => t?.trim() || deriveTitle(text))
+        .catch(() => deriveTitle(text))
+        .then((title) => {
+          if (title)
+            return renameWorkspace(workspace.id, title).then(() =>
+              onRenamed(workspace.id, title),
+            );
+        });
     }
 
+    const sentAttachments = attachments.map((a) => ({
+      mime: a.mime,
+      url: a.url,
+      filename: a.filename,
+    }));
+    setInput("");
+    clearAttachments();
+    saveDraft("");
+    setError(null);
     try {
-      await client.sendPrompt(
-        sessionId,
-        finalText,
-        model ?? undefined,
-        variant ?? undefined,
-        effectiveAgent,
-        sentAttachments.map((a) => ({
-          mime: a.mime,
-          url: a.url,
-          filename: a.filename,
-        })),
-      );
+      await chat.send({
+        display: text,
+        sent: text,
+        attachments: sentAttachments,
+        origin,
+      });
     } catch (e) {
       setError(String(e));
-      setBusy(false);
     }
   }
-
-  async function abort() {
-    if (sessionId) await client.abort(sessionId).catch(() => {});
-    setBusy(false);
-  }
-
-  // Switch model and drop the reasoning effort if the new model can't honor it.
-  // Persist the selected model per workspace.
-  function changeModel(next: ModelOption) {
-    setModel(next);
-    const keep = variant && next.variants.includes(variant) ? variant : null;
-    setVariant(keep);
-    setWorkspacePref(workspace.id, { modelKey: next.key, variant: keep ?? "" });
-  }
-
-  // Persist the selected reasoning-effort variant per workspace.
-  function changeVariant(next: string | null) {
-    setVariant(next);
-    setWorkspacePref(workspace.id, { variant: next ?? "" });
-  }
-
-  // Preserve the composer draft per workspace, but don't update the global
-  // preference context on every keystroke — that re-renders the whole UI.
-  // Save only when the prompt is sent or the component unmounts.
-  const saveDraft = useCallback(
-    (text: string) => {
-      setWorkspacePref(workspace.id, { inputText: text });
-    },
-    [workspace.id, setWorkspacePref],
-  );
-
-  useEffect(() => {
-    return () => saveDraft(inputRef.current);
-  }, [saveDraft]);
-
-  // Slash autocomplete: visible while the user is still typing the command
-  // name (before the first whitespace). Filtered by case-insensitive prefix.
-  const showPalette = isSlashTyping(input);
-  const slashMatches = showPalette
-    ? filterCommands(commands, input.slice(1))
-    : [];
-  // Reset selection when the filtered list changes so the highlight stays valid.
-  useEffect(() => {
-    setSlashIndex(0);
-  }, [showPalette, slashMatches.length]);
 
   function pickCommand(name: string) {
     setInput(`/${name} `);
@@ -663,6 +209,14 @@ export function Chat({
     <div className="flex min-h-0 flex-1 flex-col">
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <div className="mx-auto flex max-w-4xl flex-col gap-0 p-5">
+          {chat.hasMore && (
+            <button
+              onClick={chat.loadMore}
+              className="mx-auto mb-2 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+            >
+              <ChevronUp className="size-3.5" /> Load earlier messages
+            </button>
+          )}
           {workspace.base_branch && workspace.branch && (
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <GitBranch className="size-3.5" />
@@ -678,37 +232,35 @@ export function Chat({
               </span>
             </div>
           )}
-          {order.length === 0 && (
+          {!chat.loading && chat.entries.length === 0 && (
             <p className="py-10 text-center text-sm text-muted-foreground">
               Send a prompt to begin.
             </p>
           )}
-          {order.map((mid) => {
-            const m = messages[mid];
-            if (!m) return null;
-            return (
-              <ChatMessage key={mid} role={m.role}>
-                {m.order.map((pid) => (
-                  <PartView key={pid} part={m.partsById[pid]} />
-                ))}
-              </ChatMessage>
-            );
+          {chat.entries.map((entry) => {
+            if (entry.type === "user")
+              return <UserEntryView key={entry.entryId} entry={entry} />;
+            if (entry.type === "assistant")
+              return (
+                <ChatMessage key={entry.entryId} role="assistant">
+                  <AssistantTurnView entry={entry} />
+                </ChatMessage>
+              );
+            return <SystemMessageView key={entry.entryId} entry={entry} />;
           })}
-          {pendingQuestions.map((entry) => (
-            <div key={entry.request.id} className="flex w-full justify-start">
+          {chat.permissions.map((p) => (
+            <div key={p.requestId} className="flex w-full justify-start">
               <div className="w-full max-w-[85%]">
-                <QuestionView
-                  questions={entry.request.questions}
-                  onSubmit={(answers) =>
-                    void submitQuestionAnswers(entry, answers)
+                <PermissionView
+                  title={p.title}
+                  options={p.options}
+                  onSelect={(optionId) =>
+                    chat.answerPermission(p.requestId, optionId)
                   }
-                  onCancel={() => void rejectQuestion(entry)}
+                  onCancel={() => chat.answerPermission(p.requestId, null)}
                 />
               </div>
             </div>
-          ))}
-          {systemMessages.map((sys) => (
-            <SystemMessageView key={sys.id} message={sys} />
           ))}
           {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
@@ -728,29 +280,34 @@ export function Chat({
         <div
           className={cn(
             "relative mx-auto max-w-4xl rounded-lg border border-border bg-card transition-colors duration-150 focus-within:border-ring",
-            busy && "composer-loading",
+            chat.busy && "composer-loading",
           )}
         >
-          <div className="flex items-center gap-1.5 px-2 py-1.5">
-            <ModeSelector value={agent} onChange={setAgent} />
-            <ModelSelector
-              models={models}
-              value={model}
-              onChange={changeModel}
-            />
-            <ThinkingSelector
-              variants={model?.variants ?? []}
-              value={variant}
-              onChange={changeVariant}
-            />
+          <div className="flex flex-wrap items-center gap-1.5 px-2 py-1.5">
+            {chat.config.map((o) =>
+              o.category === "model" ? (
+                <ModelSelector
+                  key={o.id}
+                  option={o}
+                  onChange={(v) => chat.setConfig(o.id, v)}
+                  onManageModels={onManageModels}
+                />
+              ) : (
+                <ConfigSelect
+                  key={o.id}
+                  option={o}
+                  onChange={(v) => chat.setConfig(o.id, v)}
+                />
+              ),
+            )}
             <div className="ml-auto flex items-center gap-1">
               <TodoButton todos={todos} />
-              {busy ? (
+              {chat.busy ? (
                 <Button
                   variant="destructive"
                   size="icon"
                   className="size-7"
-                  onClick={() => void abort()}
+                  onClick={chat.abort}
                 >
                   <Square className="size-3.5" />
                 </Button>
@@ -760,9 +317,7 @@ export function Chat({
                   variant="ghost"
                   className="size-7 text-primary hover:bg-primary/10 disabled:text-muted-foreground/40 disabled:hover:bg-transparent"
                   onClick={() => void send()}
-                  disabled={
-                    (!input.trim() && attachments.length === 0) || !sessionId
-                  }
+                  disabled={!input.trim() && attachments.length === 0}
                 >
                   <ArrowUp className="size-4" />
                 </Button>
@@ -793,9 +348,9 @@ export function Chat({
           <Textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onBlur={() => saveDraft(input)}
             onPaste={handlePaste}
             onKeyDown={(e) => {
-              // ⌘/Ctrl+Enter always sends, regardless of palette state.
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
                 void send();
@@ -825,5 +380,28 @@ export function Chat({
         </div>
       </div>
     </div>
+  );
+}
+
+/** A user message bubble — shows `display` text and any image attachments. */
+function UserEntryView({ entry }: { entry: UserEntry }) {
+  return (
+    <ChatMessage role="user">
+      {entry.display && (
+        <div className="whitespace-pre-wrap">{entry.display}</div>
+      )}
+      {entry.attachments.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {entry.attachments.map((a, i) => (
+            <img
+              key={i}
+              src={a.url}
+              alt={a.filename ?? "image"}
+              className="size-16 rounded border border-border object-cover"
+            />
+          ))}
+        </div>
+      )}
+    </ChatMessage>
   );
 }

@@ -10,6 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:integration": "cd src-tauri && cargo test --lib _roundtrip -- --ignored --nocapture",
+    "test:probe": "cd src-tauri && cargo test --lib probe_ -- --ignored --nocapture",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "tauri": "tauri",

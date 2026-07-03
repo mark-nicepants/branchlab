@@ -1,4 +1,10 @@
-import { CheckCircle2, GitPullRequest, Loader2, Sparkles, TriangleAlert } from "lucide-react";
+import {
+  CheckCircle2,
+  GitPullRequest,
+  Loader2,
+  Sparkles,
+  TriangleAlert,
+} from "lucide-react";
 import {
   HoverCard,
   HoverCardContent,
@@ -35,7 +41,13 @@ const MODES: { value: AutofixMode; label: string; hint: string }[] = [
 ];
 
 /** Colored icon for a coarse check bucket. */
-function BucketIcon({ bucket, className }: { bucket: string; className?: string }) {
+function BucketIcon({
+  bucket,
+  className,
+}: {
+  bucket: string;
+  className?: string;
+}) {
   if (bucket === "success")
     return (
       <CheckCircle2
@@ -56,11 +68,15 @@ function summary(status: PrStatus): string {
     case "success":
       return `All ${total} checks passing`;
     case "pending": {
-      const running = status.checks.filter((c) => c.bucket === "pending").length;
+      const running = status.checks.filter(
+        (c) => c.bucket === "pending",
+      ).length;
       return `${running} of ${total} checks running`;
     }
     case "failure": {
-      const failing = status.checks.filter((c) => c.bucket === "failure").length;
+      const failing = status.checks.filter(
+        (c) => c.bucket === "failure",
+      ).length;
       return `${failing} of ${total} checks failing`;
     }
     default:
@@ -73,7 +89,11 @@ function phaseNote(
   phase: PipelinePhase,
   mode: AutofixMode,
   attempts: number,
-): { text: string; spin?: boolean; tone: "muted" | "warning" | "destructive" } | null {
+): {
+  text: string;
+  spin?: boolean;
+  tone: "muted" | "warning" | "destructive";
+} | null {
   switch (phase) {
     case "fixing":
       return {
@@ -102,7 +122,13 @@ function phaseNote(
  * exists for the branch. The autofix/superfix loop itself lives in
  * usePrPipeline; this component is purely presentational.
  */
-export function PrPipeline({ status, phase, attempts, mode, onModeChange }: Props) {
+export function PrPipeline({
+  status,
+  phase,
+  attempts,
+  mode,
+  onModeChange,
+}: Props) {
   if (!status) return null;
 
   const note = phaseNote(phase, mode, attempts);
@@ -122,7 +148,9 @@ export function PrPipeline({ status, phase, attempts, mode, onModeChange }: Prop
       <HoverCard openDelay={120}>
         <HoverCardTrigger className="flex min-w-0 items-center gap-1.5">
           <BucketIcon bucket={status.rollup} className="size-3.5 shrink-0" />
-          <span className="truncate text-muted-foreground">{summary(status)}</span>
+          <span className="truncate text-muted-foreground">
+            {summary(status)}
+          </span>
         </HoverCardTrigger>
         <HoverCardContent side="bottom" align="start" className="w-72 p-2">
           <div className="mb-1 px-1 text-[11px] font-medium text-muted-foreground">
@@ -130,7 +158,9 @@ export function PrPipeline({ status, phase, attempts, mode, onModeChange }: Prop
           </div>
           <ul className="flex flex-col">
             {status.checks.length === 0 && (
-              <li className="px-1 py-1 text-muted-foreground">No checks reported.</li>
+              <li className="px-1 py-1 text-muted-foreground">
+                No checks reported.
+              </li>
             )}
             {status.checks.map((c: PrCheck) => (
               <li key={`${c.workflow ?? ""}/${c.name}`}>

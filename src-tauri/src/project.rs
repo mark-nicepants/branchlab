@@ -32,6 +32,10 @@ pub struct Project {
     pub default_branch: Option<String>,
     pub default_model_key: Option<String>,
     pub prompts: ProjectPrompts,
+    /// Manual GitHub account override (`"{host}/{login}"`). `None` = auto-detect
+    /// the account from this repo's `origin` remote (host + owner/org).
+    #[serde(default)]
+    pub account_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +104,22 @@ pub struct Workspace {
     /// session; the supervisor falls back to creating one for background work.
     #[serde(default)]
     pub session_id: Option<String>,
+    /// PR number, when this workspace was checked out from an existing PR
+    /// (the PR→workspace flow). `None` for workspaces that predate a PR.
+    #[serde(default)]
+    pub pr_number: Option<i64>,
+    #[serde(default)]
+    pub pr_url: Option<String>,
+    /// Head repo `"owner/repo"` — differs from the base repo for fork PRs.
+    #[serde(default)]
+    pub pr_head_repo: Option<String>,
+    /// A fork PR: read-only here (no push/autofix back to the fork).
+    #[serde(default)]
+    pub pr_is_fork: bool,
+    /// Last polled CI snapshot, persisted so the UI seeds instantly on restart
+    /// (previously this lived only in the supervisor's in-memory runtime).
+    #[serde(default)]
+    pub pr: Option<git::PrStatus>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -108,6 +128,9 @@ pub struct ProjectUpdate {
     pub default_branch: Option<String>,
     pub default_model_key: Option<String>,
     pub prompts: Option<ProjectPrompts>,
+    /// GitHub account override. `Some("")` clears it (back to auto-detect),
+    /// `Some(id)` sets it, `None` leaves it unchanged.
+    pub account_id: Option<String>,
 }
 
 /// A project together with its workspaces — the shape the UI consumes.
@@ -122,6 +145,17 @@ pub struct ProjectView {
 struct RegistryData {
     projects: Vec<Project>,
     workspaces: Vec<Workspace>,
+}
+
+/// The PR facts needed to check a PR out into a workspace (from the GitHub API).
+pub struct PrWorkspaceMeta {
+    pub number: i64,
+    pub title: String,
+    pub base_ref: String,
+    pub url: String,
+    /// Head repo `"owner/repo"` (differs from base for fork PRs).
+    pub head_repo: Option<String>,
+    pub is_fork: bool,
 }
 
 fn default_branch_for(repo: &Path) -> Option<String> {
@@ -192,6 +226,7 @@ impl Registry {
                 default_branch: default_branch_for(&canonical),
                 default_model_key: None,
                 prompts: ProjectPrompts::default(),
+                account_id: None,
             });
             data.workspaces.push(Workspace {
                 id: format!("{id}-base"),
@@ -204,6 +239,11 @@ impl Registry {
                 init_prompt: None,
                 autofix_mode: AutofixMode::default(),
                 session_id: None,
+                pr_number: None,
+                pr_url: None,
+                pr_head_repo: None,
+                pr_is_fork: false,
+                pr: None,
             });
             self.persist(&data);
         }
@@ -228,18 +268,27 @@ impl Registry {
         self.persist(&data);
     }
 
-    /// Record the OpenCode session id the backend should drive for a workspace.
-    pub fn set_session_id(&self, workspace_id: &str, session_id: &str) {
+    /// Persist the last polled PR snapshot for a workspace so the UI can seed
+    /// its pipeline instantly on restart (before the first live poll). Only
+    /// writes when the value actually changed, to avoid churning the file.
+    pub fn set_workspace_pr(&self, workspace_id: &str, pr: Option<git::PrStatus>) {
         let mut data = self.data.lock().unwrap();
         if let Some(w) = data.workspaces.iter_mut().find(|w| w.id == workspace_id) {
-            w.session_id = Some(session_id.to_string());
+            if w.pr != pr {
+                w.pr = pr;
+                self.persist(&data);
+            }
         }
-        self.persist(&data);
     }
 
-    /// The session id recorded for a workspace, if any.
-    pub fn session_id(&self, workspace_id: &str) -> Option<String> {
-        self.data.lock().unwrap().workspaces.iter().find(|w| w.id == workspace_id)?.session_id.clone()
+    /// A project's repo root path.
+    pub fn project_root(&self, project_id: &str) -> Option<String> {
+        self.repo_root(project_id)
+    }
+
+    /// The GitHub account override configured for a project (`None` = auto-detect).
+    pub fn project_account_id(&self, project_id: &str) -> Option<String> {
+        self.data.lock().unwrap().projects.iter().find(|p| p.id == project_id).and_then(|p| p.account_id.clone())
     }
 
     /// Update a project's metadata and prompts.
@@ -257,6 +306,9 @@ impl Registry {
         }
         if let Some(prompts) = update.prompts {
             project.prompts = prompts;
+        }
+        if let Some(account_id) = update.account_id {
+            project.account_id = if account_id.is_empty() { None } else { Some(account_id) };
         }
         self.persist(&data);
         Ok(self.view_of(&data, project_id))
@@ -356,6 +408,51 @@ impl Registry {
             init_prompt,
             autofix_mode: AutofixMode::default(),
             session_id: None,
+            pr_number: None,
+            pr_url: None,
+            pr_head_repo: None,
+            pr_is_fork: false,
+            pr: None,
+        };
+        let mut data = self.data.lock().unwrap();
+        data.workspaces.push(ws.clone());
+        self.persist(&data);
+        Ok(ws)
+    }
+
+    /// Check a PR out into a fresh worktree and register it. Fetches the PR head
+    /// (works for same-repo and fork PRs) into a `pr-<n>` branch, adds a worktree
+    /// on it, and records the PR metadata. Reuses the same worktree machinery as
+    /// `create_workspace`.
+    pub fn create_workspace_from_pr(&self, project_id: &str, meta: PrWorkspaceMeta) -> Result<Workspace, String> {
+        let root = self.repo_root(project_id).ok_or("unknown project")?;
+        let branch = format!("pr-{}", meta.number);
+        let sanitized = git::sanitize_branch(&branch);
+        let dir = self.worktrees_dir.join(project_id).join(&sanitized);
+        let path = dir.to_string_lossy().into_owned();
+        if dir.exists() {
+            return Err(format!("a workspace for PR #{} already exists", meta.number));
+        }
+
+        git::fetch_pr(&root, "origin", meta.number, &branch)?;
+        git::add_worktree_existing(&root, &path, &branch)?;
+
+        let ws = Workspace {
+            id: id_for(&path),
+            project_id: project_id.to_string(),
+            kind: WorkspaceKind::Worktree,
+            path,
+            branch: Some(branch),
+            name: Some(meta.title),
+            base_branch: Some(meta.base_ref),
+            init_prompt: None,
+            autofix_mode: AutofixMode::default(),
+            session_id: None,
+            pr_number: Some(meta.number),
+            pr_url: Some(meta.url),
+            pr_head_repo: meta.head_repo,
+            pr_is_fork: meta.is_fork,
+            pr: None,
         };
         let mut data = self.data.lock().unwrap();
         data.workspaces.push(ws.clone());

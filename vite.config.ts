@@ -12,21 +12,13 @@ export default defineConfig(async ({ mode }) => ({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
-      // In browser debug mode, swap the Tauri IPC API and the OpenCode HTTP
-      // client for their mock implementations. Aliases match the exact import
-      // specifier, so every relative form used across the tree is listed.
+      // In browser debug mode, swap the Tauri IPC API and events for their mock
+      // implementations. Aliases match the exact import specifier, so every
+      // relative form used across the tree is listed.
       ...(mode === "browser" && {
         "./lib/api": path.resolve(__dirname, "./src/lib/api.mock.ts"),
         "../lib/api": path.resolve(__dirname, "./src/lib/api.mock.ts"),
         "../../lib/api": path.resolve(__dirname, "./src/lib/api.mock.ts"),
-        "../lib/opencode": path.resolve(
-          __dirname,
-          "./src/lib/opencode.mock.ts",
-        ),
-        "../../lib/opencode": path.resolve(
-          __dirname,
-          "./src/lib/opencode.mock.ts",
-        ),
         "./lib/events": path.resolve(__dirname, "./src/lib/events.mock.ts"),
         "../lib/events": path.resolve(__dirname, "./src/lib/events.mock.ts"),
         "../../lib/events": path.resolve(

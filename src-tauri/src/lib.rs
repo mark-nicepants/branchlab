@@ -1,14 +1,18 @@
+mod chat;
 mod commands;
 mod config;
+mod engine;
 mod env;
 mod git;
-mod opencode;
+mod github;
+mod logx;
 mod path;
 mod project;
 mod server;
 mod supervisor;
 mod watcher;
 
+use github::GithubManager;
 use project::Registry;
 use server::ServerManager;
 use supervisor::Supervisor;
@@ -28,6 +32,10 @@ pub fn run() {
         .setup(|app| {
             // Persist the project registry and store worktrees under app data.
             let dir = app.path().app_data_dir()?;
+            std::fs::create_dir_all(&dir).ok();
+            // Backend debug log — a single tailable file under app data. Init
+            // early so every subsystem below logs to it. Truncated per launch.
+            logx::init(dir.join("branchlab.log"));
             let registry = Registry::load(dir.join("registry.json"), dir.join("worktrees"));
             app.manage(registry);
 
@@ -52,7 +60,21 @@ pub fn run() {
                 }
             });
 
-            let supervisor = Supervisor::new(app.handle().clone(), servers);
+            // GitHub subsystem: accounts (auth via isolated `gh`), identity,
+            // API-backed PR status, and the cross-repo review inbox. Owns the
+            // account store + per-account API clients and pushes github:* events.
+            let github_dir = dir.join("github");
+            std::fs::create_dir_all(&github_dir).ok();
+            let github = GithubManager::load(app.handle().clone(), github_dir);
+            github.spawn();
+            app.manage(github.clone());
+
+            // Chat subsystem: owns the ACP engine per workspace, the persistent
+            // SQLite transcript cache, the turn lifecycle, and the chat:* deltas.
+            let chat = chat::manager::ChatManager::new(app.handle().clone(), dir.join("chat.db"))?;
+            app.manage(chat.clone());
+
+            let supervisor = Supervisor::new(app.handle().clone(), chat, github);
             supervisor.spawn();
             app.manage(supervisor);
 
@@ -75,6 +97,8 @@ pub fn run() {
             commands::remove_project,
             commands::list_branches,
             commands::create_workspace,
+            commands::create_workspace_from_pr,
+            commands::list_project_prs,
             commands::update_project,
             commands::get_project_prompts,
             commands::remove_workspace,
@@ -91,12 +115,15 @@ pub fn run() {
             commands::push_workspace,
             commands::create_workspace_pr,
             commands::workspace_pr_status,
-            commands::register_session,
+            commands::github_detect_account,
             commands::set_active_workspace,
             commands::set_autofix_mode,
             commands::resync,
             commands::request_git_refresh,
             commands::list_remotes,
+            commands::workspace_tools,
+            commands::mcp_connect,
+            commands::mcp_disconnect,
             commands::start_server,
             commands::stop_server,
             commands::server_status,
@@ -105,8 +132,29 @@ pub fn run() {
             commands::restart_server,
             commands::read_config,
             commands::write_config,
+            commands::get_default_model,
+            commands::set_default_model,
+            commands::get_model_reasoning,
+            commands::set_model_reasoning,
             commands::open_devtools,
             commands::open_external,
+            commands::log_path,
+            github::commands::github_list_accounts,
+            github::commands::github_remove_account,
+            github::commands::github_start_device_login,
+            github::commands::github_cancel_login,
+            github::commands::github_add_account_with_token,
+            github::commands::github_review_inbox,
+            github::commands::github_refresh_review_inbox,
+            github::commands::resync_github,
+            chat::commands::chat_open,
+            chat::commands::chat_history,
+            chat::commands::chat_send,
+            chat::commands::chat_generate_title,
+            chat::commands::chat_abort,
+            chat::commands::chat_set_config,
+            chat::commands::chat_answer_permission,
+            chat::commands::chat_new_session,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

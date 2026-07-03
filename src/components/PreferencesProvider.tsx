@@ -23,6 +23,10 @@ export interface Preferences {
   editorApp: string;
   /** Model keys (`providerID/modelID`) hidden from the model selector. */
   disabledModels: string[];
+  /** Cached model catalog (value/name/group), captured from the last session's
+   *  ACP-advertised model option so the global Models settings page can render
+   *  the list without an open session. */
+  modelCatalog: { value: string; name: string; group?: string | null }[];
   /** Per-workspace preferences (model, variant, session, draft input, …). */
   workspace: Record<string, WorkspacePreferences>;
   /** Collapsed state of project stats panels in the sidebar (project id → boolean). */
@@ -39,6 +43,7 @@ const DEFAULTS: Preferences = {
   terminalApp: "Terminal",
   editorApp: "Visual Studio Code",
   disabledModels: [],
+  modelCatalog: [],
   workspace: {},
   collapsedProjects: {},
   chatDensity: "loose",

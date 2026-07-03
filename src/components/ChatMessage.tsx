@@ -4,7 +4,12 @@ import { ChevronRight, X } from "lucide-react";
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { LspDiagnostic, Part, ToolState } from "../lib/types";
+import type {
+  AssistantEntry,
+  Block,
+  SystemEntry,
+  ToolBlock,
+} from "../lib/types";
 import { UnifiedDiff } from "./DiffBody";
 import { usePreferences, type ChatDensity } from "./PreferencesProvider";
 
@@ -13,16 +18,7 @@ interface MessageProps {
   children: React.ReactNode;
 }
 
-// Single source of truth for vertical spacing. Each density supplies:
-//  - assistant: padding for an assistant bubble (between-message spacing).
-//  - user: margin + padding for a user bubble (between-message spacing).
-//  - gap: spacing between parts WITHIN one message (text/reasoning/tool/file).
-// Everything else flows from prefs.chatDensity; individual parts must not add
-// their own vertical margins or they'll double up.
-// `gap` is set to 2× the bubble's py so spacing between parts inside one
-// message matches the spacing between two adjacent messages (where each side
-// contributes its py). That keeps the rhythm visually uniform regardless of
-// whether the next item is in the same message or a new one.
+// Single source of truth for vertical spacing (see original design notes).
 const DENSITY: Record<
   ChatDensity,
   { assistant: string; user: string; gap: string }
@@ -61,16 +57,7 @@ export function ChatMessage({ role, children }: MessageProps) {
   );
 }
 
-export interface SystemMessageProps {
-  message: {
-    id: string;
-    content: string;
-    kind: "info" | "success" | "error";
-    align?: "left" | "center";
-  };
-}
-
-export function SystemMessageView({ message }: SystemMessageProps) {
+export function SystemMessageView({ entry }: { entry: SystemEntry }) {
   const { prefs } = usePreferences();
   const d = DENSITY[prefs.chatDensity] ?? DENSITY.loose;
   const kindStyles = {
@@ -78,69 +65,125 @@ export function SystemMessageView({ message }: SystemMessageProps) {
     success: "border-additions/30 bg-additions/10 text-additions",
     error: "border-destructive/30 bg-destructive/10 text-destructive",
   };
-  const justify = message.align === "left" ? "justify-start" : "justify-center";
   return (
-    <div className={cn("flex w-full", justify, d.assistant)}>
+    <div className={cn("flex w-full justify-start", d.assistant)}>
       <div
         className={cn(
           "max-w-[85%] rounded-lg border px-3 py-1.5 text-xs",
-          kindStyles[message.kind],
+          kindStyles[entry.kind],
         )}
       >
-        {message.content}
+        {entry.text}
       </div>
     </div>
   );
 }
 
-interface PartViewProps {
-  part: Part;
+/** Whether a block is "work" (grouped under the collapse header) vs. prose. */
+export function isWorkBlock(b: Block): boolean {
+  return b.type === "reasoning" || b.type === "tool";
 }
 
-export function PartView({ part }: PartViewProps) {
-  if (part.type === "text") {
+/**
+ * Renders one assistant turn. While the turn is live (not collapsed), all blocks
+ * show inline. Once the turn finishes, its reasoning/tool "work" collapses under
+ * a deterministic headline ("Edited 3 files · ran 5 commands"); the final text
+ * stays visible below.
+ */
+export function AssistantTurnView({ entry }: { entry: AssistantEntry }) {
+  const collapsed = entry.summary.collapsed;
+  const work = entry.blocks.filter(isWorkBlock);
+  const prose = entry.blocks.filter((b) => !isWorkBlock(b));
+  const failed = entry.status === "failed";
+
+  return (
+    <>
+      {collapsed && work.length > 0 ? (
+        <CollapsedWork headline={entry.summary.headline} blocks={work} />
+      ) : (
+        work.map((b) => <BlockView key={b.blockId} block={b} />)
+      )}
+      {prose.map((b) => (
+        <BlockView key={b.blockId} block={b} />
+      ))}
+      {failed && (
+        <div className="text-xs text-destructive">
+          The turn ended with an error.
+        </div>
+      )}
+    </>
+  );
+}
+
+function CollapsedWork({
+  headline,
+  blocks,
+}: {
+  headline: string;
+  blocks: Block[];
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="w-full min-w-0 text-sm">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="group flex w-full items-center gap-2 py-0.5 text-left text-muted-foreground hover:text-foreground"
+      >
+        <ChevronRight
+          className={cn(
+            "size-4 shrink-0 transition-transform",
+            open && "rotate-90",
+          )}
+        />
+        <span className="min-w-0 truncate">{headline}</span>
+      </button>
+      {open && (
+        <div className="mt-1 flex flex-col gap-2 border-l border-border pl-3">
+          {blocks.map((b) => (
+            <BlockView key={b.blockId} block={b} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function BlockView({ block }: { block: Block }) {
+  if (block.type === "text") {
     return (
       <div className="markdown-content">
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           components={{
-            // Links must never navigate the app webview away. The global link
-            // catcher (see lib/links) intercepts the click; target/rel here
-            // keep the markup correct and give the right hover affordance.
             a: ({ node: _node, ...props }) => (
               <a {...props} target="_blank" rel="noreferrer" />
             ),
           }}
         >
-          {part.text || ""}
+          {block.text || ""}
         </ReactMarkdown>
       </div>
     );
   }
-  if (part.type === "reasoning") {
+  if (block.type === "reasoning") {
     return (
-      <div className="text-xs italic text-muted-foreground">{part.text}</div>
+      <div className="text-xs italic text-muted-foreground">{block.text}</div>
     );
   }
-  if (part.type === "tool") {
-    return <ToolCallPart part={part} />;
+  if (block.type === "tool") {
+    return <ToolCallView block={block} />;
   }
-  if (part.type === "file") {
-    return (
-      <FilePart filename={part.filename} url={part.url} mime={part.mime} />
-    );
-  }
-  return null;
+  return <FilePart name={block.name} url={block.url} mime={block.mime} />;
 }
 
 function FilePart({
-  filename,
+  name,
   url,
   mime,
 }: {
-  filename?: string;
-  url?: string;
-  mime?: string;
+  name: string | null;
+  url: string;
+  mime: string | null;
 }) {
   const isImage = mime?.startsWith("image/") ?? false;
   const [open, setOpen] = useState(false);
@@ -154,12 +197,8 @@ function FilePart({
         >
           <img
             src={url}
-            alt={filename ?? "image"}
+            alt={name ?? "image"}
             className="h-full w-full object-cover"
-            onClick={(e) => {
-              e.stopPropagation();
-              setOpen(true);
-            }}
           />
         </button>
         {open && (
@@ -169,13 +208,13 @@ function FilePart({
           >
             <button
               onClick={() => setOpen(false)}
-              className="absolute top-4 right-4 rounded-full bg-background/80 p-2 text-foreground hover:bg-background"
+              className="absolute right-4 top-4 rounded-full bg-background/80 p-2 text-foreground hover:bg-background"
             >
               <X className="size-5" />
             </button>
             <img
               src={url}
-              alt={filename ?? "image"}
+              alt={name ?? "image"}
               className="max-h-full max-w-full rounded-md object-contain"
             />
           </div>
@@ -183,16 +222,14 @@ function FilePart({
       </>
     );
   }
-
   return (
     <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
       <span>📎</span>
-      <span className="truncate">{filename ?? url ?? "file"}</span>
+      <span className="truncate">{name ?? url ?? "file"}</span>
     </div>
   );
 }
 
-/** Maps raw tool names to human-readable labels. */
 const TOOL_LABELS: Record<string, string> = {
   edit: "Edit file",
   write: "Write file",
@@ -202,37 +239,32 @@ const TOOL_LABELS: Record<string, string> = {
   todo: "Update todos",
 };
 
-function toolLabel(tool?: string): string {
-  if (!tool) return "Tool";
-  return TOOL_LABELS[tool] ?? tool.charAt(0).toUpperCase() + tool.slice(1);
+function toolLabel(name: string): string {
+  return TOOL_LABELS[name] ?? name.charAt(0).toUpperCase() + name.slice(1);
 }
 
-function isPending(state?: ToolState): boolean {
-  return state?.status === "pending" || state?.status === "running";
+function asString(v: unknown): string | undefined {
+  return typeof v === "string" ? v : undefined;
 }
 
-function toolDescription(part: Part): string {
-  const input = part.state?.input;
-  if (part.tool === "read" || part.tool === "edit" || part.tool === "write") {
+function toolDescription(block: ToolBlock): string {
+  const input = (block.input ?? {}) as Record<string, unknown>;
+  if (
+    block.name === "read" ||
+    block.name === "edit" ||
+    block.name === "write"
+  ) {
     const file =
-      typeof input?.file === "string"
-        ? input.file
-        : typeof input?.path === "string"
-          ? input.path
-          : undefined;
+      asString(input.file) ?? asString(input.path) ?? asString(input.filePath);
     if (file) return file;
   }
-  if (part.tool === "bash") {
-    return part.state?.title ?? "";
-  }
-  return part.state?.title ?? "";
+  return block.title ?? "";
 }
 
-function ToolCallPart({ part }: { part: Part }) {
+function ToolCallView({ block }: { block: ToolBlock }) {
   const [open, setOpen] = useState(false);
-  const pending = isPending(part.state);
-  const label = toolLabel(part.tool);
-  const description = toolDescription(part);
+  const pending = block.status === "pending" || block.status === "running";
+  const description = toolDescription(block);
 
   return (
     <div className="w-full min-w-0 text-sm">
@@ -241,18 +273,22 @@ function ToolCallPart({ part }: { part: Part }) {
         className="group flex w-full flex-col items-start py-0.5 text-left"
       >
         <div className="flex w-full items-center gap-2">
-          <span className="shrink-0 font-medium">{label}</span>
+          <span className="shrink-0 font-medium">{toolLabel(block.name)}</span>
           {description && (
             <span className="min-w-0 truncate text-muted-foreground">
               {description}
             </span>
           )}
+          {block.status === "failed" && (
+            <span className="shrink-0 text-destructive">failed</span>
+          )}
           <span className="ml-auto shrink-0 opacity-0 transition-opacity group-hover:opacity-100">
-            {open ? (
-              <ChevronRight className="size-4 rotate-90 text-muted-foreground" />
-            ) : (
-              <ChevronRight className="size-4 text-muted-foreground" />
-            )}
+            <ChevronRight
+              className={cn(
+                "size-4 text-muted-foreground",
+                open && "rotate-90",
+              )}
+            />
           </span>
         </div>
         {pending && (
@@ -261,105 +297,31 @@ function ToolCallPart({ part }: { part: Part }) {
           </div>
         )}
       </button>
-      {open && <ToolCallDetails part={part} />}
+      {open && <ToolCallDetails block={block} />}
     </div>
   );
 }
 
-function asString(v: unknown): string | undefined {
-  return typeof v === "string" ? v : undefined;
-}
-
-/** Flatten the per-file diagnostics map into a list with relative paths. */
-function collectDiagnostics(
-  metadata: Record<string, unknown> | undefined,
-): { path: string; diag: LspDiagnostic }[] {
-  const raw = metadata?.diagnostics;
-  if (!raw || typeof raw !== "object") return [];
-  const out: { path: string; diag: LspDiagnostic }[] = [];
-  for (const [path, list] of Object.entries(raw as Record<string, unknown>)) {
-    if (!Array.isArray(list)) continue;
-    for (const d of list as LspDiagnostic[]) out.push({ path, diag: d });
-  }
-  return out;
-}
-
-function severityLabel(s?: number): string {
-  if (s === 1) return "ERROR";
-  if (s === 2) return "WARN";
-  if (s === 3) return "INFO";
-  if (s === 4) return "HINT";
-  return "MSG";
-}
-
-function ToolCallDetails({ part }: { part: Part }) {
-  const state = part.state;
-  if (!state) return null;
-  const input = state.input ?? {};
-  const metadata = state.metadata;
-
-  // Edit/Write: render the real unified diff from metadata (preferred), or a
-  // synthesized one as a fallback. LSP diagnostics from the post-edit run
-  // appear in a red callout below the diff when present.
-  if (part.tool === "edit" || part.tool === "write") {
-    const realDiff = asString(metadata?.diff);
-    let diff = realDiff;
-    if (!diff) {
-      if (part.tool === "edit") {
-        const oldStr =
-          asString(input.oldString) ??
-          asString((input as Record<string, unknown>).old_string) ??
-          "";
-        const newStr =
-          asString(input.newString) ??
-          asString((input as Record<string, unknown>).new_string) ??
-          "";
-        if (oldStr || newStr) diff = synthesizeDiff(oldStr, newStr);
-      } else {
-        const content = asString(input.content) ?? "";
-        if (content) diff = synthesizeDiff("", content);
-      }
-    }
-    const diagnostics = collectDiagnostics(metadata);
-
+function ToolCallDetails({ block }: { block: ToolBlock }) {
+  // Edit/Write: render the diff (ACP-provided unified, or synthesized from
+  // old/new text), then any error.
+  if ((block.name === "edit" || block.name === "write") && block.diff) {
+    const { diff } = block;
+    const unified =
+      diff.unified ?? synthesizeDiff(diff.oldText ?? "", diff.newText);
     return (
       <div className="overflow-hidden rounded border border-border">
-        {diff && <UnifiedDiff hunks={parseDiff(diff)} />}
-        {diagnostics.length > 0 && (
-          <div className="border-t border-destructive/30 bg-destructive/10 p-2 font-mono text-[12px] leading-[1.5]">
-            {diagnostics.map(({ path, diag }, i) => (
-              <div key={i} className="text-destructive">
-                <span className="font-semibold">
-                  {severityLabel(diag.severity)}
-                </span>{" "}
-                <span>
-                  [{diag.range.start.line + 1}:{diag.range.start.character + 1}]
-                </span>{" "}
-                <span className="text-foreground/90">{diag.message}</span>
-                {diag.source && (
-                  <span className="ml-1 text-muted-foreground">
-                    ({diag.source})
-                  </span>
-                )}
-                {diagnostics.some((d) => d.path !== path) && (
-                  <div className="pl-4 text-[11px] text-muted-foreground">
-                    {path}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-        {state.error && (
+        <UnifiedDiff hunks={parseDiff(unified)} />
+        {block.error && (
           <div className="border-t border-border p-2 text-destructive">
-            {state.error}
+            {block.error}
           </div>
         )}
       </div>
     );
   }
 
-  // Generic fallback: input key/value table, then output / error / status.
+  const input = (block.input ?? {}) as Record<string, unknown>;
   const inputEntries = Object.entries(input);
   return (
     <div className="rounded border border-border px-3 py-2">
@@ -377,19 +339,17 @@ function ToolCallDetails({ part }: { part: Part }) {
           ))}
         </div>
       )}
-      {state.output && (
+      {block.output && (
         <pre className="mt-2 max-h-48 select-text overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-[11px]">
-          {state.output}
+          {block.output}
         </pre>
       )}
-      {state.error && (
-        <div className="mt-2 text-destructive">{state.error}</div>
+      {block.error && (
+        <div className="mt-2 text-destructive">{block.error}</div>
       )}
-      {state.status && (
-        <div className="mt-2 text-[11px] text-muted-foreground">
-          Status: {state.status}
-        </div>
-      )}
+      <div className="mt-2 text-[11px] text-muted-foreground">
+        Status: {block.status}
+      </div>
     </div>
   );
 }

@@ -7,14 +7,10 @@
 // harness) and the in-page navigation is cancelled.
 
 /** Protocols we treat as "external" and hand off to the OS / a new tab. */
-const EXTERNAL_PROTOCOLS = new Set([
-  "http:",
-  "https:",
-  "mailto:",
-  "tel:",
-]);
+const EXTERNAL_PROTOCOLS = new Set(["http:", "https:", "mailto:", "tel:"]);
 
-const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+const isTauri =
+  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 /**
  * Open a URL outside the current webview. Uses the Tauri opener (OS default

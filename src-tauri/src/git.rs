@@ -8,7 +8,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Summary of uncommitted changes in a working directory, for the fleet view.
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
@@ -76,6 +76,25 @@ pub fn add_worktree(repo: &str, worktree_path: &str, branch: &str, base: &str) -
         return Err(format!("worktree path already exists: {worktree_path}"));
     }
     git(repo, &["worktree", "add", "-b", branch, worktree_path, base])?;
+    Ok(())
+}
+
+/// Fetch a PR's head commit into a new local branch. Works for both same-repo
+/// and fork PRs: GitHub exposes every PR's head under the base repo's
+/// `refs/pull/<n>/head`, so we always fetch from `remote` (typically origin).
+pub fn fetch_pr(repo: &str, remote: &str, number: i64, local_branch: &str) -> Result<(), String> {
+    let refspec = format!("pull/{number}/head:{local_branch}");
+    git(repo, &["fetch", "--force", remote, &refspec])?;
+    Ok(())
+}
+
+/// Add a worktree checked out to an *existing* local branch (unlike
+/// `add_worktree`, which creates a new branch off a base).
+pub fn add_worktree_existing(repo: &str, worktree_path: &str, branch: &str) -> Result<(), String> {
+    if Path::new(worktree_path).exists() {
+        return Err(format!("worktree path already exists: {worktree_path}"));
+    }
+    git(repo, &["worktree", "add", worktree_path, branch])?;
     Ok(())
 }
 
@@ -369,30 +388,9 @@ pub fn push_branch(repo: &str, remote: &str, branch: &str) -> Result<String, Str
     Ok(out)
 }
 
-/// Create a pull request with `gh pr create`. Fills title/body and returns the PR URL.
-/// Requires the `gh` CLI and a logged-in user.
-pub fn create_pull_request(repo: &str, branch: &str, base: &str, title: &str, body: &str) -> Result<String, String> {
-    let out = git(repo, &["-c", "credential.helper=", "-c", "core.quotepath=false", "push", "-u", "origin", branch])?;
-    if !out.contains("error") && !out.contains("fatal:") {
-        // Continue even if push output is empty/ok.
-    }
-
-    let pr_out = Command::new("gh")
-        .args(["pr", "create", "--base", base, "--head", branch, "--title", title, "--body", body])
-        .current_dir(repo)
-        .output()
-        .map_err(|e| format!("gh failed to run: {e}"))?;
-    if !pr_out.status.success() {
-        let err = String::from_utf8_lossy(&pr_out.stderr).trim().to_string();
-        return Err(format!("gh pr create failed: {err}"));
-    }
-    let url = String::from_utf8_lossy(&pr_out.stdout).trim().to_string();
-    Ok(url)
-}
-
 /// One CI check on a pull request, normalized from `gh`'s `statusCheckRollup`
 /// (which mixes GitHub Actions `CheckRun`s and legacy `StatusContext`s).
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PrCheck {
     pub name: String,
     /// Coarse bucket the UI colors by: "success" | "failure" | "pending" | "skipped".
@@ -407,7 +405,7 @@ pub struct PrCheck {
 
 /// A pull request's CI state for one branch. `None` from `pr_status` means no
 /// PR exists for the branch (as opposed to a `gh`/auth error, which is `Err`).
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PrStatus {
     pub number: i64,
     pub url: String,
@@ -432,61 +430,36 @@ fn check_bucket(raw: &str) -> &'static str {
     }
 }
 
-/// Fetch the pull-request CI status for `branch` via the `gh` CLI. Returns
-/// `Ok(None)` when the branch has no PR, `Err` when `gh` is missing/unauthed or
-/// the repo has no GitHub remote.
-pub fn pr_status(repo: &str, branch: &str) -> Result<Option<PrStatus>, String> {
-    let out = Command::new("gh")
-        .args(["pr", "view", branch, "--json", "number,url,state,headRefName,headRefOid,statusCheckRollup"])
-        .current_dir(repo)
-        .output()
-        .map_err(|e| format!("gh failed to run (is it installed?): {e}"))?;
-
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr).to_lowercase();
-        // No PR for this branch is a normal, non-error condition.
-        if err.contains("no pull requests found") || err.contains("no open pull requests") {
-            return Ok(None);
-        }
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
-    }
-
-    let v: serde_json::Value =
-        serde_json::from_slice(&out.stdout).map_err(|e| format!("could not parse gh output: {e}"))?;
-
+/// Fold a `statusCheckRollup` context list into normalized `PrCheck`s + a
+/// coarse rollup. Shared by the legacy `gh` path and the GraphQL API path — the
+/// context objects have the same shape in both (the GraphQL
+/// `StatusCheckRollupContext` union: `CheckRun` | `StatusContext`).
+pub fn parse_rollup(contexts: &[serde_json::Value]) -> (Vec<PrCheck>, String) {
     let mut checks = Vec::new();
-    if let Some(arr) = v.get("statusCheckRollup").and_then(|x| x.as_array()) {
-        for c in arr {
-            // CheckRun (GitHub Actions) vs StatusContext (legacy commit status).
-            let is_status_context = c.get("__typename").and_then(|t| t.as_str()) == Some("StatusContext");
-            let (name, raw_state, url, workflow) = if is_status_context {
-                (
-                    c.get("context").and_then(|x| x.as_str()).unwrap_or("check").to_string(),
-                    c.get("state").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-                    c.get("targetUrl").and_then(|x| x.as_str()).map(str::to_string),
-                    None,
-                )
-            } else {
-                // For a CheckRun, an unfinished run has an empty conclusion; fall
-                // back to its status (QUEUED/IN_PROGRESS) so it buckets as pending.
-                let status = c.get("status").and_then(|x| x.as_str()).unwrap_or("");
-                let conclusion = c.get("conclusion").and_then(|x| x.as_str()).unwrap_or("");
-                let raw = if conclusion.is_empty() { status } else { conclusion };
-                (
-                    c.get("name").and_then(|x| x.as_str()).unwrap_or("check").to_string(),
-                    raw.to_string(),
-                    c.get("detailsUrl").and_then(|x| x.as_str()).map(str::to_string),
-                    c.get("workflowName").and_then(|x| x.as_str()).map(str::to_string),
-                )
-            };
-            checks.push(PrCheck {
-                name,
-                bucket: check_bucket(&raw_state).to_string(),
-                state: raw_state,
-                url,
-                workflow,
-            });
-        }
+    for c in contexts {
+        // CheckRun (GitHub Actions) vs StatusContext (legacy commit status).
+        let is_status_context = c.get("__typename").and_then(|t| t.as_str()) == Some("StatusContext");
+        let (name, raw_state, url, workflow) = if is_status_context {
+            (
+                c.get("context").and_then(|x| x.as_str()).unwrap_or("check").to_string(),
+                c.get("state").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                c.get("targetUrl").and_then(|x| x.as_str()).map(str::to_string),
+                None,
+            )
+        } else {
+            // For a CheckRun, an unfinished run has an empty conclusion; fall
+            // back to its status (QUEUED/IN_PROGRESS) so it buckets as pending.
+            let status = c.get("status").and_then(|x| x.as_str()).unwrap_or("");
+            let conclusion = c.get("conclusion").and_then(|x| x.as_str()).unwrap_or("");
+            let raw = if conclusion.is_empty() { status } else { conclusion };
+            (
+                c.get("name").and_then(|x| x.as_str()).unwrap_or("check").to_string(),
+                raw.to_string(),
+                c.get("detailsUrl").and_then(|x| x.as_str()).map(str::to_string),
+                c.get("workflowName").and_then(|x| x.as_str()).map(str::to_string),
+            )
+        };
+        checks.push(PrCheck { name, bucket: check_bucket(&raw_state).to_string(), state: raw_state, url, workflow });
     }
 
     let rollup = if checks.is_empty() {
@@ -500,15 +473,7 @@ pub fn pr_status(repo: &str, branch: &str) -> Result<Option<PrStatus>, String> {
     }
     .to_string();
 
-    Ok(Some(PrStatus {
-        number: v.get("number").and_then(|x| x.as_i64()).unwrap_or(0),
-        url: v.get("url").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-        state: v.get("state").and_then(|x| x.as_str()).unwrap_or("OPEN").to_string(),
-        head_branch: v.get("headRefName").and_then(|x| x.as_str()).unwrap_or(branch).to_string(),
-        head_sha: v.get("headRefOid").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-        checks,
-        rollup,
-    }))
+    (checks, rollup)
 }
 
 #[cfg(test)]

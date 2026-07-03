@@ -4,7 +4,12 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  Account,
   AutofixMode,
+  PrSummary,
+  ReviewInboxItem,
+  ChatAttachment,
+  ChatSnapshot,
   ConfigFile,
   DiffStat,
   EnvReport,
@@ -19,6 +24,7 @@ import type {
   PushResult,
   RemoteInfo,
   ServerInfo,
+  ToolsStatus,
   Workspace,
 } from "./types";
 
@@ -205,20 +211,167 @@ export function workspacePrStatus(
   return invoke<PrStatus | null>("workspace_pr_status", { workspaceId });
 }
 
-// ── Backend orchestration (events pushed back via src/lib/events.ts) ──
+// ── GitHub accounts (Rust `github` module; events via src/lib/events.ts) ──
 
-/** Register the OpenCode session id so the backend can drive this workspace. */
-export function registerSession(
-  workspaceId: string,
-  sessionId: string,
-): Promise<void> {
-  return invoke<void>("register_session", { workspaceId, sessionId });
+/** List the connected GitHub accounts (public identity only, never tokens). */
+export function listAccounts(): Promise<Account[]> {
+  return invoke<Account[]>("github_list_accounts");
 }
 
-/** Tell the backend which workspace is on screen (gets changes + todos). */
-export function setActiveWorkspace(
-  workspaceId: string | null,
+/** Start an interactive `gh auth login --web` device flow. Returns a loginId;
+ *  progress arrives via the `github:login` event. `host` defaults to github.com. */
+export function beginAccountLogin(host?: string): Promise<string> {
+  return invoke<string>("github_start_device_login", { host: host ?? null });
+}
+
+/** Cancel an in-flight device login (kills the `gh` child). */
+export function cancelAccountLogin(loginId: string): Promise<void> {
+  return invoke<void>("github_cancel_login", { loginId });
+}
+
+/** Deterministic fallback: add an account from a pasted Personal Access Token. */
+export function addAccountWithToken(
+  token: string,
+  host?: string,
+): Promise<Account> {
+  return invoke<Account>("github_add_account_with_token", {
+    host: host ?? null,
+    token,
+  });
+}
+
+/** Sign an account out and forget it. Emits `github:accounts`. */
+export function removeAccount(accountId: string): Promise<void> {
+  return invoke<void>("github_remove_account", { accountId });
+}
+
+/** Re-emit `github:accounts` (+ review inbox) so the UI can seed on mount —
+ *  events aren't buffered. */
+export function resyncGitHub(): Promise<void> {
+  return invoke<void>("resync_github");
+}
+
+/** The cached review inbox (PRs awaiting your review across all accounts). */
+export function reviewInbox(): Promise<ReviewInboxItem[]> {
+  return invoke<ReviewInboxItem[]>("github_review_inbox");
+}
+
+/** Check a PR out into a fresh worktree and register it as a workspace. */
+export function createWorkspaceFromPr(
+  projectId: string,
+  prNumber: number,
+): Promise<Workspace> {
+  return invoke<Workspace>("create_workspace_from_pr", {
+    projectId,
+    prNumber,
+  });
+}
+
+/** Open PRs for a project (yours + review-requested + assigned), for the picker. */
+export function listProjectPrs(projectId: string): Promise<PrSummary[]> {
+  return invoke<PrSummary[]>("list_project_prs", { projectId });
+}
+
+/** The account auto-detected for a project's origin remote (null if none maps). */
+export function githubDetectAccount(
+  projectId: string,
+): Promise<Account | null> {
+  return invoke<Account | null>("github_detect_account", { projectId });
+}
+
+/** Force a fresh review-inbox poll now (result arrives via `github:review_inbox`). */
+export function refreshReviewInbox(): Promise<void> {
+  return invoke<void>("github_refresh_review_inbox");
+}
+
+// ── Chat layer (Rust `chat` module; deltas pushed via src/lib/events.ts) ──
+
+/** Ensure the conversation + ACP engine exist and return the initial snapshot
+ *  (newest page of entries + advertised config options). Call on mount. */
+export function chatOpen(workspaceId: string): Promise<ChatSnapshot> {
+  return invoke<ChatSnapshot>("chat_open", { workspaceId });
+}
+
+/** Fetch a page of older history before `beforeSeq`. */
+export function chatHistory(
+  workspaceId: string,
+  beforeSeq: number,
+): Promise<ChatSnapshot> {
+  return invoke<ChatSnapshot>("chat_history", { workspaceId, beforeSeq });
+}
+
+/** Send a user message. `display` is shown; `sent` goes to the AI. */
+export function chatSend(args: {
+  workspaceId: string;
+  display: string;
+  sent: string;
+  attachments?: ChatAttachment[];
+  origin?: string;
+  model?: string;
+  variant?: string;
+  agent?: string;
+}): Promise<void> {
+  return invoke<void>("chat_send", {
+    workspaceId: args.workspaceId,
+    display: args.display,
+    sent: args.sent,
+    attachments: args.attachments ?? null,
+    origin: args.origin ?? null,
+    model: args.model ?? null,
+    variant: args.variant ?? null,
+    agent: args.agent ?? null,
+  });
+}
+
+/** Generate an AI title from the first message (throwaway ACP session). */
+export function chatGenerateTitle(
+  workspaceId: string,
+  text: string,
+): Promise<string | null> {
+  return invoke<string | null>("chat_generate_title", { workspaceId, text });
+}
+
+/** Abort the in-flight turn for a workspace. */
+export function chatAbort(workspaceId: string): Promise<void> {
+  return invoke<void>("chat_abort", { workspaceId });
+}
+
+/** Change a session config option (model / mode) by id + value. Reasoning is
+ *  NOT set here — opencode doesn't expose it over ACP; it's configured per-model
+ *  in the opencode config (see Settings → Models). */
+export function chatSetConfig(
+  workspaceId: string,
+  id: string,
+  value: string,
 ): Promise<void> {
+  return invoke<void>("chat_set_config", { workspaceId, id, value });
+}
+
+/** Answer a pending permission request; `optionId` null cancels/rejects. */
+export function chatAnswerPermission(
+  workspaceId: string,
+  requestId: string,
+  optionId: string | null,
+): Promise<void> {
+  return invoke<void>("chat_answer_permission", {
+    workspaceId,
+    requestId,
+    optionId,
+  });
+}
+
+/** Start a fresh engine session (compact / clear), keeping all prior entries. */
+export function chatNewSession(
+  workspaceId: string,
+  reason: "compacted" | "cleared",
+): Promise<void> {
+  return invoke<void>("chat_new_session", { workspaceId, reason });
+}
+
+// ── Backend orchestration (events pushed back via src/lib/events.ts) ──
+
+/** Tell the backend which workspace is on screen (gets changes + todos). */
+export function setActiveWorkspace(workspaceId: string | null): Promise<void> {
   return invoke<void>("set_active_workspace", { workspaceId });
 }
 
@@ -244,6 +397,24 @@ export function requestGitRefresh(workspaceId: string): Promise<void> {
 /** List git remotes for a workspace's project root. */
 export function listRemotes(workspaceId: string): Promise<RemoteInfo[]> {
   return invoke<RemoteInfo[]>("list_remotes", { workspaceId });
+}
+
+/** Runtime MCP + LSP status (starts a supplemental `opencode serve` on demand). */
+export function workspaceTools(workspaceId: string): Promise<ToolsStatus> {
+  return invoke<ToolsStatus>("workspace_tools", { workspaceId });
+}
+
+/** Connect (enable) an MCP server at runtime. */
+export function mcpConnect(workspaceId: string, name: string): Promise<void> {
+  return invoke<void>("mcp_connect", { workspaceId, name });
+}
+
+/** Disconnect (disable) an MCP server at runtime. */
+export function mcpDisconnect(
+  workspaceId: string,
+  name: string,
+): Promise<void> {
+  return invoke<void>("mcp_disconnect", { workspaceId, name });
 }
 
 // ── M3: config & internals ──
@@ -272,6 +443,28 @@ export function writeConfig(
   });
 }
 
+/** The global default model (opencode's top-level `model`), or null if unset.
+ *  opencode applies it to every new session across all workspaces. */
+export function getDefaultModel(): Promise<string | null> {
+  return invoke<string | null>("get_default_model");
+}
+
+/** Set (empty string clears) the global default model. */
+export function setDefaultModel(model: string): Promise<void> {
+  return invoke<void>("set_default_model", { model });
+}
+
+/** The reasoning effort configured for a model (`provider/id`), or "default". */
+export function getModelReasoning(model: string): Promise<string> {
+  return invoke<string>("get_model_reasoning", { model });
+}
+
+/** Write a model's reasoning effort (default|low|medium|high|max) to the
+ *  opencode config. Applied by opencode on the next session. */
+export function setModelReasoning(model: string, level: string): Promise<void> {
+  return invoke<void>("set_model_reasoning", { model, level });
+}
+
 /** Restart a workspace's server (to apply config changes). */
 export function restartServer(workspaceId: string): Promise<ServerInfo> {
   return invoke<ServerInfo>("restart_server", { workspaceId });
@@ -298,4 +491,9 @@ export function openDevtools(): Promise<void> {
  */
 export function openExternal(path: string, app?: string): Promise<void> {
   return invoke<void>("open_external", { path, app: app ?? null });
+}
+
+/** Absolute path of the backend debug logfile (null if logging failed to init). */
+export function logPath(): Promise<string | null> {
+  return invoke<string | null>("log_path");
 }

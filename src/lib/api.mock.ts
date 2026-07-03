@@ -4,7 +4,11 @@
 
 import { mockEmit } from "./events.mock";
 import type {
+  Account,
+  ChatAttachment,
+  ChatSnapshot,
   ConfigFile,
+  ConfigOption,
   DiffStat,
   EnvReport,
   FileChange,
@@ -12,11 +16,13 @@ import type {
   MergeResult,
   PrResult,
   PrStatus,
+  PrSummary,
   ProjectPrompts,
   ProjectUpdate,
   ProjectView,
   PushResult,
   RemoteInfo,
+  ReviewInboxItem,
   ServerInfo,
   Workspace,
 } from "./types";
@@ -28,6 +34,7 @@ let projects: ProjectView[] = [
     root_path: "/Users/me/code/branchlab",
     default_branch: "main",
     default_model_key: "anthropic/claude-sonnet-4",
+    account_id: null,
     prompts: {
       init_workspace: "Set up the workspace.",
       commit: "Commit changes.",
@@ -74,6 +81,7 @@ let projects: ProjectView[] = [
     root_path: "/Users/me/code/super-long-project-name",
     default_branch: "main",
     default_model_key: null,
+    account_id: null,
     prompts: {
       init_workspace: null,
       commit: null,
@@ -104,6 +112,7 @@ export function probeEnvironment(): Promise<EnvReport> {
       version: "1.17.4",
     },
     git: { found: true, path: "/usr/bin/git", version: "2.45.0" },
+    gh: { found: true, path: "/usr/local/bin/gh", version: "2.86.0" },
   });
 }
 
@@ -114,6 +123,7 @@ export function addProject(path: string): Promise<ProjectView> {
     root_path: path,
     default_branch: "main",
     default_model_key: null,
+    account_id: null,
     prompts: {
       init_workspace: null,
       commit: null,
@@ -145,6 +155,266 @@ export function listProjects(): Promise<ProjectView[]> {
 export function removeProject(projectId: string): Promise<void> {
   projects = projects.filter((p) => p.id !== projectId);
   return Promise.resolve();
+}
+
+// ── GitHub accounts + review inbox (browser harness) ──
+
+let mockAccounts: Account[] = [
+  {
+    id: "github.com/octocat",
+    host: "github.com",
+    login: "octocat",
+    name: "The Octocat",
+    avatarUrl: "https://avatars.githubusercontent.com/u/583231?v=4",
+    orgs: ["octocat", "acme"],
+    active: true,
+    status: null,
+  },
+  {
+    id: "github.acme.com/m.mooibroek",
+    host: "github.acme.com",
+    login: "m.mooibroek",
+    name: "Mark Mooibroek",
+    avatarUrl: null,
+    orgs: ["m.mooibroek", "sdbgroep"],
+    active: true,
+    status: null,
+  },
+];
+
+const mockReviewInbox: ReviewInboxItem[] = [
+  {
+    id: "acme/web#128",
+    accountId: "github.com/octocat",
+    repo: "acme/web",
+    number: 128,
+    title: "Add rate limiting to the public API",
+    url: "https://github.com/acme/web/pull/128",
+    author: "alice",
+    authorAvatar: "https://avatars.githubusercontent.com/u/1?v=4",
+    reason: "review_requested",
+    headRef: "feat/rate-limit",
+    rollup: "pending",
+    isDraft: false,
+    updatedAt: "2026-07-03T09:12:00Z",
+    projectId: "p1",
+  },
+  {
+    id: "acme/web#131",
+    accountId: "github.com/octocat",
+    repo: "acme/web",
+    number: 131,
+    title: "Fix flaky auth integration test",
+    url: "https://github.com/acme/web/pull/131",
+    author: "bob",
+    authorAvatar: null,
+    reason: "assigned",
+    headRef: "fix/flaky-auth",
+    rollup: "failure",
+    isDraft: false,
+    updatedAt: "2026-07-02T16:40:00Z",
+    projectId: null,
+  },
+  {
+    id: "sdbgroep/portal#57",
+    accountId: "github.acme.com/m.mooibroek",
+    repo: "sdbgroep/portal",
+    number: 57,
+    title: "Migrate settings screen to new design system",
+    url: "https://github.acme.com/sdbgroep/portal/pull/57",
+    author: "carol",
+    authorAvatar: null,
+    reason: "review_requested",
+    headRef: "design/settings",
+    rollup: "success",
+    isDraft: true,
+    updatedAt: "2026-07-01T11:05:00Z",
+    projectId: null,
+  },
+];
+
+export function listAccounts(): Promise<Account[]> {
+  return Promise.resolve(mockAccounts);
+}
+
+export function removeAccount(accountId: string): Promise<void> {
+  mockAccounts = mockAccounts.filter((a) => a.id !== accountId);
+  mockEmit("github:accounts", { accounts: mockAccounts });
+  return Promise.resolve();
+}
+
+export function resyncGitHub(): Promise<void> {
+  mockEmit("github:accounts", { accounts: mockAccounts });
+  mockEmit("github:review_inbox", {
+    items: mockReviewInbox,
+    refreshedAt: Date.now(),
+    error: null,
+  });
+  return Promise.resolve();
+}
+
+export function reviewInbox(): Promise<ReviewInboxItem[]> {
+  return Promise.resolve(mockReviewInbox);
+}
+
+export function githubDetectAccount(
+  _projectId: string,
+): Promise<Account | null> {
+  return Promise.resolve(mockAccounts[0] ?? null);
+}
+
+export function createWorkspaceFromPr(
+  projectId: string,
+  prNumber: number,
+): Promise<Workspace> {
+  const project = projects.find((p) => p.id === projectId);
+  const branch = `pr-${prNumber}`;
+  const ws: Workspace = {
+    id: `${projectId}-${branch}`,
+    project_id: projectId,
+    kind: "Worktree",
+    path: `/mock/${branch}`,
+    branch,
+    name: `PR #${prNumber}`,
+    base_branch: project?.default_branch ?? "main",
+    init_prompt: null,
+    pr_number: prNumber,
+    pr_url: `https://github.com/acme/web/pull/${prNumber}`,
+  };
+  if (project) project.workspaces.push(ws);
+  return Promise.resolve(ws);
+}
+
+export function listProjectPrs(_projectId: string): Promise<PrSummary[]> {
+  return Promise.resolve([
+    {
+      number: 140,
+      title: "Add dark-mode toggle to settings",
+      url: "https://github.com/acme/web/pull/140",
+      author: "octocat",
+      authorAvatar: "https://avatars.githubusercontent.com/u/583231?v=4",
+      repo: "acme/web",
+      headRef: "feat/dark-mode",
+      baseRef: "main",
+      isFork: false,
+      isDraft: false,
+      updatedAt: "2026-07-03T08:00:00Z",
+      bucket: "mine",
+    },
+    {
+      number: 128,
+      title: "Add rate limiting to the public API",
+      url: "https://github.com/acme/web/pull/128",
+      author: "alice",
+      authorAvatar: null,
+      repo: "acme/web",
+      headRef: "feat/rate-limit",
+      baseRef: "main",
+      isFork: false,
+      isDraft: false,
+      updatedAt: "2026-07-03T09:12:00Z",
+      bucket: "review_requested",
+    },
+    {
+      number: 131,
+      title: "Fix flaky auth integration test",
+      url: "https://github.com/acme/web/pull/131",
+      author: "bob",
+      authorAvatar: null,
+      repo: "acme/web",
+      headRef: "fix/flaky-auth",
+      baseRef: "main",
+      isFork: true,
+      isDraft: false,
+      updatedAt: "2026-07-02T16:40:00Z",
+      bucket: "assigned",
+    },
+  ]);
+}
+
+export function refreshReviewInbox(): Promise<void> {
+  mockEmit("github:review_inbox", {
+    items: mockReviewInbox,
+    refreshedAt: Date.now(),
+    error: null,
+  });
+  return Promise.resolve();
+}
+
+let loginSeq = 0;
+
+export function beginAccountLogin(host?: string): Promise<string> {
+  loginSeq += 1;
+  const loginId = `login-${loginSeq}`;
+  const h = host ?? "github.com";
+  const newAccount: Account = {
+    id: `${h}/new-user`,
+    host: h,
+    login: "new-user",
+    name: "Newly Added User",
+    avatarUrl: "https://avatars.githubusercontent.com/u/9919?v=4",
+    orgs: ["new-user"],
+    active: true,
+    status: null,
+  };
+  // Script the backend-driven device flow so the dialog renders every step.
+  const step = (
+    ms: number,
+    phase: string,
+    extra: Record<string, unknown> = {},
+  ) =>
+    setTimeout(() => {
+      mockEmit("github:login", {
+        loginId,
+        phase,
+        code: null,
+        url: null,
+        account: null,
+        error: null,
+        ...extra,
+      });
+    }, ms);
+  step(200, "starting");
+  step(600, "awaitingCode", {
+    code: "WXYZ-1234",
+    url: `https://${h}/login/device`,
+  });
+  step(2200, "polling");
+  step(3600, "success", { account: newAccount });
+  setTimeout(() => {
+    if (!mockAccounts.some((a) => a.id === newAccount.id)) {
+      mockAccounts = [...mockAccounts, newAccount];
+    }
+    mockEmit("github:accounts", { accounts: mockAccounts });
+  }, 3600);
+  return Promise.resolve(loginId);
+}
+
+export function cancelAccountLogin(_loginId: string): Promise<void> {
+  return Promise.resolve();
+}
+
+export function addAccountWithToken(
+  token: string,
+  host?: string,
+): Promise<Account> {
+  const h = host ?? "github.com";
+  const acct: Account = {
+    id: `${h}/token-user`,
+    host: h,
+    login: "token-user",
+    name: "Token User",
+    avatarUrl: null,
+    orgs: ["token-user"],
+    active: true,
+    status: null,
+  };
+  void token;
+  if (!mockAccounts.some((a) => a.id === acct.id)) {
+    mockAccounts = [...mockAccounts, acct];
+  }
+  mockEmit("github:accounts", { accounts: mockAccounts });
+  return Promise.resolve(acct);
 }
 
 export function startServer(workspaceId: string): Promise<ServerInfo> {
@@ -335,7 +605,243 @@ export function listRemotes(): Promise<RemoteInfo[]> {
 // ── Backend orchestration mocks: drive the event bus so the browser harness
 //    renders git badges, changes, and the PR bar without a Rust backend. ──
 
-export function registerSession(): Promise<void> {
+// ── Chat mocks: a scripted streaming turn so the browser harness renders the
+//    transcript, streaming, collapse, and config selectors without a backend. ──
+
+const MOCK_CONFIG: ConfigOption[] = [
+  {
+    id: "mode",
+    name: "Mode",
+    description: null,
+    category: "mode",
+    currentValue: "build",
+    choices: [
+      { value: "build", name: "build", description: null, group: null },
+      { value: "plan", name: "plan", description: null, group: null },
+    ],
+  },
+  {
+    id: "model",
+    name: "Model",
+    description: null,
+    category: "model",
+    currentValue: "anthropic/claude-opus-4-8",
+    choices: [
+      {
+        value: "anthropic/claude-opus-4-8",
+        name: "Anthropic/Claude Opus 4.8",
+        description: null,
+        group: null,
+      },
+      {
+        value: "anthropic/claude-sonnet-5",
+        name: "Anthropic/Claude Sonnet 5",
+        description: null,
+        group: null,
+      },
+      {
+        value: "opencode/big-pickle",
+        name: "OpenCode Zen/Big Pickle",
+        description: null,
+        group: null,
+      },
+    ],
+  },
+  // NB: opencode advertises only `model` + `mode` over ACP — no reasoning/
+  // thoughtLevel option. Reasoning is a synthetic, config-backed selector in the
+  // composer (see Chat.tsx), shown for supported providers like Anthropic.
+];
+
+let mockSeq = 100;
+const nextSeq = () => ++mockSeq;
+
+export function chatOpen(workspaceId: string): Promise<ChatSnapshot> {
+  // Seed config so the selectors render immediately.
+  setTimeout(
+    () => mockEmit("chat:config", { workspaceId, options: MOCK_CONFIG }),
+    30,
+  );
+  return Promise.resolve({
+    conversationId: `conv-${workspaceId}`,
+    entries: [],
+    headSeq: 0,
+    hasMore: false,
+    config: MOCK_CONFIG,
+    commands: [
+      { name: "caveman", description: "Ultra-compressed communication" },
+      { name: "compress", description: "Compress memory files" },
+    ],
+  });
+}
+
+export function chatHistory(): Promise<ChatSnapshot> {
+  return Promise.resolve({
+    conversationId: "",
+    entries: [],
+    headSeq: 0,
+    hasMore: false,
+    config: [],
+    commands: [],
+  });
+}
+
+export function chatSend(args: {
+  workspaceId: string;
+  display: string;
+  sent: string;
+  attachments?: ChatAttachment[];
+}): Promise<void> {
+  const ws = args.workspaceId;
+  const userSeq = nextSeq();
+  const turnSeq = nextSeq();
+  const now = Date.now();
+
+  mockEmit("chat:entry", {
+    workspaceId: ws,
+    entry: {
+      type: "user",
+      seq: userSeq,
+      entryId: `u-${userSeq}`,
+      display: args.display,
+      sent: args.sent,
+      attachments: args.attachments ?? [],
+      model: null,
+      variant: null,
+      agent: null,
+      origin: "user",
+      createdAt: now,
+    },
+  });
+  mockEmit("chat:entry", {
+    workspaceId: ws,
+    entry: {
+      type: "assistant",
+      seq: turnSeq,
+      entryId: `a-${turnSeq}`,
+      engineSessionId: 1,
+      status: "queued",
+      origin: "user",
+      blocks: [],
+      summary: {
+        collapsed: false,
+        stepCount: 0,
+        filesEdited: [],
+        commandsRun: 0,
+        headline: "",
+      },
+      usage: null,
+      startedAt: now,
+      endedAt: null,
+    },
+  });
+
+  const block = (block: unknown) =>
+    mockEmit("chat:block", {
+      workspaceId: ws,
+      entrySeq: turnSeq,
+      block,
+      textAppend: null,
+    });
+  // Stream a reasoning step, a tool call, then the answer.
+  setTimeout(
+    () =>
+      block({
+        type: "reasoning",
+        blockId: "r1",
+        text: "Thinking about the request…",
+      }),
+    150,
+  );
+  setTimeout(
+    () =>
+      block({
+        type: "tool",
+        blockId: "t1",
+        callId: "c1",
+        name: "edit",
+        title: "Edit file",
+        status: "completed",
+        input: { file: "src/app.ts" },
+        output: null,
+        diff: {
+          path: "src/app.ts",
+          oldText: "const x = 1;\n",
+          newText: "const x = 2;\n",
+          unified: null,
+        },
+        error: null,
+      }),
+    500,
+  );
+  setTimeout(
+    () =>
+      block({
+        type: "text",
+        blockId: "m1",
+        text: "Done — I updated `src/app.ts`.",
+      }),
+    900,
+  );
+  setTimeout(
+    () =>
+      mockEmit("chat:context", { workspaceId: ws, used: 12000, max: 200000 }),
+    950,
+  );
+  setTimeout(
+    () =>
+      mockEmit("chat:turn", {
+        workspaceId: ws,
+        entrySeq: turnSeq,
+        status: "completed",
+        summary: {
+          collapsed: true,
+          stepCount: 2,
+          filesEdited: ["src/app.ts"],
+          commandsRun: 0,
+          headline: "Edited 1 file",
+        },
+        usage: null,
+      }),
+    1100,
+  );
+  return Promise.resolve();
+}
+
+export function chatGenerateTitle(
+  _workspaceId: string,
+  text: string,
+): Promise<string | null> {
+  return Promise.resolve(text.split(/\s+/).slice(0, 5).join(" ") || null);
+}
+export function chatAbort(): Promise<void> {
+  return Promise.resolve();
+}
+export function chatSetConfig(): Promise<void> {
+  return Promise.resolve();
+}
+export function chatAnswerPermission(): Promise<void> {
+  return Promise.resolve();
+}
+export function chatNewSession(): Promise<void> {
+  return Promise.resolve();
+}
+
+export function workspaceTools(): Promise<{
+  mcp: { name: string; status: string; error?: string }[];
+  lsp: { id: string; status?: string }[];
+}> {
+  return Promise.resolve({
+    mcp: [
+      { name: "playwright", status: "connected" },
+      { name: "figma", status: "failed", error: "auth required" },
+    ],
+    lsp: [{ id: "typescript", status: "running" }],
+  });
+}
+export function mcpConnect(): Promise<void> {
+  return Promise.resolve();
+}
+export function mcpDisconnect(): Promise<void> {
   return Promise.resolve();
 }
 
@@ -353,12 +859,18 @@ export function setActiveWorkspace(workspaceId: string | null): Promise<void> {
   void workspaceChanges().then((changes) =>
     mockEmit("workspace:git", {
       workspaceId,
-      diffStat: diffStats[workspaceId] ?? { files: 2, insertions: 30, deletions: 7 },
+      diffStat: diffStats[workspaceId] ?? {
+        files: 2,
+        insertions: 30,
+        deletions: 7,
+      },
       changes,
     }),
   );
   // …and, for a worktree, its PR pipeline (so the bar renders on open).
-  const ws = projects.flatMap((p) => p.workspaces).find((w) => w.id === workspaceId);
+  const ws = projects
+    .flatMap((p) => p.workspaces)
+    .find((w) => w.id === workspaceId);
   if (ws?.kind === "Worktree") {
     void workspacePrStatus().then((status) =>
       mockEmit("workspace:pr", {
@@ -461,6 +973,28 @@ export function writeConfig(): Promise<string> {
   return Promise.resolve("/mock/opencode.json");
 }
 
+let mockDefaultModel: string | null = "anthropic/claude-sonnet-4";
+
+export function getDefaultModel(): Promise<string | null> {
+  return Promise.resolve(mockDefaultModel);
+}
+
+export function setDefaultModel(model: string): Promise<void> {
+  mockDefaultModel = model || null;
+  return Promise.resolve();
+}
+
+const mockReasoning: Record<string, string> = {};
+
+export function getModelReasoning(model: string): Promise<string> {
+  return Promise.resolve(mockReasoning[model] ?? "default");
+}
+
+export function setModelReasoning(model: string, level: string): Promise<void> {
+  mockReasoning[model] = level;
+  return Promise.resolve();
+}
+
 export function restartServer(workspaceId: string): Promise<ServerInfo> {
   return startServer(workspaceId);
 }
@@ -483,4 +1017,8 @@ export function openExternal(path: string, app?: string): Promise<void> {
   // eslint-disable-next-line no-console
   console.log("open external", path, app);
   return Promise.resolve();
+}
+
+export function logPath(): Promise<string | null> {
+  return Promise.resolve("/tmp/branchlab.log");
 }

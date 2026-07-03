@@ -8,13 +8,14 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import type {
+  Account,
   ProjectView,
   ProjectPrompts,
   ProjectUpdate,
   ModelOption,
 } from "../lib/types";
-import { openExternal, serverStatus, updateProject } from "../lib/api";
-import { OpencodeClient } from "../lib/opencode";
+import { githubDetectAccount, openExternal, updateProject } from "../lib/api";
+import { useGitHub } from "../hooks/useGitHub";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -56,6 +57,7 @@ export function ProjectSettingsDialog({
   const [defaultModelKey, setDefaultModelKey] = useState(
     project.default_model_key ?? "",
   );
+  const [accountId, setAccountId] = useState(project.account_id ?? "");
   const [prompts, setPrompts] = useState<ProjectPrompts>(
     project.prompts ?? {
       init_workspace: "",
@@ -65,30 +67,18 @@ export function ProjectSettingsDialog({
       create_pr: "",
     },
   );
-  const [models, setModels] = useState<ModelOption[]>([]);
-  const [baseUrl, setBaseUrl] = useState<string | null>(null);
+  // Model list is advertised per-session over ACP now (composer selectors), not
+  // fetched over HTTP here; the project's default model is stored as a key.
+  const models: ModelOption[] = [];
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     setName(project.name);
     setDefaultBranch(project.default_branch ?? "");
     setDefaultModelKey(project.default_model_key ?? "");
+    setAccountId(project.account_id ?? "");
     setPrompts(project.prompts);
   }, [project]);
-
-  useEffect(() => {
-    if (!open || !workspaceId) return;
-    serverStatus(workspaceId)
-      .then((info) => {
-        if (!info) return;
-        setBaseUrl(info.base_url);
-        return new OpencodeClient(info.base_url).listModels();
-      })
-      .then((res) => {
-        if (res) setModels(res.models);
-      })
-      .catch(() => {});
-  }, [open, workspaceId]);
 
   async function save(updates: ProjectUpdate) {
     setSaving(true);
@@ -154,7 +144,6 @@ export function ProjectSettingsDialog({
               <div className="min-h-0 flex-1">
                 <ConfigView
                   workspaceId={workspaceId}
-                  baseUrl={baseUrl}
                   onRestarted={onConfigRestarted}
                 />
               </div>
@@ -173,6 +162,8 @@ export function ProjectSettingsDialog({
                   setDefaultBranch={setDefaultBranch}
                   defaultModelKey={defaultModelKey}
                   setDefaultModelKey={setDefaultModelKey}
+                  accountId={accountId}
+                  setAccountId={setAccountId}
                   models={models}
                   saving={saving}
                   onSave={() =>
@@ -180,6 +171,7 @@ export function ProjectSettingsDialog({
                       name: name.trim() || project.name,
                       default_branch: defaultBranch.trim() || undefined,
                       default_model_key: defaultModelKey.trim() || null,
+                      account_id: accountId,
                     })
                   }
                 />
@@ -208,6 +200,8 @@ function GeneralTab({
   setDefaultBranch,
   defaultModelKey,
   setDefaultModelKey,
+  accountId,
+  setAccountId,
   models,
   saving,
   onSave,
@@ -219,10 +213,20 @@ function GeneralTab({
   setDefaultBranch: (v: string) => void;
   defaultModelKey: string;
   setDefaultModelKey: (v: string) => void;
+  accountId: string;
+  setAccountId: (v: string) => void;
   models: ModelOption[];
   saving: boolean;
   onSave: () => void;
 }) {
+  const { accounts } = useGitHub();
+  const [detected, setDetected] = useState<Account | null>(null);
+  useEffect(() => {
+    githubDetectAccount(project.id)
+      .then(setDetected)
+      .catch(() => setDetected(null));
+  }, [project.id]);
+
   return (
     <div className="space-y-5">
       <Field label="Path">
@@ -274,6 +278,27 @@ function GeneralTab({
           placeholder="main"
           className="font-mono text-xs"
         />
+      </Field>
+
+      <Field label="GitHub account">
+        <select
+          value={accountId}
+          onChange={(e) => setAccountId(e.target.value)}
+          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+        >
+          <option value="">
+            Auto-detect{detected ? ` (@${detected.login})` : " (none found)"}
+          </option>
+          {accounts.map((a) => (
+            <option key={a.id} value={a.id}>
+              @{a.login} · {a.host}
+            </option>
+          ))}
+        </select>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Detected from this repo's origin remote. Override if you push with a
+          different identity.
+        </p>
       </Field>
 
       <Field label="Default model">

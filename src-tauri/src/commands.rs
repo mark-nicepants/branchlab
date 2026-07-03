@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use tauri::State;
 
 use crate::config::{self, ConfigFile};
+use crate::engine::opencode_http::{self, ToolsStatus};
 use crate::git::{self, DiffStat, FileChange, FileContent, PrStatus, RemoteInfo};
 use crate::project::{AutofixMode, ProjectView, Registry, Workspace};
 use crate::server::{ServerInfo, ServerManager};
@@ -66,6 +67,53 @@ pub fn update_project(
     registry: State<Registry>,
 ) -> Result<ProjectView, String> {
     registry.update_project(&project_id, update)
+}
+
+/// Open PRs for a project (yours + review-requested + assigned), for the
+/// "create workspace from PR" picker. Routed through the repo's bound account.
+#[tauri::command]
+pub async fn list_project_prs(
+    project_id: String,
+    registry: State<'_, Registry>,
+    github: State<'_, crate::github::GithubManager>,
+) -> Result<Vec<crate::github::model::PrSummary>, String> {
+    let root = registry.project_root(&project_id).ok_or("unknown project")?;
+    let override_id = registry.project_account_id(&project_id);
+    let (account, owner, repo) = github.resolve_account(&root, override_id.as_deref())?;
+    let client = github.client_for(&account.id)?;
+    client.list_open_prs(&owner, &repo).await
+}
+
+/// Check a PR out into a fresh worktree and register it as a workspace.
+#[tauri::command]
+pub async fn create_workspace_from_pr(
+    project_id: String,
+    pr_number: i64,
+    registry: State<'_, Registry>,
+    github: State<'_, crate::github::GithubManager>,
+    watcher: State<'_, GitWatcher>,
+    supervisor: State<'_, Supervisor>,
+) -> Result<Workspace, String> {
+    let root = registry.project_root(&project_id).ok_or("unknown project")?;
+    let override_id = registry.project_account_id(&project_id);
+    let (account, owner, repo) = github.resolve_account(&root, override_id.as_deref())?;
+    let client = github.client_for(&account.id)?;
+    let detail = client.pr_detail(&owner, &repo, pr_number).await?;
+
+    let title = if detail.title.is_empty() { format!("PR #{pr_number}") } else { detail.title.clone() };
+    let head_repo = if detail.is_fork { None } else { Some(detail.repo.clone()) };
+    let meta = crate::project::PrWorkspaceMeta {
+        number: pr_number,
+        title,
+        base_ref: detail.base_ref,
+        url: detail.url,
+        head_repo,
+        is_fork: detail.is_fork,
+    };
+    let ws = registry.create_workspace_from_pr(&project_id, meta)?;
+    watcher.watch(&ws.id, &ws.path);
+    supervisor.reconcile_now();
+    Ok(ws)
 }
 
 #[tauri::command]
@@ -216,43 +264,54 @@ pub fn push_workspace(workspace_id: String, registry: State<Registry>) -> Result
     git::push_branch(&root, "origin", &branch).map(|output| PushResult { branch, remote: "origin".to_string(), output })
 }
 
-/// Push the branch and open a GitHub PR. Uses `gh`; must be installed and authenticated.
+/// Push the branch and open a GitHub PR via the API (routed through the repo's
+/// bound account). Blocks fork PRs (read-only).
 #[tauri::command]
-pub fn create_workspace_pr(
+pub async fn create_workspace_pr(
     workspace_id: String,
     title: String,
     body: String,
-    registry: State<Registry>,
+    registry: State<'_, Registry>,
+    github: State<'_, crate::github::GithubManager>,
 ) -> Result<PrResult, String> {
-    let (_ws, root, branch, base) = resolve_workspace_branch(&registry, &workspace_id)?;
-    let url = git::create_pull_request(&root, &branch, &base, &title, &body)?;
+    let (ws, root, branch, base) = resolve_workspace_branch(&registry, &workspace_id)?;
+    if ws.pr_is_fork {
+        return Err("this workspace tracks a fork PR — push access isn't available".into());
+    }
+    // Push the branch first (credential helper neutralized, matching the old path).
+    git::push_branch(&root, "origin", &branch)?;
+    let account_id = registry.project_account_id(&ws.project_id);
+    let url = github.create_pr_for(&root, &branch, &base, &title, &body, account_id.as_deref()).await?;
     Ok(PrResult { branch, base, url })
 }
 
-/// Fetch the pull-request CI status for the workspace's branch (via `gh`).
-/// `Ok(None)` means the branch has no PR yet; `Err` means `gh` is unavailable
-/// or the repo has no GitHub remote.
+/// The GitHub account auto-detected for a project's origin remote (ignoring any
+/// override) — used to label the per-project account selector.
 #[tauri::command]
-pub fn workspace_pr_status(workspace_id: String, registry: State<Registry>) -> Result<Option<PrStatus>, String> {
-    let (_ws, root, branch, _base) = resolve_workspace_branch(&registry, &workspace_id)?;
-    git::pr_status(&root, &branch)
+pub fn github_detect_account(
+    project_id: String,
+    registry: State<Registry>,
+    github: State<crate::github::GithubManager>,
+) -> Option<crate::github::model::AccountView> {
+    let root = registry.project_root(&project_id)?;
+    github.detect_account(&root)
+}
+
+/// Fetch the pull-request CI status for the workspace's branch (via the GitHub
+/// API, routed through the account bound to the repo). `Ok(None)` means the
+/// branch has no PR yet; `Err` means no account is bound or the API call failed.
+#[tauri::command]
+pub async fn workspace_pr_status(
+    workspace_id: String,
+    registry: State<'_, Registry>,
+    github: State<'_, crate::github::GithubManager>,
+) -> Result<Option<PrStatus>, String> {
+    let (ws, root, branch, _base) = resolve_workspace_branch(&registry, &workspace_id)?;
+    let account_id = registry.project_account_id(&ws.project_id);
+    github.pr_status_for(&root, &branch, account_id.as_deref()).await
 }
 
 // ── Backend orchestration surface (see supervisor.rs / watcher.rs) ──
-
-/// Record the OpenCode session id the frontend created/loaded for a workspace,
-/// so the supervisor drives autofix through that same session (fixes stream
-/// into the visible chat). Persisted in the registry for background use.
-#[tauri::command]
-pub fn register_session(
-    workspace_id: String,
-    session_id: String,
-    registry: State<Registry>,
-    supervisor: State<Supervisor>,
-) {
-    registry.set_session_id(&workspace_id, &session_id);
-    supervisor.on_session_registered(&workspace_id, &session_id);
-}
 
 /// Tell the backend which workspace is on screen. The active workspace also
 /// gets the full `changes` list + todos, and is always driven.
@@ -288,6 +347,59 @@ pub fn resync(watcher: State<GitWatcher>, supervisor: State<Supervisor>) {
 #[tauri::command]
 pub fn request_git_refresh(workspace_id: String, watcher: State<GitWatcher>) {
     watcher.refresh(&workspace_id);
+}
+
+/// Runtime MCP + LSP status for a workspace. ACP doesn't expose these, so we
+/// start a short-lived supplemental `opencode serve` (idle-reaped) and read
+/// `/mcp` + `/lsp` over HTTP. Called by the ServerTools panel on open.
+#[tauri::command]
+pub async fn workspace_tools(
+    workspace_id: String,
+    registry: State<'_, Registry>,
+    servers: State<'_, ServerManager>,
+) -> Result<ToolsStatus, String> {
+    let path = registry.workspace_path(&workspace_id).ok_or("unknown workspace")?;
+    let servers = (*servers).clone();
+    let id = workspace_id.clone();
+    let base = tauri::async_runtime::spawn_blocking(move || servers.start(&id, &path))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| {
+            crate::logf!("tools", "workspace_tools ws={workspace_id} serve start FAILED: {e}");
+            e
+        })?
+        .base_url;
+    crate::logf!("tools", "workspace_tools ws={workspace_id} serve base={base}");
+
+    // MCP servers connect asynchronously after `serve` announces its port, so a
+    // fetch immediately after boot can come back empty. Retry once after a short
+    // delay before giving up (this is why the panel showed "No MCP servers").
+    let mut mcp = opencode_http::mcp_status(&base).await.unwrap_or_default();
+    if mcp.is_empty() {
+        tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+        mcp = opencode_http::mcp_status(&base).await.unwrap_or_default();
+    }
+    let lsp = opencode_http::lsp_status(&base).await.unwrap_or_default();
+    crate::logf!("tools", "workspace_tools ws={workspace_id} mcp={} lsp={}", mcp.len(), lsp.len());
+    Ok(ToolsStatus { mcp, lsp })
+}
+
+/// Connect (enable) an MCP server at runtime on the workspace's supplemental serve.
+#[tauri::command]
+pub async fn mcp_connect(workspace_id: String, name: String, servers: State<'_, ServerManager>) -> Result<(), String> {
+    let base = servers.status(&workspace_id).ok_or("server not running")?.base_url;
+    opencode_http::mcp_connect(&base, &name).await
+}
+
+/// Disconnect (disable) an MCP server at runtime.
+#[tauri::command]
+pub async fn mcp_disconnect(
+    workspace_id: String,
+    name: String,
+    servers: State<'_, ServerManager>,
+) -> Result<(), String> {
+    let base = servers.status(&workspace_id).ok_or("server not running")?.base_url;
+    opencode_http::mcp_disconnect(&base, &name).await
 }
 
 #[tauri::command]
@@ -372,12 +484,54 @@ pub fn write_config(
     config::write(&config_dir(&scope, workspace_id, &registry)?, &content)
 }
 
+/// The global default model (opencode's top-level `model` config), if set.
+/// Applied by opencode to every new session across all workspaces.
+#[tauri::command]
+pub fn get_default_model() -> Option<String> {
+    config::get_default_model(&config::global_dir())
+}
+
+/// Set (empty string clears) the global default model in the opencode config.
+#[tauri::command]
+pub fn set_default_model(model: String) -> Result<(), String> {
+    config::set_default_model(&config::global_dir(), Some(model.as_str()).filter(|s| !s.is_empty()))
+}
+
+/// The reasoning-effort level currently configured for a model (`provider/id`),
+/// or "default" if none — for prefilling the Models settings configurator.
+#[tauri::command]
+pub fn get_model_reasoning(model: String) -> String {
+    match model.split_once('/') {
+        Some((provider, model_id)) => config::model_reasoning_level(&config::global_dir(), provider, model_id),
+        None => "default".to_string(),
+    }
+}
+
+/// Write a model's reasoning effort (default|low|medium|high|max) into the
+/// global opencode config. opencode applies it on the next session. Errors for
+/// providers we don't have a reasoning mapping for.
+#[tauri::command]
+pub fn set_model_reasoning(model: String, level: String) -> Result<(), String> {
+    let (provider, model_id) = model.split_once('/').ok_or("model value has no provider/ prefix")?;
+    if level != "default" && !config::reasoning_supported(provider) {
+        return Err(format!("reasoning isn't configurable for provider '{provider}'"));
+    }
+    config::set_model_reasoning(&config::global_dir(), provider, model_id, &level)
+}
+
 /// Open the webview inspector (we disable the default right-click menu, so this
 /// is bound to a keyboard shortcut instead). Available because the tauri
 /// `devtools` feature is enabled in Cargo.toml.
 #[tauri::command]
 pub fn open_devtools(window: tauri::WebviewWindow) {
     window.open_devtools();
+}
+
+/// Absolute path of the backend debug logfile (for "Open logs" in the UI and
+/// for the user to `tail -f` while reproducing an issue).
+#[tauri::command]
+pub fn log_path() -> Option<String> {
+    crate::logx::path().map(|p| p.to_string_lossy().into_owned())
 }
 
 /// Open a path in an external app. `app` is a macOS application name for

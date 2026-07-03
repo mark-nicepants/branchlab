@@ -4,6 +4,7 @@ import { ListTodo, PanelLeft, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { HomeScreen } from "./components/home/HomeScreen";
+import { CreateFromPrModal } from "./components/CreateFromPrModal";
 import { NewWorkspaceModal } from "./components/NewWorkspaceModal";
 import { Onboarding } from "./components/Onboarding";
 import { ProjectSettingsDialog } from "./components/ProjectSettingsDialog";
@@ -18,12 +19,14 @@ import {
 } from "./components/shell/SessionsSidebar";
 import { EmptyState } from "./components/ui/empty-state";
 import { useDesktopBehaviors } from "./hooks/useDesktopBehaviors";
+import { GitHubProvider } from "./hooks/useGitHub";
 import { useShortcuts } from "./hooks/useShortcuts";
 import { WorkspaceDataProvider } from "./hooks/useWorkspaceData";
 import {
   addProject,
   createQuickChat,
   createWorkspace,
+  createWorkspaceFromPr,
   listProjects,
   openDevtools,
   probeEnvironment,
@@ -49,6 +52,9 @@ function App() {
 
   const [branchModalProject, setBranchModalProject] =
     useState<ProjectView | null>(null);
+  const [prModalProject, setPrModalProject] = useState<ProjectView | null>(
+    null,
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   const [settingsProject, setSettingsProject] = useState<ProjectView | null>(
@@ -160,6 +166,19 @@ function App() {
     [refreshProjects, openSession],
   );
 
+  const checkoutPr = useCallback(
+    async (projectId: string, prNumber: number) => {
+      try {
+        const ws = await createWorkspaceFromPr(projectId, prNumber);
+        await refreshProjects();
+        openSession(ws);
+      } catch (e) {
+        toast.error("Could not check out PR", { description: String(e) });
+      }
+    },
+    [refreshProjects, openSession],
+  );
+
   const newQuickChat = useCallback(
     async (prompt?: string) => {
       try {
@@ -209,140 +228,166 @@ function App() {
   }
 
   return (
-    <WorkspaceDataProvider
-      workspaceIds={workspaceIds}
-      activeWorkspaceId={view === "session" ? selectedId : null}
-    >
-      <div className="relative flex h-screen bg-background text-foreground">
-        <div
-          className={cn(
-            "shrink-0 overflow-hidden transition-[width,opacity] duration-500 ease-out",
-            sidebarCollapsed ? "w-0 opacity-0" : "w-[264px] opacity-100",
-          )}
-        >
-          <SessionsSidebar
-            view={view}
-            onNavigate={setView}
-            onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
-            onOpenSettings={() => {
-              setSettingsTab("general");
-              setSettingsOpen(true);
-            }}
-            projects={projects}
-            quickChats={quickChats}
-            selectedWorkspaceId={view === "session" ? selectedId : null}
-            onSelectWorkspace={openSession}
-            onProjectsChanged={refreshProjects}
-            onRenamed={onRenamed}
-            onQuickCreate={(p) => void quickCreate(p)}
-            onNewFromBranch={setBranchModalProject}
-            onNewQuickChat={() => void newQuickChat()}
-            onRemoveQuickChat={removeQuickChat}
-            onAddProject={() => void pickProject()}
-            onOpenProjectSettings={setSettingsProject}
-          />
-        </div>
-
-        <button
-          onClick={() => setSidebarCollapsed(false)}
-          title="Show sidebar ⌘B"
-          className={cn(
-            "absolute left-[80px] top-2 z-20 flex size-7 items-center justify-center rounded-md text-muted-foreground transition-all duration-200 ease-out hover:bg-accent hover:text-foreground",
-            sidebarCollapsed
-              ? "scale-100 opacity-100 delay-200"
-              : "pointer-events-none scale-75 opacity-0",
-          )}
-        >
-          <PanelLeft className="size-4" />
-        </button>
-
-        <main className="min-w-0 flex-1 overflow-hidden">
-          {view === "session" && selected ? (
-            <SessionView
-              key={selected.id}
-              workspace={selected}
-              project={selectedProject}
-              onRenamed={onRenamed}
-              reloadNonce={reloadNonce}
-              sidebarCollapsed={sidebarCollapsed}
-            />
-          ) : view === "search" ? (
-            <SearchScreen
+    <GitHubProvider>
+      <WorkspaceDataProvider
+        workspaceIds={workspaceIds}
+        activeWorkspaceId={view === "session" ? selectedId : null}
+      >
+        <div className="relative flex h-screen bg-background text-foreground">
+          <div
+            className={cn(
+              "shrink-0 overflow-hidden transition-[width,opacity] duration-500 ease-out",
+              sidebarCollapsed ? "w-0 opacity-0" : "w-[264px] opacity-100",
+            )}
+          >
+            <SessionsSidebar
+              view={view}
+              onNavigate={setView}
+              onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
+              onOpenSettings={() => {
+                setSettingsTab("general");
+                setSettingsOpen(true);
+              }}
+              onOpenAccounts={() => {
+                setSettingsTab("accounts");
+                setSettingsOpen(true);
+              }}
               projects={projects}
               quickChats={quickChats}
-              onSelect={openSession}
-            />
-          ) : view === "my-work" || view === "automations" ? (
-            <StubScreen
-              icon={
-                view === "my-work" ? (
-                  <ListTodo className="size-7 text-muted-foreground/60" />
-                ) : undefined
-              }
-              label={view === "my-work" ? "My work" : "Automations"}
-            />
-          ) : (
-            <HomeScreen
-              projects={projects}
-              onCreateSession={(pid, base, prompt) =>
-                void createSession(pid, base, prompt)
-              }
-              onQuickChat={(prompt) => void newQuickChat(prompt)}
+              selectedWorkspaceId={view === "session" ? selectedId : null}
+              onSelectWorkspace={openSession}
+              onProjectsChanged={refreshProjects}
+              onRenamed={onRenamed}
+              onQuickCreate={(p) => void quickCreate(p)}
+              onNewFromBranch={setBranchModalProject}
+              onNewFromPr={setPrModalProject}
+              onNewQuickChat={() => void newQuickChat()}
+              onRemoveQuickChat={removeQuickChat}
               onAddProject={() => void pickProject()}
+              onOpenProjectSettings={setSettingsProject}
+            />
+          </div>
+
+          <button
+            onClick={() => setSidebarCollapsed(false)}
+            title="Show sidebar ⌘B"
+            className={cn(
+              "absolute left-[80px] top-2 z-20 flex size-7 items-center justify-center rounded-md text-muted-foreground transition-all duration-200 ease-out hover:bg-accent hover:text-foreground",
+              sidebarCollapsed
+                ? "scale-100 opacity-100 delay-200"
+                : "pointer-events-none scale-75 opacity-0",
+            )}
+          >
+            <PanelLeft className="size-4" />
+          </button>
+
+          <main className="min-w-0 flex-1 overflow-hidden">
+            {view === "session" && selected ? (
+              <SessionView
+                key={selected.id}
+                workspace={selected}
+                project={selectedProject}
+                onRenamed={onRenamed}
+                reloadNonce={reloadNonce}
+                sidebarCollapsed={sidebarCollapsed}
+                onManageModels={() => {
+                  setSettingsTab("models");
+                  setSettingsOpen(true);
+                }}
+              />
+            ) : view === "search" ? (
+              <SearchScreen
+                projects={projects}
+                quickChats={quickChats}
+                onSelect={openSession}
+              />
+            ) : view === "my-work" || view === "automations" ? (
+              <StubScreen
+                icon={
+                  view === "my-work" ? (
+                    <ListTodo className="size-7 text-muted-foreground/60" />
+                  ) : undefined
+                }
+                label={view === "my-work" ? "My work" : "Automations"}
+              />
+            ) : (
+              <HomeScreen
+                projects={projects}
+                onCreateSession={(pid, base, prompt) =>
+                  void createSession(pid, base, prompt)
+                }
+                onQuickChat={(prompt) => void newQuickChat(prompt)}
+                onAddProject={() => void pickProject()}
+                onCheckoutPr={(pid, prNumber) => void checkoutPr(pid, prNumber)}
+                onOpenAccounts={() => {
+                  setSettingsTab("accounts");
+                  setSettingsOpen(true);
+                }}
+              />
+            )}
+          </main>
+
+          <SettingsScreen
+            open={settingsOpen}
+            onOpenChange={setSettingsOpen}
+            initialTab={settingsTab}
+            projects={projects}
+            onProjectsChanged={refreshProjects}
+            onAddProject={() => void pickProject()}
+            onOpenProjectSettings={(p) => {
+              setSettingsOpen(false);
+              setSettingsProject(p);
+            }}
+          />
+
+          {branchModalProject && (
+            <NewWorkspaceModal
+              project={branchModalProject}
+              onClose={() => setBranchModalProject(null)}
+              onCreated={(ws) => {
+                void refreshProjects().then(() => openSession(ws));
+              }}
             />
           )}
-        </main>
 
-        <SettingsScreen
-          open={settingsOpen}
-          onOpenChange={setSettingsOpen}
-          initialTab={settingsTab}
-          projects={projects}
-          onProjectsChanged={refreshProjects}
-          onAddProject={() => void pickProject()}
-          onOpenProjectSettings={(p) => {
-            setSettingsOpen(false);
-            setSettingsProject(p);
-          }}
-        />
+          {prModalProject && (
+            <CreateFromPrModal
+              project={prModalProject}
+              onClose={() => setPrModalProject(null)}
+              onCreated={(ws) => {
+                void refreshProjects().then(() => openSession(ws));
+              }}
+            />
+          )}
 
-        {branchModalProject && (
-          <NewWorkspaceModal
-            project={branchModalProject}
-            onClose={() => setBranchModalProject(null)}
-            onCreated={(ws) => {
-              void refreshProjects().then(() => openSession(ws));
-            }}
-          />
-        )}
-
-        {settingsProject && (
-          <ProjectSettingsDialog
-            project={settingsProject}
-            open
-            onOpenChange={(o) => !o && setSettingsProject(null)}
-            onUpdated={(updated) => {
-              setProjects((prev) =>
-                prev.map((p) =>
-                  p.id === updated.id
-                    ? { ...updated, workspaces: p.workspaces }
-                    : p,
-                ),
-              );
-              setSettingsProject((cur) =>
-                cur?.id === updated.id
-                  ? { ...updated, workspaces: cur.workspaces }
-                  : cur,
-              );
-            }}
-            workspaceId={
-              selected?.id ?? settingsProject.workspaces[0]?.id ?? ""
-            }
-            onConfigRestarted={() => setReloadNonce((n) => n + 1)}
-          />
-        )}
-      </div>
-    </WorkspaceDataProvider>
+          {settingsProject && (
+            <ProjectSettingsDialog
+              project={settingsProject}
+              open
+              onOpenChange={(o) => !o && setSettingsProject(null)}
+              onUpdated={(updated) => {
+                setProjects((prev) =>
+                  prev.map((p) =>
+                    p.id === updated.id
+                      ? { ...updated, workspaces: p.workspaces }
+                      : p,
+                  ),
+                );
+                setSettingsProject((cur) =>
+                  cur?.id === updated.id
+                    ? { ...updated, workspaces: cur.workspaces }
+                    : cur,
+                );
+              }}
+              workspaceId={
+                selected?.id ?? settingsProject.workspaces[0]?.id ?? ""
+              }
+              onConfigRestarted={() => setReloadNonce((n) => n + 1)}
+            />
+          )}
+        </div>
+      </WorkspaceDataProvider>
+    </GitHubProvider>
   );
 }
 
