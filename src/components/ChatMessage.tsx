@@ -1,12 +1,12 @@
+import { parseDiff, synthesizeDiff } from "@/lib/diff";
+import { cn } from "@/lib/utils";
 import { ChevronRight, X } from "lucide-react";
+import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { useState } from "react";
 import type { LspDiagnostic, Part, ToolState } from "../lib/types";
-import { cn } from "@/lib/utils";
-import { usePreferences, type ChatDensity } from "./PreferencesProvider";
-import { parseDiff, synthesizeDiff } from "@/lib/diff";
 import { UnifiedDiff } from "./DiffBody";
+import { usePreferences, type ChatDensity } from "./PreferencesProvider";
 
 interface MessageProps {
   role: "user" | "assistant";
@@ -101,7 +101,17 @@ export function PartView({ part }: PartViewProps) {
   if (part.type === "text") {
     return (
       <div className="markdown-content">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={{
+            // Links must never navigate the app webview away. The global link
+            // catcher (see lib/links) intercepts the click; target/rel here
+            // keep the markup correct and give the right hover affordance.
+            a: ({ node: _node, ...props }) => (
+              <a {...props} target="_blank" rel="noreferrer" />
+            ),
+          }}
+        >
           {part.text || ""}
         </ReactMarkdown>
       </div>
@@ -194,7 +204,7 @@ const TOOL_LABELS: Record<string, string> = {
 
 function toolLabel(tool?: string): string {
   if (!tool) return "Tool";
-  return TOOL_LABELS[tool] ?? tool;
+  return TOOL_LABELS[tool] ?? tool.charAt(0).toUpperCase() + tool.slice(1);
 }
 
 function isPending(state?: ToolState): boolean {
@@ -331,7 +341,6 @@ function ToolCallDetails({ part }: { part: Part }) {
                     ({diag.source})
                   </span>
                 )}
-                {/* Path footnote when diagnostics span multiple files. */}
                 {diagnostics.some((d) => d.path !== path) && (
                   <div className="pl-4 text-[11px] text-muted-foreground">
                     {path}

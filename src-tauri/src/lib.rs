@@ -2,13 +2,18 @@ mod commands;
 mod config;
 mod env;
 mod git;
+mod opencode;
 mod path;
 mod project;
 mod server;
+mod supervisor;
+mod watcher;
 
 use project::Registry;
 use server::ServerManager;
+use supervisor::Supervisor;
 use tauri::Manager;
+use watcher::GitWatcher;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -28,7 +33,28 @@ pub fn run() {
 
             let servers = ServerManager::new();
             servers.spawn_reaper();
-            app.manage(servers);
+            app.manage(servers.clone());
+
+            // Backend orchestration: a filesystem watcher pushes git state, and
+            // a supervisor consumes each server's SSE + drives the PR autofix
+            // loop for the active and all autofix-enabled workspaces. Both push
+            // to the UI via events (see watcher.rs / supervisor.rs). This
+            // replaces the frontend's polling + JS autofix state machine.
+            let git_watcher = GitWatcher::new(app.handle().clone());
+            app.manage(git_watcher.clone());
+            // Seed watches off-thread so the per-workspace git recompute doesn't
+            // block startup (the initial emit has no listener yet anyway; the
+            // frontend calls `resync` once mounted to get the first snapshot).
+            let seed_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                for w in seed_handle.state::<Registry>().all_workspaces() {
+                    git_watcher.watch(&w.id, &w.path);
+                }
+            });
+
+            let supervisor = Supervisor::new(app.handle().clone(), servers);
+            supervisor.spawn();
+            app.manage(supervisor);
 
             // The window starts hidden to avoid a white flash; the frontend
             // shows it after first paint. This is a safety net so a failed
@@ -64,6 +90,12 @@ pub fn run() {
             commands::merge_workspace,
             commands::push_workspace,
             commands::create_workspace_pr,
+            commands::workspace_pr_status,
+            commands::register_session,
+            commands::set_active_workspace,
+            commands::set_autofix_mode,
+            commands::resync,
+            commands::request_git_refresh,
             commands::list_remotes,
             commands::start_server,
             commands::stop_server,

@@ -6,7 +6,12 @@ import { ThemeProvider } from "@/components/ThemeProvider";
 import { PreferencesProvider } from "@/components/PreferencesProvider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
+import { installGlobalLinkCatcher } from "@/lib/links";
 import "./index.css";
+
+// Never let a link navigate the single app webview — it would replace the
+// entire BranchLab UI. Route every external link out-of-process instead.
+installGlobalLinkCatcher();
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

@@ -24,4 +24,16 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 which = "8"
+# HTTP/SSE client for talking to each workspace's OpenCode server from Rust.
+# default-features = false drops TLS (OpenCode servers are plain HTTP on
+# localhost), avoiding an openssl/native-tls build dependency.
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }
+reqwest-eventsource = "0.6"
+futures-util = "0.3"
+# Tauri bundles tokio; we depend on it directly only for `time::sleep` in the
+# supervisor's async reconcile loop.
+tokio = { version = "1", features = ["time"] }
+# Filesystem watching for git state (replaces frontend diff-stat/changes polling).
+notify = "6"
+notify-debouncer-full = "0.3"
 

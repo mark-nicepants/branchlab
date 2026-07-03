@@ -4,6 +4,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AutofixMode,
   ConfigFile,
   DiffStat,
   EnvReport,
@@ -11,6 +12,7 @@ import type {
   FileContent,
   MergeResult,
   PrResult,
+  PrStatus,
   ProjectPrompts,
   ProjectUpdate,
   ProjectView,
@@ -190,6 +192,53 @@ export function createWorkspacePr(
   body: string,
 ): Promise<PrResult> {
   return invoke<PrResult>("create_workspace_pr", { workspaceId, title, body });
+}
+
+/**
+ * Fetch the PR CI status for a workspace's branch (via `gh`). Resolves to
+ * `null` when the branch has no PR yet; rejects when `gh` is unavailable or the
+ * repo has no GitHub remote.
+ */
+export function workspacePrStatus(
+  workspaceId: string,
+): Promise<PrStatus | null> {
+  return invoke<PrStatus | null>("workspace_pr_status", { workspaceId });
+}
+
+// ── Backend orchestration (events pushed back via src/lib/events.ts) ──
+
+/** Register the OpenCode session id so the backend can drive this workspace. */
+export function registerSession(
+  workspaceId: string,
+  sessionId: string,
+): Promise<void> {
+  return invoke<void>("register_session", { workspaceId, sessionId });
+}
+
+/** Tell the backend which workspace is on screen (gets changes + todos). */
+export function setActiveWorkspace(
+  workspaceId: string | null,
+): Promise<void> {
+  return invoke<void>("set_active_workspace", { workspaceId });
+}
+
+/** Set a workspace's PR autofix mode (persisted; reconciles the supervisor). */
+export function setAutofixMode(
+  workspaceId: string,
+  mode: AutofixMode,
+): Promise<void> {
+  return invoke<void>("set_autofix_mode", { workspaceId, mode });
+}
+
+/** Ask the backend to re-emit current git/session/pr snapshots (call once
+ *  after attaching event listeners — Tauri events aren't buffered). */
+export function resync(): Promise<void> {
+  return invoke<void>("resync");
+}
+
+/** Force a git recompute + push for one workspace (used by refreshChanges). */
+export function requestGitRefresh(workspaceId: string): Promise<void> {
+  return invoke<void>("request_git_refresh", { workspaceId });
 }
 
 /** List git remotes for a workspace's project root. */

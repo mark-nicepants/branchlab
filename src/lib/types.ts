@@ -25,7 +25,26 @@ export interface Workspace {
   base_branch: string | null;
   /** Prompt sent to the AI once the workspace server is ready. */
   init_prompt: string | null;
+  /** PR pipeline autofix mode (backend-driven, persisted in the registry).
+   *  Optional only so the browser mock's literals stay terse — the real
+   *  backend always sends it; treat an absent value as "off". */
+  autofix_mode?: AutofixMode;
+  /** OpenCode session id the backend drives for this workspace, if registered. */
+  session_id?: string | null;
 }
+
+/** PR pipeline autofix mode. Persisted per-workspace in the Rust registry. */
+export type AutofixMode = "off" | "auto" | "super";
+
+/** High-level PR pipeline phase (backend-computed; mirrors supervisor::Phase). */
+export type PipelinePhase =
+  | "idle"
+  | "running"
+  | "passing"
+  | "failing"
+  | "fixing"
+  | "awaiting_push"
+  | "exhausted";
 
 /** Human label for a workspace: explicit name, else branch, else a fallback. */
 export function workspaceLabel(w: Workspace): string {
@@ -88,6 +107,79 @@ export interface PrResult {
   branch: string;
   base: string;
   url: string;
+}
+
+/** One CI check on a PR, normalized from `gh`'s statusCheckRollup. */
+export interface PrCheck {
+  name: string;
+  /** Coarse bucket the UI colors by. */
+  bucket: "success" | "failure" | "pending" | "skipped";
+  /** Raw upstream state/conclusion (e.g. "IN_PROGRESS", "FAILURE"). */
+  state: string;
+  /** Link to the check's logs/details, when provided. */
+  url: string | null;
+  /** Owning workflow name (GitHub Actions only). */
+  workflow: string | null;
+}
+
+/** A pull request's CI status for one branch (from `workspacePrStatus`). */
+export interface PrStatus {
+  number: number;
+  url: string;
+  /** "OPEN" | "MERGED" | "CLOSED". */
+  state: string;
+  head_branch: string;
+  /** Head commit SHA — identifies which commit the checks belong to. */
+  head_sha: string;
+  checks: PrCheck[];
+  /** Rollup over all checks. */
+  rollup: "success" | "failure" | "pending" | "none";
+}
+
+// ── Backend-pushed event payloads (Tauri events; see src/lib/events.ts and the
+//    Rust watcher.rs / supervisor.rs emitters). Field names are camelCase. ──
+
+/** `workspace:git` — git state for one workspace. `changes` is populated only
+ *  for the active workspace (the heavier query). */
+export interface GitPayload {
+  workspaceId: string;
+  diffStat: DiffStat;
+  changes: FileChange[] | null;
+}
+
+/** `workspace:pr` — PR pipeline + autofix state for one workspace. */
+export interface PrPayload {
+  workspaceId: string;
+  status: PrStatus | null;
+  phase: PipelinePhase;
+  attempts: number;
+  mode: AutofixMode;
+  error: string | null;
+}
+
+/** `workspace:session` — coarse chat/session state (drives indicators + sounds). */
+export interface SessionPayload {
+  workspaceId: string;
+  /** "working" while the AI is actively running a turn, else "idle". */
+  activity: "idle" | "working";
+  /** A question is pending (a subset of `needsAttention`). */
+  awaitingInput: boolean;
+  /** Backend-computed: needs the user (pending question, or a finished/unseen
+   *  turn). Cleared when the workspace becomes active. Drives the warning icon. */
+  needsAttention: boolean;
+  error: string | null;
+}
+
+/** `workspace:todos` — the active workspace's todo list. */
+export interface TodosPayload {
+  workspaceId: string;
+  todos: Todo[];
+}
+
+/** `workspace:notify` — discrete notification signals (foundation for sounds). */
+export interface NotifyPayload {
+  workspaceId: string;
+  kind: "turn_done" | "awaiting_input" | "pipeline_failed" | "pipeline_green";
 }
 
 export interface DiffStat {

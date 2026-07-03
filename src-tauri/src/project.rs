@@ -61,6 +61,17 @@ pub enum WorkspaceKind {
     Worktree,
 }
 
+/// PR pipeline autofix mode, persisted per workspace so the backend supervisor
+/// can drive autofix for enabled workspaces regardless of what's on screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum AutofixMode {
+    #[default]
+    Off,
+    Auto,
+    Super,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Workspace {
     pub id: String,
@@ -80,6 +91,15 @@ pub struct Workspace {
     /// Optional prompt sent to the AI once the workspace server is ready.
     #[serde(default)]
     pub init_prompt: Option<String>,
+    /// PR pipeline autofix mode (backend-driven). Persisted so background
+    /// autofix survives restarts and doesn't depend on the frontend.
+    #[serde(default)]
+    pub autofix_mode: AutofixMode,
+    /// The OpenCode session id the backend uses to drive this workspace
+    /// (autofix prompts). Registered by the frontend when it creates/loads a
+    /// session; the supervisor falls back to creating one for background work.
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -182,6 +202,8 @@ impl Registry {
                 name: None,
                 base_branch: None,
                 init_prompt: None,
+                autofix_mode: AutofixMode::default(),
+                session_id: None,
             });
             self.persist(&data);
         }
@@ -195,6 +217,29 @@ impl Registry {
             w.name = Some(name.to_string());
         }
         self.persist(&data);
+    }
+
+    /// Set a workspace's PR autofix mode (persisted).
+    pub fn set_autofix_mode(&self, workspace_id: &str, mode: AutofixMode) {
+        let mut data = self.data.lock().unwrap();
+        if let Some(w) = data.workspaces.iter_mut().find(|w| w.id == workspace_id) {
+            w.autofix_mode = mode;
+        }
+        self.persist(&data);
+    }
+
+    /// Record the OpenCode session id the backend should drive for a workspace.
+    pub fn set_session_id(&self, workspace_id: &str, session_id: &str) {
+        let mut data = self.data.lock().unwrap();
+        if let Some(w) = data.workspaces.iter_mut().find(|w| w.id == workspace_id) {
+            w.session_id = Some(session_id.to_string());
+        }
+        self.persist(&data);
+    }
+
+    /// The session id recorded for a workspace, if any.
+    pub fn session_id(&self, workspace_id: &str) -> Option<String> {
+        self.data.lock().unwrap().workspaces.iter().find(|w| w.id == workspace_id)?.session_id.clone()
     }
 
     /// Update a project's metadata and prompts.
@@ -309,6 +354,8 @@ impl Registry {
             name: None,
             base_branch: Some(base),
             init_prompt,
+            autofix_mode: AutofixMode::default(),
+            session_id: None,
         };
         let mut data = self.data.lock().unwrap();
         data.workspaces.push(ws.clone());

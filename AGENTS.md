@@ -81,16 +81,31 @@ before committing.
 
 - **All filesystem / git / process work lives in Rust.** The frontend never
   touches the disk directly; it goes through Tauri commands.
+- **The frontend does NO polling and NO orchestration.** It is view logic only.
+  Anything periodic, stateful, or cross-workspace (git status, PR/CI monitoring,
+  autofix, session state, notifications) lives in the Rust backend, which
+  **pushes** state to the UI via Tauri events. Never add a `setInterval` that
+  polls a Tauri command — watch/observe in Rust and emit instead.
 - **`src/lib/api.ts` is the only place that calls `invoke`.** Every backend
   command gets a typed wrapper here so no raw command-name strings leak into
   components. Add new wrappers there, not inline.
-- **OpenCode HTTP/SSE** is the one exception: the frontend talks to each
-  workspace's OpenCode server directly via `src/lib/opencode.ts`. Tauri only
-  manages that server's lifecycle (`server.rs`).
+- **`src/lib/events.ts` is the only place that calls `listen`.** It is the event
+  analogue of `api.ts`: every backend→frontend event gets a typed wrapper here.
+  Components/hooks subscribe through it, never with a raw event-name string.
+- **The backend owns OpenCode.** The supervisor (`supervisor.rs`) consumes each
+  server's SSE for coarse state and sends prompts via `src-tauri/src/opencode.rs`.
+  The one thing the frontend still does directly is keep a `src/lib/opencode.ts`
+  SSE connection to render the **active chat's live stream** — never to derive
+  app state or trigger actions. Tauri manages server lifecycle (`server.rs`).
+- **Session-driving logic runs for all enabled workspaces regardless of what's
+  on screen.** Monitoring, PR autofix/superfix, and notification signals are
+  backend background work in `supervisor.rs`, not tied to a mounted component.
 - **Backend modules** are single-purpose: `git.rs` (git CLI), `project.rs`
-  (registry), `server.rs` (process lifecycle), `config.rs` (opencode config),
-  `env.rs` (PATH probe), `commands.rs` (the IPC surface that ties them together).
-  Put new logic in the matching module and expose it through `commands.rs`.
+  (registry), `server.rs` (process lifecycle), `opencode.rs` (OpenCode HTTP/SSE
+  client), `watcher.rs` (filesystem watch → `workspace:git` events),
+  `supervisor.rs` (SSE ingest + autofix loop → `workspace:{pr,session,todos,notify}`
+  events), `config.rs` (opencode config), `env.rs` (PATH probe), `commands.rs`
+  (the IPC surface). Put new logic in the matching module.
 
 ## Adding a Tauri command (the common task)
 
@@ -107,6 +122,24 @@ existing `read_file` / `workspace_files` commands as the template:
    field names are snake_case as serialized by serde).
 5. **Wrapper** in `src/lib/api.ts` — a typed `invoke<T>(...)` function. Tauri
    converts camelCase JS args to snake_case Rust params automatically.
+
+## Adding a backend→frontend event (pushing state)
+
+Prefer this over any polling. State the backend computes/observes reaches the UI
+as a Tauri event:
+
+1. **Emit** in `watcher.rs` or `supervisor.rs`: `app.emit("workspace:foo", payload)`
+   (needs `use tauri::Emitter;`). Emit **only on change** — compare against the
+   last emitted payload to avoid flooding.
+2. **Payload struct** in Rust: `#[derive(Serialize, Clone, PartialEq)]` with
+   `#[serde(rename_all = "camelCase")]` so the TS side gets camelCase fields.
+3. **Type** the payload in `src/lib/types.ts` (mirror the struct, camelCase).
+4. **Wrapper** in `src/lib/events.ts` — an `onWorkspaceFoo(cb)` that calls
+   `listen` and returns the unsubscribe function. Add a matching no-op/canned
+   emitter to `src/lib/events.mock.ts` (and, if useful, drive it from
+   `api.mock.ts`) so `dev:browser` still renders.
+5. **Subscribe** in a hook/provider; call `resync()` once after attaching
+   listeners if you need the current snapshot (events aren't buffered).
 
 ## Conventions
 

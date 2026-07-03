@@ -18,7 +18,6 @@ import {
 } from "./components/shell/SessionsSidebar";
 import { EmptyState } from "./components/ui/empty-state";
 import { useDesktopBehaviors } from "./hooks/useDesktopBehaviors";
-import { useInterval } from "./hooks/useInterval";
 import { useShortcuts } from "./hooks/useShortcuts";
 import { WorkspaceDataProvider } from "./hooks/useWorkspaceData";
 import {
@@ -29,7 +28,6 @@ import {
   openDevtools,
   probeEnvironment,
   renameWorkspace,
-  touchServer,
 } from "./lib/api";
 import { type EnvReport, type ProjectView, type Workspace } from "./lib/types";
 
@@ -113,16 +111,8 @@ function App() {
     ? (projects.find((p) => p.id === selected.project_id) ?? null)
     : null;
 
-  // Keep the active session's server warm.
-  useEffect(() => {
-    if (selectedId && view === "session") void touchServer(selectedId);
-  }, [selectedId, view]);
-  useInterval(
-    () => {
-      if (selectedId && view === "session") void touchServer(selectedId);
-    },
-    selectedId && view === "session" ? 60_000 : null,
-  );
+  // The backend supervisor keeps the active (and all autofix-enabled) servers
+  // warm now — no frontend heartbeat needed.
 
   const openSession = useCallback((w: Workspace) => {
     setSelectedId(w.id);
@@ -405,7 +395,7 @@ function SearchScreen({
 
   return (
     <div className="mx-auto flex h-full max-w-2xl flex-col px-6 pt-[8vh]">
-      <div className="flex items-center gap-2 rounded-xl border border-border bg-card px-3.5 py-2.5">
+      <div className="flex items-center gap-2 rounded-xl border border-border bg-card px-3.5 py-2.5 transition-colors duration-150 focus-within:border-ring">
         <Search className="size-4 text-muted-foreground" />
         <input
           autoFocus

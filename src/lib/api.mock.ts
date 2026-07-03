@@ -2,6 +2,7 @@
 // This module shadows src/lib/api.ts when running under `npm run dev:browser`.
 // It never touches disk/git; it just returns realistic data so the UI renders.
 
+import { mockEmit } from "./events.mock";
 import type {
   ConfigFile,
   DiffStat,
@@ -10,6 +11,7 @@ import type {
   FileContent,
   MergeResult,
   PrResult,
+  PrStatus,
   ProjectPrompts,
   ProjectUpdate,
   ProjectView,
@@ -328,6 +330,123 @@ export function listRemotes(): Promise<RemoteInfo[]> {
   return Promise.resolve([
     { name: "origin", url: "git@github.com:test/repo.git" },
   ]);
+}
+
+// ── Backend orchestration mocks: drive the event bus so the browser harness
+//    renders git badges, changes, and the PR bar without a Rust backend. ──
+
+export function registerSession(): Promise<void> {
+  return Promise.resolve();
+}
+
+export function setAutofixMode(): Promise<void> {
+  return Promise.resolve();
+}
+
+export function requestGitRefresh(): Promise<void> {
+  return Promise.resolve();
+}
+
+export function setActiveWorkspace(workspaceId: string | null): Promise<void> {
+  if (!workspaceId) return Promise.resolve();
+  // The active workspace also gets the full changes list…
+  void workspaceChanges().then((changes) =>
+    mockEmit("workspace:git", {
+      workspaceId,
+      diffStat: diffStats[workspaceId] ?? { files: 2, insertions: 30, deletions: 7 },
+      changes,
+    }),
+  );
+  // …and, for a worktree, its PR pipeline (so the bar renders on open).
+  const ws = projects.flatMap((p) => p.workspaces).find((w) => w.id === workspaceId);
+  if (ws?.kind === "Worktree") {
+    void workspacePrStatus().then((status) =>
+      mockEmit("workspace:pr", {
+        workspaceId,
+        status,
+        phase: "failing",
+        attempts: 0,
+        mode: ws.autofix_mode ?? "off",
+        error: null,
+      }),
+    );
+  }
+  return Promise.resolve();
+}
+
+export function resync(): Promise<void> {
+  // Illustrate the sidebar states in the browser harness: p1-ws1 working
+  // (spinner), p1-ws2 awaiting a question + p2-base finished-unseen (both
+  // warning triangle).
+  const working = new Set(["p1-ws1"]);
+  const awaiting = new Set(["p1-ws2"]);
+  const attention = new Set(["p1-ws2", "p2-base"]);
+  for (const p of projects) {
+    for (const w of p.workspaces) {
+      mockEmit("workspace:git", {
+        workspaceId: w.id,
+        diffStat: diffStats[w.id] ?? { files: 0, insertions: 0, deletions: 0 },
+        changes: null,
+      });
+      mockEmit("workspace:session", {
+        workspaceId: w.id,
+        activity: working.has(w.id) ? "working" : "idle",
+        awaitingInput: awaiting.has(w.id),
+        needsAttention: attention.has(w.id),
+        error: null,
+      });
+      if (w.kind === "Worktree") {
+        void workspacePrStatus().then((status) =>
+          mockEmit("workspace:pr", {
+            workspaceId: w.id,
+            status,
+            phase: "failing",
+            attempts: 0,
+            mode: w.autofix_mode ?? "off",
+            error: null,
+          }),
+        );
+      }
+    }
+  }
+  return Promise.resolve();
+}
+
+export function workspacePrStatus(): Promise<PrStatus | null> {
+  // A failing pipeline so the pipeline bar and Off/Auto/Super control are
+  // visible in the browser harness. Stable head_sha so the autofix loop only
+  // triggers once (the mocked opencode server doesn't actually push).
+  return Promise.resolve({
+    number: 42,
+    url: "https://github.com/test/repo/pull/42",
+    state: "OPEN",
+    head_branch: "feature",
+    head_sha: "abc1234",
+    rollup: "failure",
+    checks: [
+      {
+        name: "lint",
+        bucket: "success",
+        state: "SUCCESS",
+        url: "https://github.com/test/repo/actions/1",
+        workflow: "CI",
+      },
+      {
+        name: "test",
+        bucket: "failure",
+        state: "FAILURE",
+        url: "https://github.com/test/repo/actions/2",
+        workflow: "CI",
+      },
+      {
+        name: "build",
+        bucket: "success",
+        state: "SUCCESS",
+        url: "https://github.com/test/repo/actions/3",
+        workflow: "CI",
+      },
+    ],
+  });
 }
 
 export function readConfig(): Promise<ConfigFile> {

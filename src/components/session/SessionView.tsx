@@ -12,10 +12,9 @@ import {
 import { cn } from "@/lib/utils";
 import {
   ArrowLeft,
-  Code2,
   Columns2,
   Loader2,
-  TriangleAlert,
+  TriangleAlert
 } from "lucide-react";
 import {
   useCallback,
@@ -25,10 +24,16 @@ import {
   useState,
 } from "react";
 import { useCancellableEffect } from "../../hooks/useCancellableEffect";
+import { usePrPipeline } from "../../hooks/usePrPipeline";
 import { useWorkspaceData } from "../../hooks/useWorkspaceData";
-import { openExternal, restartServer, startServer } from "../../lib/api";
+import { restartServer, setAutofixMode, startServer } from "../../lib/api";
 import { OpencodeClient } from "../../lib/opencode";
-import type { ContextInfo, ProjectView, Workspace } from "../../lib/types";
+import type {
+  AutofixMode,
+  ContextInfo,
+  ProjectView,
+  Workspace,
+} from "../../lib/types";
 import { workspaceLabel } from "../../lib/types";
 import { ChangesView } from "../center/ChangesView";
 import { FileView } from "../center/FileView";
@@ -36,6 +41,7 @@ import { Chat, type WorkspaceAction } from "../Chat";
 import { CommitButton } from "../CommitButton";
 import { ChangesPanel } from "../layout/ChangesPanel";
 import { usePreferences } from "../PreferencesProvider";
+import { PrPipeline } from "./PrPipeline";
 
 interface Props {
   workspace: Workspace;
@@ -71,7 +77,7 @@ export function SessionView({
   sidebarCollapsed = false,
 }: Props) {
   const { prefs, setPref } = usePreferences();
-  const { diffStats } = useWorkspaceData();
+  const { diffStats, prByWorkspace } = useWorkspaceData();
   const [state, setState] = useState<State>({ kind: "starting" });
   const [attempt, setAttempt] = useState(0);
   const [pendingAction, setPendingAction] = useState<WorkspaceAction | null>(
@@ -83,6 +89,28 @@ export function SessionView({
   const isWorktree = workspace.kind === "Worktree";
   const baseUrl = state.kind === "ready" ? state.baseUrl : null;
   const changedCount = diffStats[workspace.id]?.files ?? 0;
+
+  // PR pipeline state is pushed by the backend supervisor (which also runs the
+  // autofix/superfix loop). This is a pure view over it.
+  const pipeline = usePrPipeline(workspace.id, isWorktree && state.kind === "ready");
+  // Autofix mode is backend-owned. The `workspace:pr` payload carries the
+  // authoritative mode (persisted in the registry), so it survives workspace
+  // switches; fall back to the registry snapshot on the workspace prop. Mirror
+  // locally for instant control feedback.
+  const backendMode = prByWorkspace[workspace.id]?.mode;
+  const [autofixMode, setAutofixModeState] = useState<AutofixMode>(
+    backendMode ?? workspace.autofix_mode ?? "off",
+  );
+  useEffect(() => {
+    setAutofixModeState(backendMode ?? workspace.autofix_mode ?? "off");
+  }, [workspace.id, backendMode, workspace.autofix_mode]);
+  const changeAutofixMode = useCallback(
+    (m: AutofixMode) => {
+      setAutofixModeState(m);
+      void setAutofixMode(workspace.id, m);
+    },
+    [workspace.id],
+  );
 
   const changesOpen = prefs.changesPanelOpen;
   const [panelMode, setPanelMode] = useState<PanelMode>({ kind: "list" });
@@ -282,25 +310,6 @@ export function SessionView({
               <TooltipTrigger asChild>
                 <Button
                   variant="ghost"
-                  size="sm"
-                  className="gap-1.5"
-                  onClick={() =>
-                    openExternal(workspace.path, prefs.editorApp).catch(
-                      () => {},
-                    )
-                  }
-                >
-                  <Code2 className="size-3.5" /> Open
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Open in {prefs.editorApp}</TooltipContent>
-            </Tooltip>
-          )}
-          {!isQuickChat && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
                   size="icon-sm"
                   className={cn(
                     "relative",
@@ -325,6 +334,15 @@ export function SessionView({
       {/* Body: chat + sliding, resizable changes panel */}
       <div ref={bodyRef} className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
+          {isWorktree && state.kind === "ready" && (
+            <PrPipeline
+              status={pipeline.status}
+              phase={pipeline.phase}
+              attempts={pipeline.attempts}
+              mode={autofixMode}
+              onModeChange={changeAutofixMode}
+            />
+          )}
           {state.kind === "ready" ? (
             <Chat
               key={workspace.id}

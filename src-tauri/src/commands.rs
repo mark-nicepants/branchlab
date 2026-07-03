@@ -5,9 +5,11 @@ use std::path::PathBuf;
 use tauri::State;
 
 use crate::config::{self, ConfigFile};
-use crate::git::{self, DiffStat, FileChange, FileContent, RemoteInfo};
-use crate::project::{ProjectView, Registry, Workspace};
+use crate::git::{self, DiffStat, FileChange, FileContent, PrStatus, RemoteInfo};
+use crate::project::{AutofixMode, ProjectView, Registry, Workspace};
 use crate::server::{ServerInfo, ServerManager};
+use crate::supervisor::Supervisor;
+use crate::watcher::GitWatcher;
 
 /// Look up a workspace path, returning a uniform "unknown workspace" error.
 /// Used by every command that takes a workspace_id and operates on its path.
@@ -48,8 +50,13 @@ pub fn create_workspace(
     base: Option<String>,
     init_prompt: Option<String>,
     registry: State<Registry>,
+    watcher: State<GitWatcher>,
+    supervisor: State<Supervisor>,
 ) -> Result<Workspace, String> {
-    registry.create_workspace(&project_id, base, init_prompt)
+    let ws = registry.create_workspace(&project_id, base, init_prompt)?;
+    watcher.watch(&ws.id, &ws.path);
+    supervisor.reconcile_now();
+    Ok(ws)
 }
 
 #[tauri::command]
@@ -78,8 +85,10 @@ pub fn remove_workspace(
     force: bool,
     registry: State<Registry>,
     servers: State<ServerManager>,
+    watcher: State<GitWatcher>,
 ) -> Result<(), String> {
     servers.stop(&workspace_id);
+    watcher.unwatch(&workspace_id);
     registry.remove_workspace(&workspace_id, force)
 }
 
@@ -142,8 +151,15 @@ pub fn read_file(workspace_id: String, file: String, registry: State<Registry>) 
 
 /// Discard a file's local changes (restore to HEAD, or delete if untracked).
 #[tauri::command]
-pub fn discard_file(workspace_id: String, file: String, registry: State<Registry>) -> Result<(), String> {
-    with_workspace_path(&registry, &workspace_id, |repo| git::discard_file(repo, &file))
+pub fn discard_file(
+    workspace_id: String,
+    file: String,
+    registry: State<Registry>,
+    watcher: State<GitWatcher>,
+) -> Result<(), String> {
+    let result = with_workspace_path(&registry, &workspace_id, |repo| git::discard_file(repo, &file));
+    watcher.refresh(&workspace_id);
+    result
 }
 
 // ── Workspace lifecycle: commit, merge, push, PR ──
@@ -211,6 +227,67 @@ pub fn create_workspace_pr(
     let (_ws, root, branch, base) = resolve_workspace_branch(&registry, &workspace_id)?;
     let url = git::create_pull_request(&root, &branch, &base, &title, &body)?;
     Ok(PrResult { branch, base, url })
+}
+
+/// Fetch the pull-request CI status for the workspace's branch (via `gh`).
+/// `Ok(None)` means the branch has no PR yet; `Err` means `gh` is unavailable
+/// or the repo has no GitHub remote.
+#[tauri::command]
+pub fn workspace_pr_status(workspace_id: String, registry: State<Registry>) -> Result<Option<PrStatus>, String> {
+    let (_ws, root, branch, _base) = resolve_workspace_branch(&registry, &workspace_id)?;
+    git::pr_status(&root, &branch)
+}
+
+// ── Backend orchestration surface (see supervisor.rs / watcher.rs) ──
+
+/// Record the OpenCode session id the frontend created/loaded for a workspace,
+/// so the supervisor drives autofix through that same session (fixes stream
+/// into the visible chat). Persisted in the registry for background use.
+#[tauri::command]
+pub fn register_session(
+    workspace_id: String,
+    session_id: String,
+    registry: State<Registry>,
+    supervisor: State<Supervisor>,
+) {
+    registry.set_session_id(&workspace_id, &session_id);
+    supervisor.on_session_registered(&workspace_id, &session_id);
+}
+
+/// Tell the backend which workspace is on screen. The active workspace also
+/// gets the full `changes` list + todos, and is always driven.
+#[tauri::command]
+pub fn set_active_workspace(workspace_id: Option<String>, watcher: State<GitWatcher>, supervisor: State<Supervisor>) {
+    watcher.set_active(workspace_id.clone());
+    supervisor.set_active(workspace_id);
+}
+
+/// Set a workspace's PR autofix mode (off|auto|super); reconciles immediately
+/// so enabling it starts (and disabling stops) background driving now.
+#[tauri::command]
+pub fn set_autofix_mode(
+    workspace_id: String,
+    mode: AutofixMode,
+    registry: State<Registry>,
+    supervisor: State<Supervisor>,
+) {
+    registry.set_autofix_mode(&workspace_id, mode);
+    supervisor.note_autofix_mode(&workspace_id, mode);
+}
+
+/// Force the backend to re-emit current git/session/pr snapshots. The frontend
+/// calls this once after attaching its event listeners, since Tauri events are
+/// not buffered for late subscribers.
+#[tauri::command]
+pub fn resync(watcher: State<GitWatcher>, supervisor: State<Supervisor>) {
+    watcher.resync();
+    supervisor.resync();
+}
+
+/// Force a git recompute + emit for one workspace (used by `refreshChanges`).
+#[tauri::command]
+pub fn request_git_refresh(workspace_id: String, watcher: State<GitWatcher>) {
+    watcher.refresh(&workspace_id);
 }
 
 #[tauri::command]

@@ -27,6 +27,12 @@ export default defineConfig(async ({ mode }) => ({
           __dirname,
           "./src/lib/opencode.mock.ts",
         ),
+        "./lib/events": path.resolve(__dirname, "./src/lib/events.mock.ts"),
+        "../lib/events": path.resolve(__dirname, "./src/lib/events.mock.ts"),
+        "../../lib/events": path.resolve(
+          __dirname,
+          "./src/lib/events.mock.ts",
+        ),
       }),
     },
   },

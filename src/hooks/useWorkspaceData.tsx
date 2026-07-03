@@ -1,37 +1,57 @@
-// Shared polling layer for workspace-scoped git data.
+// Shared workspace-scoped git data, pushed from the backend.
 //
-// Multiple panels (sidebar, fleet, changes view, changes panel) used to each
-// run their own setInterval against the same Tauri commands — sometimes twice
-// per workspace per cycle. This provider polls once and exposes the latest
-// snapshot via context.
+// The Rust filesystem watcher (watcher.rs) recomputes git state on change and
+// emits `workspace:git`; this provider just listens and exposes the latest
+// snapshot via context. No polling — see AGENTS.md. `changes` is populated by
+// the backend only for the active workspace (the heavier query); other
+// workspaces carry just the badge-level `diffStat`.
 
 import {
   createContext,
   useCallback,
   useContext,
   useEffect,
-  useRef,
+  useMemo,
   useState,
 } from "react";
-import { workspaceChanges, workspaceDiffStat } from "../lib/api";
-import type { DiffStat, FileChange } from "../lib/types";
-
-const DIFF_STAT_INTERVAL_MS = 4000;
-const CHANGES_INTERVAL_MS = 4000;
+import { requestGitRefresh, resync, setActiveWorkspace } from "../lib/api";
+import {
+  onWorkspaceGit,
+  onWorkspacePr,
+  onWorkspaceSession,
+} from "../lib/events";
+import type {
+  DiffStat,
+  FileChange,
+  GitPayload,
+  PrPayload,
+  SessionPayload,
+} from "../lib/types";
 
 interface WorkspaceDataValue {
-  /** Latest diff stats keyed by workspace id (updated periodically). */
+  /** Latest diff stats keyed by workspace id. */
   diffStats: Record<string, DiffStat>;
   /** Latest changed files for the active workspace, or undefined if none. */
   changes: FileChange[] | undefined;
   /** Force-refresh changes for the active workspace (e.g. after `discardFile`). */
   refreshChanges: () => void;
+  /** Latest PR pipeline payload keyed by workspace id. Held here (app-level,
+   *  never unmounts) so switching workspaces keeps the last-known status
+   *  instead of blanking until the next backend push. */
+  prByWorkspace: Record<string, PrPayload>;
+  /** Latest coarse session state keyed by workspace id (activity + the
+   *  backend-computed `needsAttention`). Covers any workspace with a running
+   *  server, including background turns you've navigated away from. Drives the
+   *  sidebar busy/attention indicators. */
+  sessionByWorkspace: Record<string, SessionPayload>;
 }
 
 const Ctx = createContext<WorkspaceDataValue>({
   diffStats: {},
   changes: undefined,
   refreshChanges: () => {},
+  prByWorkspace: {},
+  sessionByWorkspace: {},
 });
 
 interface ProviderProps {
@@ -43,66 +63,81 @@ interface ProviderProps {
 }
 
 export function WorkspaceDataProvider({
-  workspaceIds,
   activeWorkspaceId,
   children,
 }: ProviderProps) {
-  const [diffStats, setDiffStats] = useState<Record<string, DiffStat>>({});
-  const [changes, setChanges] = useState<FileChange[] | undefined>(undefined);
+  // Latest git payload per workspace id, keyed by workspaceId.
+  const [byId, setById] = useState<Record<string, GitPayload>>({});
+  // Latest PR + session payloads per workspace id (persist across switches).
+  const [prByWorkspace, setPrByWorkspace] = useState<Record<string, PrPayload>>(
+    {},
+  );
+  const [sessionByWorkspace, setSessionByWorkspace] = useState<
+    Record<string, SessionPayload>
+  >({});
 
-  // Stash the latest id list in a ref so the poll function doesn't re-create
-  // (and re-time) on every projects update.
-  const idsRef = useRef(workspaceIds);
-  idsRef.current = workspaceIds;
-
-  // ── Diff stats: one poll for every known workspace, single timer. ──
+  // Subscribe to backend git + PR + session pushes once; seed via resync. The
+  // backend computes session state (including `needsAttention`), so there's no
+  // client-side derivation — we just store what it pushes.
   useEffect(() => {
+    const unlisteners: Array<() => void> = [];
     let cancelled = false;
-    const poll = async () => {
-      const ids = idsRef.current;
-      const entries = await Promise.all(
-        ids.map(async (id) => [id, await workspaceDiffStat(id)] as const),
-      );
-      if (!cancelled) setDiffStats(Object.fromEntries(entries));
-    };
-    void poll();
-    const t = setInterval(() => void poll(), DIFF_STAT_INTERVAL_MS);
+    const track = (p: Promise<() => void>) =>
+      void p.then((fn) => (cancelled ? fn() : unlisteners.push(fn)));
+
+    track(
+      onWorkspaceGit((p) =>
+        setById((prev) => ({ ...prev, [p.workspaceId]: p })),
+      ),
+    );
+    track(
+      onWorkspacePr((p) =>
+        setPrByWorkspace((prev) => ({ ...prev, [p.workspaceId]: p })),
+      ),
+    );
+    track(
+      onWorkspaceSession((p) =>
+        setSessionByWorkspace((prev) => ({ ...prev, [p.workspaceId]: p })),
+      ),
+    );
+    // Events aren't buffered for late subscribers, so request current state now.
+    void resync();
     return () => {
       cancelled = true;
-      clearInterval(t);
+      unlisteners.forEach((fn) => fn());
     };
   }, []);
 
-  // ── Changes: only for the active workspace. ──
+  // Tell the backend which workspace is active (it then also emits `changes`
+  // and clears that workspace's `needsAttention`).
   useEffect(() => {
-    if (!activeWorkspaceId) {
-      setChanges(undefined);
-      return;
-    }
-    let cancelled = false;
-    const poll = async () => {
-      const data = await workspaceChanges(activeWorkspaceId).catch(
-        () => [] as FileChange[],
-      );
-      if (!cancelled) setChanges(data);
-    };
-    void poll();
-    const t = setInterval(() => void poll(), CHANGES_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(t);
-    };
+    void setActiveWorkspace(activeWorkspaceId);
   }, [activeWorkspaceId]);
 
+  const diffStats = useMemo(() => {
+    const out: Record<string, DiffStat> = {};
+    for (const [id, p] of Object.entries(byId)) out[id] = p.diffStat;
+    return out;
+  }, [byId]);
+
+  const changes = activeWorkspaceId
+    ? (byId[activeWorkspaceId]?.changes ?? undefined)
+    : undefined;
+
   const refreshChanges = useCallback(() => {
-    if (!activeWorkspaceId) return;
-    void workspaceChanges(activeWorkspaceId)
-      .then(setChanges)
-      .catch(() => {});
+    if (activeWorkspaceId) void requestGitRefresh(activeWorkspaceId);
   }, [activeWorkspaceId]);
 
   return (
-    <Ctx.Provider value={{ diffStats, changes, refreshChanges }}>
+    <Ctx.Provider
+      value={{
+        diffStats,
+        changes,
+        refreshChanges,
+        prByWorkspace,
+        sessionByWorkspace,
+      }}
+    >
       {children}
     </Ctx.Provider>
   );

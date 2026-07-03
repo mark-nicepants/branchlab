@@ -49,6 +49,7 @@ import {
   Link2,
   ListFilter,
   ListTodo,
+  Loader2,
   MessagesSquare,
   MonitorSmartphone,
   MoreVertical,
@@ -59,6 +60,7 @@ import {
   Settings,
   Terminal,
   Trash2,
+  TriangleAlert,
   X,
 } from "lucide-react";
 import { useState } from "react";
@@ -573,9 +575,15 @@ function WorkspaceRow({
   editorApp?: string;
   onOpenIn?: (w: Workspace, app?: string) => void;
 }) {
-  const { diffStats: stats } = useWorkspaceData();
+  const { diffStats: stats, sessionByWorkspace } = useWorkspaceData();
   const stat = stats[w.id];
+  const session = sessionByWorkspace[w.id];
   const isQuickChat = w.kind === "QuickChat";
+  // Spinner while the AI is actively working; warning triangle when the backend
+  // says the workspace needs the user (pending question, or a finished/unseen
+  // turn). Both come straight from the pushed session state.
+  const working = session?.activity === "working";
+  const needsAttention = !working && session?.needsAttention;
 
   const row = (
     <div
@@ -588,7 +596,19 @@ function WorkspaceRow({
         className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left"
         onClick={onSelect}
       >
-        <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
+        {working ? (
+          <Loader2
+            className="size-3.5 shrink-0 animate-spin text-primary"
+            aria-label="Working"
+          />
+        ) : needsAttention ? (
+          <TriangleAlert
+            className="size-3.5 shrink-0 text-warning"
+            aria-label="Needs your attention"
+          />
+        ) : (
+          <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
+        )}
         <span
           className="min-w-0 flex-1 truncate text-sm"
           title={workspaceLabel(w)}

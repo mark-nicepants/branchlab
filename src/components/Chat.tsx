@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useClipboardImages } from "../hooks/useClipboardImages";
 import { useCommands } from "../hooks/useCommands";
 import { useTodos } from "../hooks/useTodos";
+import { registerSession } from "../lib/api";
 import { OpencodeClient } from "../lib/opencode";
 import {
   expandTemplate,
@@ -137,7 +138,7 @@ export function Chat({
   const [input, setInput] = useState(
     prefs.workspace[workspace.id]?.inputText ?? "",
   );
-  const { todos, dismissIfAllCompleted } = useTodos(client, sessionId);
+  const { todos, dismissIfAllCompleted } = useTodos(workspace.id);
   const {
     attachments,
     handlePaste,
@@ -340,6 +341,9 @@ export function Chat({
 
         if (cancelled) return;
         setSessionId(session.id);
+        // Tell the backend which session drives this workspace, so the
+        // supervisor's autofix loop uses the same session the user sees.
+        void registerSession(workspace.id, session.id);
 
         const { models, defaultKey } = await client.listModels();
         if (cancelled) return;
@@ -727,7 +731,6 @@ export function Chat({
             busy && "composer-loading",
           )}
         >
-          {/* Controls on top (Polyscope-style), composer below. */}
           <div className="flex items-center gap-1.5 px-2 py-1.5">
             <ModeSelector value={agent} onChange={setAgent} />
             <ModelSelector

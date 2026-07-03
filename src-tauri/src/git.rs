@@ -11,7 +11,7 @@ use std::process::Command;
 use serde::Serialize;
 
 /// Summary of uncommitted changes in a working directory, for the fleet view.
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
 pub struct DiffStat {
     pub files: u32,
     pub insertions: u32,
@@ -123,7 +123,7 @@ pub fn diff_stat(path: &str) -> DiffStat {
 }
 
 /// One changed file in a working tree, relative to a comparison ref.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct FileChange {
     pub path: String,
     /// "modified" | "added" | "deleted" | "renamed" | "untracked"
@@ -307,6 +307,16 @@ pub fn current_branch(repo: &str) -> Result<String, String> {
     Ok(branch)
 }
 
+/// Resolve a working directory's actual git directory. For a worktree this is
+/// `<repo>/.git/worktrees/<name>` (NOT the worktree's own dir), which is where
+/// commits/checkouts land — the filesystem watcher must watch this too so the
+/// changed-files count clears after an in-worktree commit.
+pub fn resolve_git_dir(repo: &str) -> Option<String> {
+    let out = git(repo, &["rev-parse", "--absolute-git-dir"]).ok()?;
+    let dir = out.trim().to_string();
+    (!dir.is_empty()).then_some(dir)
+}
+
 /// Stage all changes and commit with the supplied message.
 pub fn commit_all(repo: &str, message: &str) -> Result<String, String> {
     git(repo, &["add", "-A"])?;
@@ -378,6 +388,127 @@ pub fn create_pull_request(repo: &str, branch: &str, base: &str, title: &str, bo
     }
     let url = String::from_utf8_lossy(&pr_out.stdout).trim().to_string();
     Ok(url)
+}
+
+/// One CI check on a pull request, normalized from `gh`'s `statusCheckRollup`
+/// (which mixes GitHub Actions `CheckRun`s and legacy `StatusContext`s).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct PrCheck {
+    pub name: String,
+    /// Coarse bucket the UI colors by: "success" | "failure" | "pending" | "skipped".
+    pub bucket: String,
+    /// Raw upstream state/conclusion, for display on hover.
+    pub state: String,
+    /// Link to the check's details (logs), when provided.
+    pub url: Option<String>,
+    /// Owning workflow name (Actions only), when provided.
+    pub workflow: Option<String>,
+}
+
+/// A pull request's CI state for one branch. `None` from `pr_status` means no
+/// PR exists for the branch (as opposed to a `gh`/auth error, which is `Err`).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct PrStatus {
+    pub number: i64,
+    pub url: String,
+    /// PR state: "OPEN" | "MERGED" | "CLOSED".
+    pub state: String,
+    pub head_branch: String,
+    /// Head commit SHA — used to dedupe autofix triggers per commit.
+    pub head_sha: String,
+    pub checks: Vec<PrCheck>,
+    /// Rollup over `checks`: "success" | "failure" | "pending" | "none".
+    pub rollup: String,
+}
+
+/// Map a raw CheckRun conclusion / StatusContext state to our coarse bucket.
+fn check_bucket(raw: &str) -> &'static str {
+    match raw.to_ascii_uppercase().as_str() {
+        "SUCCESS" | "NEUTRAL" => "success",
+        "SKIPPED" => "skipped",
+        "FAILURE" | "TIMED_OUT" | "CANCELLED" | "ACTION_REQUIRED" | "STARTUP_FAILURE" | "ERROR" => "failure",
+        // QUEUED / IN_PROGRESS / PENDING / WAITING / REQUESTED / EXPECTED / "" …
+        _ => "pending",
+    }
+}
+
+/// Fetch the pull-request CI status for `branch` via the `gh` CLI. Returns
+/// `Ok(None)` when the branch has no PR, `Err` when `gh` is missing/unauthed or
+/// the repo has no GitHub remote.
+pub fn pr_status(repo: &str, branch: &str) -> Result<Option<PrStatus>, String> {
+    let out = Command::new("gh")
+        .args(["pr", "view", branch, "--json", "number,url,state,headRefName,headRefOid,statusCheckRollup"])
+        .current_dir(repo)
+        .output()
+        .map_err(|e| format!("gh failed to run (is it installed?): {e}"))?;
+
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr).to_lowercase();
+        // No PR for this branch is a normal, non-error condition.
+        if err.contains("no pull requests found") || err.contains("no open pull requests") {
+            return Ok(None);
+        }
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+
+    let v: serde_json::Value =
+        serde_json::from_slice(&out.stdout).map_err(|e| format!("could not parse gh output: {e}"))?;
+
+    let mut checks = Vec::new();
+    if let Some(arr) = v.get("statusCheckRollup").and_then(|x| x.as_array()) {
+        for c in arr {
+            // CheckRun (GitHub Actions) vs StatusContext (legacy commit status).
+            let is_status_context = c.get("__typename").and_then(|t| t.as_str()) == Some("StatusContext");
+            let (name, raw_state, url, workflow) = if is_status_context {
+                (
+                    c.get("context").and_then(|x| x.as_str()).unwrap_or("check").to_string(),
+                    c.get("state").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    c.get("targetUrl").and_then(|x| x.as_str()).map(str::to_string),
+                    None,
+                )
+            } else {
+                // For a CheckRun, an unfinished run has an empty conclusion; fall
+                // back to its status (QUEUED/IN_PROGRESS) so it buckets as pending.
+                let status = c.get("status").and_then(|x| x.as_str()).unwrap_or("");
+                let conclusion = c.get("conclusion").and_then(|x| x.as_str()).unwrap_or("");
+                let raw = if conclusion.is_empty() { status } else { conclusion };
+                (
+                    c.get("name").and_then(|x| x.as_str()).unwrap_or("check").to_string(),
+                    raw.to_string(),
+                    c.get("detailsUrl").and_then(|x| x.as_str()).map(str::to_string),
+                    c.get("workflowName").and_then(|x| x.as_str()).map(str::to_string),
+                )
+            };
+            checks.push(PrCheck {
+                name,
+                bucket: check_bucket(&raw_state).to_string(),
+                state: raw_state,
+                url,
+                workflow,
+            });
+        }
+    }
+
+    let rollup = if checks.is_empty() {
+        "none"
+    } else if checks.iter().any(|c| c.bucket == "pending") {
+        "pending"
+    } else if checks.iter().any(|c| c.bucket == "failure") {
+        "failure"
+    } else {
+        "success"
+    }
+    .to_string();
+
+    Ok(Some(PrStatus {
+        number: v.get("number").and_then(|x| x.as_i64()).unwrap_or(0),
+        url: v.get("url").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+        state: v.get("state").and_then(|x| x.as_str()).unwrap_or("OPEN").to_string(),
+        head_branch: v.get("headRefName").and_then(|x| x.as_str()).unwrap_or(branch).to_string(),
+        head_sha: v.get("headRefOid").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+        checks,
+        rollup,
+    }))
 }
 
 #[cfg(test)]
