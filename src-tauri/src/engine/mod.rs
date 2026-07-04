@@ -85,6 +85,12 @@ pub enum EngineEvent {
     Ready { session_id: String, config: Vec<ConfigOption> },
     /// A streaming session update (blocks, plan, config, title, usage, commands).
     Update(Box<acp_schema::SessionUpdate>),
+    /// The refreshed full config-option set returned by a `set_config_option`
+    /// call. opencode does NOT emit a `config_option_update` notification for
+    /// its own response — the new options (e.g. the dynamic `effort` /
+    /// thought-level option that appears when a variant-capable model is
+    /// selected) ride only on the response, so the engine forwards them here.
+    ConfigChanged(Vec<ConfigOption>),
     /// The current prompt turn finished.
     TurnEnded { stop: StopKind },
     /// The agent is asking permission; `reply` resolves with the chosen option id

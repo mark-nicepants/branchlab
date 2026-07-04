@@ -647,9 +647,22 @@ const MOCK_CONFIG: ConfigOption[] = [
       },
     ],
   },
-  // NB: opencode advertises only `model` + `mode` over ACP — no reasoning/
-  // thoughtLevel option. Reasoning is a synthetic, config-backed selector in the
-  // composer (see Chat.tsx), shown for supported providers like Anthropic.
+  // opencode advertises a dynamic `effort` option (category thoughtLevel) once
+  // a variant-capable model is selected; the composer renders it generically.
+  {
+    id: "effort",
+    name: "Effort",
+    description: "Available effort levels for this model",
+    category: "thoughtLevel",
+    currentValue: "medium",
+    choices: [
+      { value: "low", name: "Low", description: null, group: null },
+      { value: "medium", name: "Medium", description: null, group: null },
+      { value: "high", name: "High", description: null, group: null },
+      { value: "xhigh", name: "Xhigh", description: null, group: null },
+      { value: "max", name: "Max", description: null, group: null },
+    ],
+  },
 ];
 
 let mockSeq = 100;
@@ -981,17 +994,6 @@ export function getDefaultModel(): Promise<string | null> {
 
 export function setDefaultModel(model: string): Promise<void> {
   mockDefaultModel = model || null;
-  return Promise.resolve();
-}
-
-const mockReasoning: Record<string, string> = {};
-
-export function getModelReasoning(model: string): Promise<string> {
-  return Promise.resolve(mockReasoning[model] ?? "default");
-}
-
-export function setModelReasoning(model: string, level: string): Promise<void> {
-  mockReasoning[model] = level;
   return Promise.resolve();
 }
 

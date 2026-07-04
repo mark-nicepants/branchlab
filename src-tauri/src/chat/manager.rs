@@ -73,6 +73,11 @@ struct ConvState {
     /// the engine (e.g. on a reasoning change), so the user's chosen model isn't
     /// reset to the engine's default by the fresh session's advertised config.
     desired_model: Option<String>,
+    /// Thought-level (`effort`) to re-apply once the restarted session's model
+    /// is set. The effort option is dynamic — it only exists after a
+    /// variant-capable model is selected — so it is re-applied from the
+    /// `ConfigChanged` that follows the model re-apply, not from `Ready`.
+    desired_effort: Option<String>,
 }
 
 impl ConvState {
@@ -89,6 +94,7 @@ impl ConvState {
             commands: Vec::new(),
             pending_reason: SessionReason::Started,
             desired_model: None,
+            desired_effort: None,
         }
     }
 }
@@ -372,6 +378,11 @@ impl ChatManager {
                     .iter()
                     .find(|o| o.category.as_deref() == Some("model"))
                     .map(|o| o.current_value.clone());
+                conv.desired_effort = conv
+                    .config
+                    .iter()
+                    .find(|o| o.category.as_deref() == Some("thoughtLevel"))
+                    .map(|o| o.current_value.clone());
                 conv.engine = None; // Drop → Shutdown + abort the old opencode acp
                 conv.ready = false;
                 conv.current = None;
@@ -455,7 +466,9 @@ impl Inner {
                 // ignores the config's top-level `model`, so we set it explicitly.
                 // Priority: a model selected before a restart (reasoning-change
                 // reset) wins; otherwise the global default model for all
-                // workspaces. `SetConfig` over ACP is honored (unlike reasoning).
+                // workspaces. The response to that SetConfig carries the full
+                // refreshed option set (incl. the dynamic `effort` option for
+                // variant-capable models) — folded in via `ConfigChanged`.
                 let desired = conv
                     .desired_model
                     .take()
@@ -483,6 +496,24 @@ impl Inner {
                 events::emit_config(&self.app, ws, &conv.config);
             }
             EngineEvent::Update(u) => self.handle_update(ws, *u),
+            EngineEvent::ConfigChanged(config) => {
+                let mut convs = self.convs.lock().unwrap();
+                let Some(conv) = convs.get_mut(ws) else { return };
+                conv.config = config;
+                // Re-apply the pre-restart thought level once the effort option
+                // (dynamic; appears with the model) is back and the value fits.
+                if let Some(effort) = conv.desired_effort.take() {
+                    if let Some(opt) = conv.config.iter_mut().find(|o| o.category.as_deref() == Some("thoughtLevel")) {
+                        if opt.current_value != effort && opt.choices.iter().any(|c| c.value == effort) {
+                            opt.current_value = effort.clone();
+                            if let Some(engine) = &conv.engine {
+                                engine.send(EngineCommand::SetConfig { id: opt.id.clone(), value: effort });
+                            }
+                        }
+                    }
+                }
+                events::emit_config(&self.app, ws, &conv.config);
+            }
             EngineEvent::TurnEnded { stop } => self.finish_turn(ws, stop),
             EngineEvent::Permission { req, reply } => {
                 let mut convs = self.convs.lock().unwrap();

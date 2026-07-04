@@ -105,8 +105,8 @@ before committing.
 - **Session-driving logic runs for all enabled workspaces regardless of what's
   on screen.** The supervisor (`supervisor.rs`) subscribes to the chat manager's
   `TurnEvent` broadcast for coarse session state (`workspace:session`/`notify`)
-  and runs the PR autofix/superfix loop, sending fix prompts *through the chat
-  manager* (origin=Autofix). No second engine connection.
+  and runs the PR autofix/superfix loop, sending fix prompts _through the chat
+  manager_ (origin=Autofix). No second engine connection.
 - **Backend modules** are single-purpose: `git.rs` (git CLI), `project.rs`
   (registry), `chat/` (ACP chat layer: `model`/`store`/`assembler`/`manager`/
   `events`/`commands`), `engine/acp.rs` (the `opencode acp` driver — the only
@@ -206,20 +206,23 @@ as a Tauri event:
 - **Config options** are advertised over ACP as **Session Config Options**
   (`session/new` response + `config_option_update`), surfaced as `ConfigOption`s
   and driven by the `ConfigSelect` composer control; change one via
-  `chat_set_config(id, value)`. opencode currently advertises **`model` and `mode`
-  only** — **not reasoning effort** (`thoughtLevel`), and ACP has no per-prompt
-  channel to set it, so there is no reasoning selector today. `ConfigSelect`
-  renders whatever categories arrive, so a reasoning selector appears
-  automatically if a future opencode advertises `thoughtLevel`.
-- **Reasoning effort ("variant")** is a real opencode feature but is *not*
-  reachable over ACP (opencode rejects `set_config` for `variant`/`thoughtLevel`
-  as "unknown config option"; its TUI variant picker is session-local). A model's
-  *base* options in `opencode.json` DO apply to every turn incl. ACP, so BranchLab
-  ships a synthetic composer selector (`chat_set_reasoning` →
-  `config::set_model_reasoning`) that writes the level into the **global** opencode
-  config (Anthropic `thinking.budgetTokens` / OpenAI `reasoningEffort` / Gemini
-  `thinkingConfig.thinkingBudget`) — never the repo worktree — and restarts the
-  engine session to reload. Shown only for providers with a known mapping.
+  `chat_set_config(id, value)`. A new session advertises `model` and `mode`;
+  once a **variant-capable model** is selected, opencode adds a dynamic
+  **`effort`** option (category `thoughtLevel`, values from the model's
+  `variants`, e.g. low→max) — this is the composer's thinking-level dropdown.
+- **The `set_config_option` RESPONSE is the only place dynamic options appear.**
+  opencode does not emit a `config_option_update` for its own response, so the
+  engine maps `resp.config_options` and forwards them as
+  `EngineEvent::ConfigChanged`; the manager folds them into `conv.config` and
+  emits `chat:config`. (Setting `effort` before a variant-capable model is
+  selected is rejected as "unknown config option" — the option only exists
+  while the current model has variants; switching models resets it to the
+  model's default.) The chosen effort is stored in ACP session state and
+  applied by opencode to every prompt of that session. Across engine restarts
+  (compact/clear) the manager stashes `desired_effort` alongside
+  `desired_model` and re-applies it from the `ConfigChanged` that follows the
+  model re-apply. Reasoning is **never** written into `opencode.json` (the old
+  per-model config-file mechanism was removed).
 - **AI titles:** opencode does not auto-title (no `SessionInfoUpdate`). The
   `chat_generate_title` command generates one via a **throwaway session on the
   workspace's existing ACP connection** (no extra process; its text is collected

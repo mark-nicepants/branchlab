@@ -454,17 +454,6 @@ export function setDefaultModel(model: string): Promise<void> {
   return invoke<void>("set_default_model", { model });
 }
 
-/** The reasoning effort configured for a model (`provider/id`), or "default". */
-export function getModelReasoning(model: string): Promise<string> {
-  return invoke<string>("get_model_reasoning", { model });
-}
-
-/** Write a model's reasoning effort (default|low|medium|high|max) to the
- *  opencode config. Applied by opencode on the next session. */
-export function setModelReasoning(model: string, level: string): Promise<void> {
-  return invoke<void>("set_model_reasoning", { model, level });
-}
-
 /** Restart a workspace's server (to apply config changes). */
 export function restartServer(workspaceId: string): Promise<ServerInfo> {
   return invoke<ServerInfo>("restart_server", { workspaceId });

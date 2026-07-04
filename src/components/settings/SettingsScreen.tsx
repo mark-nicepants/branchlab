@@ -29,14 +29,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { toast } from "sonner";
-import {
-  getDefaultModel,
-  getModelReasoning,
-  removeProject,
-  setDefaultModel,
-  setModelReasoning,
-} from "../../lib/api";
+import { getDefaultModel, removeProject, setDefaultModel } from "../../lib/api";
 import { groupByProvider, shortName } from "../../lib/models";
 import type { ProjectView } from "../../lib/types";
 import { Input } from "@/components/ui/input";
@@ -405,39 +398,11 @@ function ProjectsTab({
 
 // ── Models ──
 
-// Providers we have a reasoning-config mapping for (mirrors config.rs). Others
-// hide the effort control.
-const REASONING_PROVIDERS = new Set([
-  "anthropic",
-  "anthropic-vertex",
-  "bedrock",
-  "google",
-  "google-vertex",
-  "vertex",
-  "github-copilot",
-  "copilot",
-  "openai",
-  "openai-compatible",
-  "azure",
-]);
-const REASONING_LEVELS: { value: string; label: string }[] = [
-  { value: "default", label: "Default (model's own)" },
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
-  { value: "max", label: "Max" },
-];
-
 function ModelsTab() {
   const { prefs, setPref } = usePreferences();
   const catalog = prefs.modelCatalog;
   const [query, setQuery] = useState("");
   const [defaultModel, setDefault] = useState<string>("");
-
-  // Reasoning configurator state.
-  const [rModel, setRModel] = useState("");
-  const [rLevel, setRLevel] = useState("default");
-  const [rBusy, setRBusy] = useState(false);
 
   // Which provider groups are expanded in the available-models list.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -454,33 +419,6 @@ function ModelsTab() {
       .then((m) => setDefault(m ?? ""))
       .catch(() => setDefault(""));
   }, []);
-
-  // Seed the reasoning model once the catalog is known (prefer the default).
-  useEffect(() => {
-    if (!rModel && catalog.length) setRModel(defaultModel || catalog[0].value);
-  }, [catalog, defaultModel, rModel]);
-  // Prefill the effort from what's already in the config for that model.
-  useEffect(() => {
-    if (!rModel) return;
-    getModelReasoning(rModel)
-      .then(setRLevel)
-      .catch(() => setRLevel("default"));
-  }, [rModel]);
-
-  const rProvider = rModel.split("/")[0] ?? "";
-  const rSupported = REASONING_PROVIDERS.has(rProvider);
-
-  async function saveReasoning() {
-    setRBusy(true);
-    try {
-      await setModelReasoning(rModel, rLevel);
-      toast.success("Reasoning saved — start a new session to apply it.");
-    } catch (e) {
-      toast.error(`Could not save reasoning: ${e}`);
-    } finally {
-      setRBusy(false);
-    }
-  }
 
   const disabled = useMemo(
     () => new Set(prefs.disabledModels),
@@ -554,56 +492,6 @@ function ModelsTab() {
             </optgroup>
           ))}
         </select>
-      </Field>
-
-      <Field
-        title="Reasoning effort"
-        desc="opencode doesn't expose reasoning over ACP, so BranchLab writes it per-model into your opencode config. Pick a model and effort, then Save — it applies on the model's next session."
-      >
-        <div className="flex flex-col gap-2">
-          <select
-            value={rModel}
-            onChange={(e) => setRModel(e.target.value)}
-            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-          >
-            {defaultGroups.map(([provider, list]) => (
-              <optgroup key={provider} label={provider}>
-                {list.map((c) => (
-                  <option key={c.value} value={c.value}>
-                    {shortName(c.name)}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-          <div className="flex items-center gap-2">
-            <select
-              value={rLevel}
-              onChange={(e) => setRLevel(e.target.value)}
-              disabled={!rSupported}
-              className="h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm disabled:opacity-50"
-            >
-              {REASONING_LEVELS.map((l) => (
-                <option key={l.value} value={l.value}>
-                  {l.label}
-                </option>
-              ))}
-            </select>
-            <Button
-              size="sm"
-              disabled={!rSupported || rBusy}
-              onClick={() => void saveReasoning()}
-            >
-              Save
-            </Button>
-          </div>
-          {!rSupported && rModel && (
-            <p className="text-xs text-muted-foreground">
-              Reasoning isn't configurable for the{" "}
-              <span className="font-mono">{rProvider}</span> provider.
-            </p>
-          )}
-        </div>
       </Field>
 
       <div>

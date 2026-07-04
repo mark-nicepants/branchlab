@@ -497,28 +497,6 @@ pub fn set_default_model(model: String) -> Result<(), String> {
     config::set_default_model(&config::global_dir(), Some(model.as_str()).filter(|s| !s.is_empty()))
 }
 
-/// The reasoning-effort level currently configured for a model (`provider/id`),
-/// or "default" if none — for prefilling the Models settings configurator.
-#[tauri::command]
-pub fn get_model_reasoning(model: String) -> String {
-    match model.split_once('/') {
-        Some((provider, model_id)) => config::model_reasoning_level(&config::global_dir(), provider, model_id),
-        None => "default".to_string(),
-    }
-}
-
-/// Write a model's reasoning effort (default|low|medium|high|max) into the
-/// global opencode config. opencode applies it on the next session. Errors for
-/// providers we don't have a reasoning mapping for.
-#[tauri::command]
-pub fn set_model_reasoning(model: String, level: String) -> Result<(), String> {
-    let (provider, model_id) = model.split_once('/').ok_or("model value has no provider/ prefix")?;
-    if level != "default" && !config::reasoning_supported(provider) {
-        return Err(format!("reasoning isn't configurable for provider '{provider}'"));
-    }
-    config::set_model_reasoning(&config::global_dir(), provider, model_id, &level)
-}
-
 /// Open the webview inspector (we disable the default right-click menu, so this
 /// is bound to a keyboard shortcut instead). Available because the tauri
 /// `devtools` feature is enabled in Cargo.toml.

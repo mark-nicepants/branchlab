@@ -431,13 +431,6 @@ export interface ModelOption {
   name: string;
   /** Max context window in tokens (model.limit.context), if known. */
   contextLimit?: number;
-  /**
-   * Reasoning-effort variants the model supports, in the server's order
-   * (e.g. `["low", "medium", "high", "xhigh", "max"]`). Empty when the model
-   * has no selectable reasoning effort. Sent to the prompt endpoint as the
-   * top-level `variant` string; omitting it uses the model's default.
-   */
-  variants: string[];
 }
 
 /** One OpenCode todo item from /session/{id}/todo. */

@@ -134,8 +134,6 @@ pub fn run() {
             commands::write_config,
             commands::get_default_model,
             commands::set_default_model,
-            commands::get_model_reasoning,
-            commands::set_model_reasoning,
             commands::open_devtools,
             commands::open_external,
             commands::log_path,

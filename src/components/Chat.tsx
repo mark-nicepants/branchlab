@@ -149,10 +149,10 @@ export function Chat({
     : [];
   useEffect(() => setSlashIndex(0), [showPalette, slashMatches.length]);
 
-  // Reasoning effort is NOT set here: opencode doesn't expose it over ACP, so it
-  // is configured per-model in the opencode config (Settings → Models explains
-  // how). We render whatever config options ACP advertises (model, mode, and
-  // reasoning too if opencode ever adds it) — see the config map below.
+  // Reasoning effort ("thinking level") needs no special handling here:
+  // opencode advertises it over ACP as a dynamic `effort` config option
+  // (category thoughtLevel) once a variant-capable model is selected, so the
+  // generic config map below renders it like mode — see chat.config.map.
 
   async function send() {
     const text = input.trim();

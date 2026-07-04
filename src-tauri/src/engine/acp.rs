@@ -189,9 +189,12 @@ async fn run_loop(
                 });
             }
             EngineCommand::SetConfig { id, value } => {
-                // The manager already applied this optimistically to the UI; we
-                // forward it to opencode and log the outcome (opencode may or may
-                // not echo a config_option_update).
+                // The manager already applied this optimistically to the UI. The
+                // response carries the authoritative refreshed option set — and
+                // it is the ONLY place dynamic options appear (opencode adds an
+                // `effort` thought-level option when a variant-capable model is
+                // selected, without emitting a config_option_update), so we
+                // forward it to the manager.
                 match conn
                     .send_request(SetSessionConfigOptionRequest::new(
                         session_id.clone(),
@@ -201,7 +204,19 @@ async fn run_loop(
                     .block_task()
                     .await
                 {
-                    Ok(_) => crate::logf!("acp", "set_config ok ws={ws} id={id} value={value}"),
+                    Ok(resp) => {
+                        let config = map_config_options(&resp.config_options);
+                        crate::logf!(
+                            "acp",
+                            "set_config ok ws={ws} id={id} value={value} -> options=[{}]",
+                            config
+                                .iter()
+                                .map(|o| format!("{}={}", o.id, o.current_value))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        );
+                        let _ = event_tx.send((ws.clone(), EngineEvent::ConfigChanged(config)));
+                    }
                     Err(e) => crate::logf!("acp", "set_config ERR ws={ws} id={id} value={value}: {e}"),
                 }
             }
@@ -500,6 +515,12 @@ mod tests {
                         }
                     }
                     EngineEvent::Ready { .. } => eprintln!("EVENT Ready"),
+                    EngineEvent::ConfigChanged(config) => {
+                        eprintln!("EVENT ConfigChanged ({} options):", config.len());
+                        for o in &config {
+                            eprintln!("  id={} category={:?} current={}", o.id, o.category, o.current_value);
+                        }
+                    }
                     EngineEvent::TurnEnded { stop } => eprintln!("EVENT TurnEnded {stop:?}"),
                     EngineEvent::Permission { .. } => eprintln!("EVENT Permission"),
                     EngineEvent::Error(e) => eprintln!("EVENT Error {e}"),
@@ -510,6 +531,83 @@ mod tests {
                     break;
                 }
             }
+        });
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// End-to-end: selecting a variant-capable model surfaces the dynamic
+    /// `effort` (thoughtLevel) option via `ConfigChanged`, and setting it
+    /// round-trips. This is the engine chain behind the composer's thinking-
+    /// level dropdown. Run:
+    ///   cargo test --lib effort_config_roundtrip -- --ignored --nocapture
+    #[test]
+    #[ignore = "spawns real `opencode acp`"]
+    fn effort_config_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("bl-acp-effort-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel::<(String, EngineEvent)>();
+        let handle = spawn_engine("effort".to_string(), dir.clone(), tx);
+        tauri::async_runtime::block_on(async move {
+            use tokio::time::{timeout, Duration};
+            // Wait for Ready and pick a variant-capable model (an Opus).
+            let mut opus: Option<String> = None;
+            while let Ok(Some((_ws, ev))) = timeout(Duration::from_secs(40), rx.recv()).await {
+                if let EngineEvent::Ready { config, .. } = ev {
+                    let model = config.iter().find(|c| c.category.as_deref() == Some("model")).expect("model option");
+                    assert!(
+                        !config.iter().any(|c| c.category.as_deref() == Some("thoughtLevel")),
+                        "default model unexpectedly already has an effort option (fine, but test assumes not)"
+                    );
+                    opus = model
+                        .choices
+                        .iter()
+                        .find(|ch| ch.value.contains("opus-4-8") && !ch.value.contains("fast"))
+                        .or_else(|| model.choices.iter().find(|ch| ch.value.to_lowercase().contains("opus")))
+                        .map(|ch| ch.value.clone());
+                    break;
+                }
+            }
+            let Some(target) = opus else {
+                eprintln!("SKIP: no variant-capable (opus) model advertised");
+                return;
+            };
+
+            // Select the model → the ConfigChanged from the response must carry
+            // the dynamic effort option.
+            handle.send(EngineCommand::SetConfig { id: "model".to_string(), value: target.clone() });
+            let mut effort_values: Vec<String> = Vec::new();
+            while let Ok(Some((_ws, ev))) = timeout(Duration::from_secs(20), rx.recv()).await {
+                if let EngineEvent::ConfigChanged(config) = ev {
+                    if let Some(eff) = config.iter().find(|c| c.category.as_deref() == Some("thoughtLevel")) {
+                        eprintln!(
+                            "effort option: id={} current={} choices={:?}",
+                            eff.id,
+                            eff.current_value,
+                            eff.choices.iter().map(|c| c.value.clone()).collect::<Vec<_>>()
+                        );
+                        effort_values = eff.choices.iter().map(|c| c.value.clone()).collect();
+                        assert_eq!(eff.id, "effort");
+                        break;
+                    }
+                }
+            }
+            assert!(!effort_values.is_empty(), "no thoughtLevel option after selecting {target}");
+            assert!(effort_values.contains(&"high".to_string()));
+
+            // Set effort=high → the next ConfigChanged must echo it as current.
+            handle.send(EngineCommand::SetConfig { id: "effort".to_string(), value: "high".to_string() });
+            let mut confirmed = false;
+            while let Ok(Some((_ws, ev))) = timeout(Duration::from_secs(20), rx.recv()).await {
+                if let EngineEvent::ConfigChanged(config) = ev {
+                    if let Some(eff) = config.iter().find(|c| c.category.as_deref() == Some("thoughtLevel")) {
+                        assert_eq!(eff.current_value, "high");
+                        confirmed = true;
+                        break;
+                    }
+                }
+            }
+            assert!(confirmed, "effort=high was not confirmed by a ConfigChanged");
+            eprintln!("OK: effort option appeared and set to high");
         });
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -744,6 +842,9 @@ mod tests {
                             _ => "other",
                         };
                         eprintln!("UPDATE {label}");
+                    }
+                    EngineEvent::ConfigChanged(config) => {
+                        eprintln!("CONFIG CHANGED ({} options)", config.len());
                     }
                     EngineEvent::TurnEnded { stop } => {
                         eprintln!("TURN ENDED {stop:?}");
