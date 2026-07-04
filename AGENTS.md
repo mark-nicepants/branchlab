@@ -155,6 +155,23 @@ as a Tauri event:
 5. **Subscribe** in a hook/provider; call `resync()` once after attaching
    listeners if you need the current snapshot (events aren't buffered).
 
+## Changelog (required for every bugfix/feature)
+
+Every user-visible bugfix or feature MUST add an entry to `CHANGELOG.md` in the
+same change/PR. The file follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/):
+
+- Add entries under the `## [Unreleased]` section at the top, in the matching
+  category: `Added` (new features), `Changed` (changes to existing behavior),
+  `Fixed` (bugfixes), `Removed`, `Deprecated`, or `Security`. Create the
+  category heading if it doesn't exist yet; keep the order above.
+- Write for users, not developers: describe the visible behavior ("Fix chat
+  scroll jumping when a turn completes"), not the implementation ("refactor
+  useChat effect deps"). One `-` bullet per change, imperative mood.
+- Pure refactors, CI, docs, or test-only changes don't need an entry.
+- On release, the `[Unreleased]` section becomes that version's release notes:
+  it is renamed to `## [x.y.z] - YYYY-MM-DD` and a fresh empty `[Unreleased]`
+  section is added above it (see RELEASING.md).
+
 ## Conventions
 
 - **TypeScript:** function components with hooks; no class components, no global

@@ -4,8 +4,17 @@ Distribution is a signed + notarized DMG hosted on the website; updates go
 through `tauri-plugin-updater`, which polls `latest.json`, shows an in-app
 toast, and swaps the `.app` in place on click ("Update & restart").
 
-Cutting a release: `./scripts/release.sh <version> --notes "What changed"`,
-then upload the contents of `dist-release/` to the website's releases path.
+Cutting a release:
+
+1. Make sure `CHANGELOG.md` has the release's changes under `## [Unreleased]`
+   (the script aborts if it's empty).
+2. `./scripts/release.sh <version>` — rolls the changelog over
+   (`[Unreleased]` → `[<version>] - <date>`, fresh empty `[Unreleased]` on
+   top), bumps versions, builds, and uses the changelog section as the
+   `notes` in `latest.json` — shown in the in-app update toast.
+   Pass `--notes "..."` to override the notes text.
+3. Upload the contents of `dist-release/` to the website's releases path,
+   commit + tag (`git commit -am "release: v<version>" && git tag v<version>`).
 
 ## Open TODOs (as of 2026-07-04)
 
