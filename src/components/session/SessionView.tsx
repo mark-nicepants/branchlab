@@ -190,14 +190,13 @@ export function SessionView({
   );
   const clearComments = useCallback(() => setComments([]), []);
   const sendComments = useCallback(() => {
-    setComments((prev) => {
-      if (prev.length > 0) {
-        const msg = buildReviewMessage(prev);
-        void chat.send({ display: msg.display, sent: msg.sent, origin: "user" });
-      }
-      return [];
-    });
-  }, [chat]);
+    // Side effects must stay out of the setState updater — StrictMode invokes
+    // updaters twice in dev, which double-sent the review message.
+    if (comments.length === 0) return;
+    const msg = buildReviewMessage(comments);
+    void chat.send({ display: msg.display, sent: msg.sent, origin: "user" });
+    setComments([]);
+  }, [chat, comments]);
 
   // ── Resizable changes panel (fixed pixel width, persisted globally in
   //    preferences so it's shared across all sessions) ──

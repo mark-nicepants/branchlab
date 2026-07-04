@@ -574,8 +574,58 @@ export function workspaceChanges(): Promise<FileChange[]> {
   ]);
 }
 
-export function workspaceFileDiff(): Promise<string> {
-  return Promise.resolve("mock diff");
+// Realistic unified diffs so the changes panel renders hunks, line numbers,
+// and the inline review-comment flow in the browser harness.
+const MOCK_DIFFS: Record<string, string> = {
+  "src/App.tsx": `diff --git a/src/App.tsx b/src/App.tsx
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -42,11 +42,17 @@ export function App() {
+   const [settingsOpen, setSettingsOpen] = useState(false);
+
+   useEffect(() => {
+-    const onKey = (e: KeyboardEvent) => e.key === "k" && openPalette();
++    const onKey = (e: KeyboardEvent) => {
++      if (e.key === "Escape" && settingsOpen) {
++        setSettingsOpen(false);
++        return;
++      }
++      if (e.key === "k" && e.metaKey) openPalette();
++    };
+     window.addEventListener("keydown", onKey);
+     return () => window.removeEventListener("keydown", onKey);
+-  }, []);
++  }, [settingsOpen]);
+
+   return (
+     <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+`,
+  "src/components/Sidebar.tsx": `diff --git a/src/components/Sidebar.tsx b/src/components/Sidebar.tsx
+--- a/src/components/Sidebar.tsx
++++ b/src/components/Sidebar.tsx
+@@ -18,9 +18,14 @@ export function Sidebar({ sessions }: SidebarProps) {
+   const grouped = groupByProject(sessions);
+
++  // Sessions waiting on the user sort above everything else.
++  const ordered = grouped.sort(
++    (a, b) => Number(b.needsAttention) - Number(a.needsAttention),
++  );
++
+   return (
+     <nav aria-label="Sessions">
+-      {grouped.map((group) => (
++      {ordered.map((group) => (
+         <SessionGroup key={group.id} group={group} />
+       ))}
+     </nav>
+`,
+};
+
+export function workspaceFileDiff(
+  _workspaceId: string,
+  path: string,
+): Promise<string> {
+  return Promise.resolve(MOCK_DIFFS[path] ?? MOCK_DIFFS["src/App.tsx"]);
 }
 
 export function discardFile(): Promise<void> {
