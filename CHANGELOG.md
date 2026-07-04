@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Patched `quinn-proto` (QUIC, via the HTTP client stack) to 0.11.16 for
+  RUSTSEC-2026-0185 — remote memory exhaustion through unbounded out-of-order
+  stream reassembly.
+
 ## [0.1.1] - 2026-07-04
 
 ### Added
