@@ -1,5 +1,3 @@
-import { ChevronsUpDown } from "lucide-react";
-import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -8,6 +6,8 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ChevronsUpDown } from "lucide-react";
+import { useState } from "react";
 import type { ConfigOption } from "../lib/types";
 
 interface Props {
@@ -25,6 +25,8 @@ export function ConfigSelect({ option, onChange }: Props) {
   const current = option.choices.find((c) => c.value === option.currentValue);
   if (option.choices.length === 0) return null;
 
+  const n = current?.name ?? option.currentValue ?? option.name;
+
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
@@ -35,7 +37,7 @@ export function ConfigSelect({ option, onChange }: Props) {
           title={option.name}
         >
           <span className="max-w-[160px] truncate">
-            {current?.name ?? option.currentValue ?? option.name}
+            {n.charAt(0).toUpperCase() + n.slice(1)}
           </span>
           <ChevronsUpDown className="size-3.5 shrink-0 opacity-50" />
         </Button>
@@ -54,7 +56,9 @@ export function ConfigSelect({ option, onChange }: Props) {
         >
           {option.choices.map((c) => (
             <DropdownMenuRadioItem key={c.value} value={c.value}>
-              <span className="flex flex-1 items-center">{c.name}</span>
+              <span className="flex flex-1 items-center">
+                {c.name.charAt(0).toUpperCase() + c.name.slice(1)}
+              </span>
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
