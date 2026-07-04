@@ -9,14 +9,9 @@ import { NewWorkspaceModal } from "./components/NewWorkspaceModal";
 import { Onboarding } from "./components/Onboarding";
 import { ProjectSettingsDialog } from "./components/ProjectSettingsDialog";
 import { SessionView } from "./components/session/SessionView";
-import {
-  SettingsScreen,
-  type SettingsTab,
-} from "./components/settings/SettingsScreen";
-import {
-  SessionsSidebar,
-  type NavView,
-} from "./components/shell/SessionsSidebar";
+import { SettingsScreen } from "./components/settings/SettingsScreen";
+import { SessionsSidebar } from "./components/shell/SessionsSidebar";
+import { useAppRouter } from "./hooks/useAppRouter";
 import { EmptyState } from "./components/ui/empty-state";
 import { useDesktopBehaviors } from "./hooks/useDesktopBehaviors";
 import { useUpdateChecker } from "./hooks/useUpdateChecker";
@@ -40,15 +35,14 @@ type Phase =
   | { kind: "ready"; env: EnvReport }
   | { kind: "blocked"; env: EnvReport };
 
-type View = NavView | "session";
-
 function App() {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const [rechecking, setRechecking] = useState(false);
   const [projects, setProjects] = useState<ProjectView[]>([]);
   const [quickChats, setQuickChats] = useState<Workspace[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [view, setView] = useState<View>("home");
+  // All screen changes flow through the router (also feeds telemetry).
+  const router = useAppRouter();
+  const { view, selectedId, settingsTab } = router;
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const [branchModalProject, setBranchModalProject] =
@@ -56,8 +50,6 @@ function App() {
   const [prModalProject, setPrModalProject] = useState<ProjectView | null>(
     null,
   );
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   const [settingsProject, setSettingsProject] = useState<ProjectView | null>(
     null,
   );
@@ -122,10 +114,10 @@ function App() {
   // The backend supervisor keeps the active (and all autofix-enabled) servers
   // warm now — no frontend heartbeat needed.
 
-  const openSession = useCallback((w: Workspace) => {
-    setSelectedId(w.id);
-    setView("session");
-  }, []);
+  const openSession = useCallback(
+    (w: Workspace) => router.openSession(w.id),
+    [router],
+  );
 
   const onRenamed = useCallback(
     async (workspaceId: string, name: string) => {
@@ -198,19 +190,15 @@ function App() {
   const removeQuickChat = useCallback(
     (id: string) => {
       setQuickChats((prev) => prev.filter((q) => q.id !== id));
-      setSelectedId((cur) => (cur === id ? null : cur));
-      setView((v) => (v === "session" && selectedId === id ? "home" : v));
+      router.closeSession(id);
     },
-    [selectedId],
+    [router],
   );
 
   useShortcuts({
     toggleLeft: () => setSidebarCollapsed((c) => !c),
     toggleRight: () => {},
-    openSettings: () => {
-      setSettingsTab("general");
-      setSettingsOpen(true);
-    },
+    openSettings: () => router.openSettings("general"),
     openInspector: () => void openDevtools(),
     newProject: () => void pickProject(),
   });
@@ -244,16 +232,10 @@ function App() {
           >
             <SessionsSidebar
               view={view}
-              onNavigate={setView}
+              onNavigate={router.navigate}
               onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
-              onOpenSettings={() => {
-                setSettingsTab("general");
-                setSettingsOpen(true);
-              }}
-              onOpenAccounts={() => {
-                setSettingsTab("accounts");
-                setSettingsOpen(true);
-              }}
+              onOpenSettings={() => router.openSettings("general")}
+              onOpenAccounts={() => router.openSettings("accounts")}
               projects={projects}
               quickChats={quickChats}
               selectedWorkspaceId={view === "session" ? selectedId : null}
@@ -292,10 +274,7 @@ function App() {
                 onRenamed={onRenamed}
                 reloadNonce={reloadNonce}
                 sidebarCollapsed={sidebarCollapsed}
-                onManageModels={() => {
-                  setSettingsTab("models");
-                  setSettingsOpen(true);
-                }}
+                onManageModels={() => router.openSettings("models")}
               />
             ) : view === "search" ? (
               <SearchScreen
@@ -321,23 +300,23 @@ function App() {
                 onQuickChat={(prompt) => void newQuickChat(prompt)}
                 onAddProject={() => void pickProject()}
                 onCheckoutPr={(pid, prNumber) => void checkoutPr(pid, prNumber)}
-                onOpenAccounts={() => {
-                  setSettingsTab("accounts");
-                  setSettingsOpen(true);
-                }}
+                onOpenAccounts={() => router.openSettings("accounts")}
               />
             )}
           </main>
 
           <SettingsScreen
-            open={settingsOpen}
-            onOpenChange={setSettingsOpen}
-            initialTab={settingsTab}
+            open={settingsTab !== null}
+            onOpenChange={(o) =>
+              o ? router.openSettings() : router.closeSettings()
+            }
+            initialTab={settingsTab ?? "general"}
+            onTabChange={router.settingsTabChanged}
             projects={projects}
             onProjectsChanged={refreshProjects}
             onAddProject={() => void pickProject()}
             onOpenProjectSettings={(p) => {
-              setSettingsOpen(false);
+              router.closeSettings();
               setSettingsProject(p);
             }}
           />

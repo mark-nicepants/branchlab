@@ -438,6 +438,12 @@ impl Inner {
 
         if let Some(prompt) = action {
             let cwd = PathBuf::from(&d.path);
+            let mode_name = if matches!(mode, AutofixMode::Super) { "superfix" } else { "autofix" };
+            self.app.state::<crate::telemetry::Telemetry>().event(
+                "autofix_run",
+                "/session",
+                Some(serde_json::json!({ "mode": mode_name })),
+            );
             // Route the fix through the chat manager so it streams into the
             // visible conversation; the turn consumer advances the phase when it
             // finishes (origin=Autofix).

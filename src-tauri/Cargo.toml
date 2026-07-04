@@ -1,6 +1,6 @@
 [package]
 name = "branchlab"
-version = "0.1.0"
+version = "0.1.1"
 description = "BranchLab — an OpenCode driver"
 authors = ["Mark Mooibroek"]
 edition = "2021"
@@ -26,8 +26,8 @@ serde_json = "1"
 which = "8"
 # Thin HTTP client for the *supplemental* `opencode serve` (active workspace
 # only) that backs the MCP/LSP status panel — ACP doesn't expose runtime tool
-# status. default-features = false drops TLS (localhost plain HTTP).
-reqwest = { version = "0.12", default-features = false, features = ["json"] }
+# status. rustls-tls is for the telemetry client (analytics endpoint is HTTPS).
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 # Tauri bundles tokio; we use it for the supervisor's reconcile loop and the
 # chat engine's async command loop (channels, select, task spawning).
 tokio = { version = "1", features = ["time", "rt", "macros", "sync"] }

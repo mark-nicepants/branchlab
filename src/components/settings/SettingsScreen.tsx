@@ -29,7 +29,13 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { getDefaultModel, removeProject, setDefaultModel } from "../../lib/api";
+import {
+  getDefaultModel,
+  removeProject,
+  setDefaultModel,
+  telemetryGetEnabled,
+  telemetrySetEnabled,
+} from "../../lib/api";
 import { groupByProvider, shortName } from "../../lib/models";
 import type { ProjectView } from "../../lib/types";
 import { Input } from "@/components/ui/input";
@@ -56,6 +62,8 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   initialTab?: SettingsTab;
+  /** Reports internal tab switches (feeds the router's pageview tracking). */
+  onTabChange?: (tab: SettingsTab) => void;
   projects: ProjectView[];
   onProjectsChanged: () => void;
   onAddProject: () => void;
@@ -95,6 +103,7 @@ export function SettingsScreen({
   open,
   onOpenChange,
   initialTab = "general",
+  onTabChange,
   projects,
   onProjectsChanged,
   onAddProject,
@@ -128,7 +137,10 @@ export function SettingsScreen({
               {NAV.filter((n) => n.group === group).map((n) => (
                 <button
                   key={n.id}
-                  onClick={() => setTab(n.id)}
+                  onClick={() => {
+                    setTab(n.id);
+                    onTabChange?.(n.id);
+                  }}
                   className={cn(
                     "flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors",
                     tab === n.id
@@ -183,6 +195,12 @@ export function SettingsScreen({
 
 function GeneralTab() {
   const { prefs, setPref } = usePreferences();
+  // Anonymous usage telemetry opt-out; the flag lives in the backend so it
+  // also gates events the supervisor sends when this screen isn't open.
+  const [telemetry, setTelemetry] = useState<boolean | null>(null);
+  useEffect(() => {
+    void telemetryGetEnabled().then(setTelemetry);
+  }, []);
   return (
     <div className="flex flex-col gap-6">
       <Row
@@ -190,6 +208,19 @@ function GeneralTab() {
         desc="Updates are managed by the desktop build."
       >
         <Switch checked disabled />
+      </Row>
+      <Row
+        title="Share anonymous usage data"
+        desc="Screen views and feature counts only — never code, paths, prompts, or anything identifying."
+      >
+        <Switch
+          checked={telemetry ?? true}
+          disabled={telemetry === null}
+          onCheckedChange={(on) => {
+            setTelemetry(on);
+            void telemetrySetEnabled(on);
+          }}
+        />
       </Row>
       <Field
         title="Storage location"

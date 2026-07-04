@@ -492,3 +492,27 @@ export function openExternal(path: string, app?: string): Promise<void> {
 export function logPath(): Promise<string | null> {
   return invoke<string | null>("log_path");
 }
+
+// ── Telemetry (anonymous usage analytics; see src-tauri/src/telemetry.rs) ──
+
+/** Report a screen change, website-style (e.g. "/session", "/settings/general"). */
+export function telemetryPageview(url: string): Promise<void> {
+  return invoke<void>("telemetry_pageview", { url });
+}
+
+/** Track a named event. `data` must stay coarse — enum-like values only. */
+export function telemetryEvent(
+  name: string,
+  url: string,
+  data?: Record<string, unknown>,
+): Promise<void> {
+  return invoke<void>("telemetry_event", { name, url, data: data ?? null });
+}
+
+export function telemetryGetEnabled(): Promise<boolean> {
+  return invoke<boolean>("telemetry_get_enabled");
+}
+
+export function telemetrySetEnabled(enabled: boolean): Promise<void> {
+  return invoke<void>("telemetry_set_enabled", { enabled });
+}

@@ -10,6 +10,7 @@ mod path;
 mod project;
 mod server;
 mod supervisor;
+mod telemetry;
 mod watcher;
 
 use github::GithubManager;
@@ -40,6 +41,12 @@ pub fn run() {
             logx::init(dir.join("branchlab.log"));
             let registry = Registry::load(dir.join("registry.json"), dir.join("worktrees"));
             app.manage(registry);
+
+            // Anonymous usage telemetry (Umami). Opt-out persists as a marker
+            // file; the frontend router reports pageviews through commands.
+            let telemetry = telemetry::Telemetry::new(&dir);
+            telemetry.event("app_open", "/", None);
+            app.manage(telemetry);
 
             let servers = ServerManager::new();
             servers.spawn_reaper();
@@ -95,6 +102,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             env::probe_environment,
+            telemetry::telemetry_pageview,
+            telemetry::telemetry_event,
+            telemetry::telemetry_get_enabled,
+            telemetry::telemetry_set_enabled,
             commands::add_project,
             commands::list_projects,
             commands::remove_project,

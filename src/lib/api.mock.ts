@@ -1171,3 +1171,32 @@ export function openExternal(path: string, app?: string): Promise<void> {
 export function logPath(): Promise<string | null> {
   return Promise.resolve("/tmp/branchlab.log");
 }
+
+// ── Telemetry mocks: never send anything from the browser harness ──
+
+export function telemetryPageview(url: string): Promise<void> {
+  // eslint-disable-next-line no-console
+  console.log("telemetry pageview", url);
+  return Promise.resolve();
+}
+
+export function telemetryEvent(
+  name: string,
+  url: string,
+  data?: Record<string, unknown>,
+): Promise<void> {
+  // eslint-disable-next-line no-console
+  console.log("telemetry event", name, url, data);
+  return Promise.resolve();
+}
+
+let mockTelemetryEnabled = true;
+
+export function telemetryGetEnabled(): Promise<boolean> {
+  return Promise.resolve(mockTelemetryEnabled);
+}
+
+export function telemetrySetEnabled(enabled: boolean): Promise<void> {
+  mockTelemetryEnabled = enabled;
+  return Promise.resolve();
+}

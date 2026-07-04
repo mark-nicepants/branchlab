@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-04
+
+### Added
+
+- Anonymous usage telemetry (self-hosted Umami): screen views and coarse
+  feature counts (session created, PR created, autofix runs) — never code,
+  paths, prompts, or anything identifying. Opt out anytime in
+  Settings → General → "Share anonymous usage data".
+- Centralized in-app routing: every screen change flows through one router,
+  which also powers the telemetry pageviews.
+
+### Fixed
+
+- Review comments could be sent to the agent twice; batched review feedback
+  now sends exactly once.
+
 ## [0.1.0] - 2026-07-04
 
 ### Added

@@ -53,10 +53,12 @@ pub fn create_workspace(
     registry: State<Registry>,
     watcher: State<GitWatcher>,
     supervisor: State<Supervisor>,
+    telemetry: State<crate::telemetry::Telemetry>,
 ) -> Result<Workspace, String> {
     let ws = registry.create_workspace(&project_id, base, init_prompt)?;
     watcher.watch(&ws.id, &ws.path);
     supervisor.reconcile_now();
+    telemetry.event("session_created", "/session", Some(serde_json::json!({ "source": "branch" })));
     Ok(ws)
 }
 
@@ -93,6 +95,7 @@ pub async fn create_workspace_from_pr(
     github: State<'_, crate::github::GithubManager>,
     watcher: State<'_, GitWatcher>,
     supervisor: State<'_, Supervisor>,
+    telemetry: State<'_, crate::telemetry::Telemetry>,
 ) -> Result<Workspace, String> {
     let root = registry.project_root(&project_id).ok_or("unknown project")?;
     let override_id = registry.project_account_id(&project_id);
@@ -113,6 +116,7 @@ pub async fn create_workspace_from_pr(
     let ws = registry.create_workspace_from_pr(&project_id, meta)?;
     watcher.watch(&ws.id, &ws.path);
     supervisor.reconcile_now();
+    telemetry.event("session_created", "/session", Some(serde_json::json!({ "source": "pr" })));
     Ok(ws)
 }
 
@@ -285,6 +289,7 @@ pub async fn create_workspace_pr(
     registry: State<'_, Registry>,
     github: State<'_, crate::github::GithubManager>,
     supervisor: State<'_, Supervisor>,
+    telemetry: State<'_, crate::telemetry::Telemetry>,
 ) -> Result<PrResult, String> {
     let (ws, root, branch, base) = resolve_workspace_branch(&registry, &workspace_id)?;
     if ws.pr_is_fork {
@@ -295,6 +300,7 @@ pub async fn create_workspace_pr(
     let account_id = registry.project_account_id(&ws.project_id);
     let url = github.create_pr_for(&root, &branch, &base, &title, &body, account_id.as_deref()).await?;
     supervisor.poke(&workspace_id);
+    telemetry.event("pr_created", "/session", None);
     Ok(PrResult { branch, base, url })
 }
 
