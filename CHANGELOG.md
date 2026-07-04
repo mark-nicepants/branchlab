@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- New macOS app icon (rounded-square glyph artwork) across the bundle, dock,
+  in-app favicon, and the website.
+
 ### Security
 
 - Patched `quinn-proto` (QUIC, via the HTTP client stack) to 0.11.16 for
