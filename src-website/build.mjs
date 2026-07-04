@@ -34,28 +34,45 @@ const og = "session-changes-dark.png";
 const ogPng = await sharp(path.join(SRC, "assets", og)).png({ compressionLevel: 9, palette: true }).toBuffer();
 await writeFile(path.join(OUT, "assets", og), ogPng);
 
-// ── CSS / JS via esbuild ──
+// ── CSS / JS: minify with esbuild, then INLINE into the HTML ──
+// Both are small (≈10 kB CSS, <1 kB JS); inlining removes the render-blocking
+// stylesheet request from the critical path (Lighthouse: "avoid chaining
+// critical requests") — the page renders from the single HTML response.
+const minified = {};
 for (const [file, loader] of [
   ["styles.css", "css"],
   ["main.js", "js"],
 ]) {
   const source = await readFile(path.join(SRC, file), "utf8");
   const { code } = await transform(source, { loader, minify: true });
-  await writeFile(path.join(OUT, file), code);
-  console.log(`${file}  ${kb(source.length)} → ${kb(code.length)}`);
+  minified[file] = code.trim();
+  console.log(`${file}  ${kb(source.length)} → ${kb(code.length)} (inlined)`);
 }
 
-// ── HTML: rewrite screenshot refs to .webp, then minify ──
+// ── HTML: rewrite screenshot refs to .webp, inline CSS/JS, then minify ──
 let html = await readFile(path.join(SRC, "index.html"), "utf8");
 // Rewrite local src/href references only — og:image keeps its .png URL.
 html = html.replaceAll(/(src|href)="assets\/(?!app-icon)([\w-]+)\.png"/g, '$1="assets/$2.webp"');
-const minified = await minifyHtml(html, {
+html = html.replace(
+  /<link rel="stylesheet" href="styles.css"\s*\/?>/,
+  () => `<style>${minified["styles.css"]}</style>`,
+);
+// The script sits at the end of <body>, so the DOM above it is already
+// parsed — `defer` is unnecessary once inlined.
+html = html.replace(
+  /<script src="main.js" defer><\/script>/,
+  () => `<script>${minified["main.js"]}</script>`,
+);
+if (html.includes("styles.css") || html.includes("main.js")) {
+  throw new Error("inlining failed — stylesheet/script tag not replaced");
+}
+const outHtml = await minifyHtml(html, {
   collapseWhitespace: true,
   removeComments: true,
   minifyCSS: true,
   minifyJS: true,
 });
-await writeFile(path.join(OUT, "index.html"), minified);
-console.log(`index.html  ${kb(html.length)} → ${kb(minified.length)}`);
+await writeFile(path.join(OUT, "index.html"), outHtml);
+console.log(`index.html  ${kb(html.length)} → ${kb(outHtml.length)}`);
 
 console.log(`\nDone → ${OUT}`);
