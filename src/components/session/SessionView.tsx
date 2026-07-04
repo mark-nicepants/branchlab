@@ -1,10 +1,5 @@
 import { Button } from "@/components/ui/button";
 import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@/components/ui/hover-card";
-import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -21,12 +16,7 @@ import {
 import { usePrPipeline } from "../../hooks/usePrPipeline";
 import { useWorkspaceData } from "../../hooks/useWorkspaceData";
 import { chatNewSession, setAutofixMode } from "../../lib/api";
-import type {
-  AutofixMode,
-  ContextInfo,
-  ProjectView,
-  Workspace,
-} from "../../lib/types";
+import type { AutofixMode, ProjectView, Workspace } from "../../lib/types";
 import { workspaceLabel } from "../../lib/types";
 import { ChangesView } from "../center/ChangesView";
 import { FileView } from "../center/FileView";
@@ -71,7 +61,6 @@ export function SessionView({
   const [pendingAction, setPendingAction] = useState<WorkspaceAction | null>(
     null,
   );
-  const [context, setContext] = useState<ContextInfo | null>(null);
 
   const isQuickChat = workspace.kind === "QuickChat";
   const isWorktree = workspace.kind === "Worktree";
@@ -188,11 +177,6 @@ export function SessionView({
     void chatNewSession(workspace.id, "cleared");
   }, [workspace.id]);
 
-  const pct =
-    context && context.max > 0
-      ? Math.round((context.used / context.max) * 100)
-      : null;
-
   return (
     <div className="flex h-full flex-col">
       {/* Session header */}
@@ -227,31 +211,6 @@ export function SessionView({
           >
             {workspaceLabel(workspace)}
           </span>
-          {pct !== null && (
-            <HoverCard openDelay={150}>
-              <HoverCardTrigger
-                className={cn(
-                  "ml-2 shrink-0 text-xs",
-                  pct >= 80 ? "text-warning" : "text-muted-foreground",
-                )}
-              >
-                {pct}% context
-              </HoverCardTrigger>
-              <HoverCardContent
-                side="bottom"
-                align="start"
-                className="w-56 text-xs"
-              >
-                <div className="font-medium text-foreground">
-                  Context window
-                </div>
-                <p className="mt-1 text-muted-foreground">
-                  {context!.used.toLocaleString()} /{" "}
-                  {context!.max.toLocaleString()} tokens
-                </p>
-              </HoverCardContent>
-            </HoverCard>
-          )}
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
@@ -304,7 +263,6 @@ export function SessionView({
             key={workspace.id}
             workspace={workspace}
             onRenamed={onRenamed}
-            onContext={setContext}
             pendingAction={pendingAction}
             onActionConsumed={() => setPendingAction(null)}
             onManageModels={onManageModels}

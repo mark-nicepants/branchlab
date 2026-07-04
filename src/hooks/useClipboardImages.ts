@@ -15,15 +15,10 @@ export interface ClipboardImage {
 export function useClipboardImages() {
   const [attachments, setAttachments] = useState<ClipboardImage[]>([]);
 
-  function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
-    const items = Array.from(e.clipboardData?.items ?? []).filter((it) =>
-      it.type.startsWith("image/"),
-    );
-    if (items.length === 0) return;
-    e.preventDefault();
-    for (const item of items) {
-      const blob = item.getAsFile();
-      if (!blob) continue;
+  /** Add image files (from paste or a file picker); non-images are ignored. */
+  function addFiles(files: Iterable<File>) {
+    for (const blob of files) {
+      if (!blob.type.startsWith("image/")) continue;
       const reader = new FileReader();
       reader.onload = () => {
         const url = reader.result as string;
@@ -42,6 +37,17 @@ export function useClipboardImages() {
     }
   }
 
+  function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const items = Array.from(e.clipboardData?.items ?? []).filter((it) =>
+      it.type.startsWith("image/"),
+    );
+    if (items.length === 0) return;
+    e.preventDefault();
+    addFiles(
+      items.map((it) => it.getAsFile()).filter((f): f is File => f !== null),
+    );
+  }
+
   function remove(id: string) {
     setAttachments((prev) => prev.filter((a) => a.id !== id));
   }
@@ -50,5 +56,5 @@ export function useClipboardImages() {
     setAttachments([]);
   }
 
-  return { attachments, handlePaste, remove, clear };
+  return { attachments, handlePaste, addFiles, remove, clear };
 }

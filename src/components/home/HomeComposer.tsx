@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import {
-  ArrowUp,
   ChevronsUpDown,
   FolderPlus,
   GitBranch,
@@ -10,7 +9,6 @@ import {
 import { listBranches } from "../../lib/api";
 import type { ProjectView } from "../../lib/types";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Tooltip,
   TooltipContent,
@@ -24,6 +22,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { Composer, Kbd } from "../Composer";
 
 interface Props {
   projects: ProjectView[];
@@ -40,8 +39,9 @@ interface Props {
 /**
  * The Home prompt composer. Submitting spins up a new worktree session in the
  * selected project (or a quick chat when no project is selected), seeding the
- * agent with the typed prompt. Mode/model pills are display-only here — the
- * live selectors live inside the session composer.
+ * agent with the typed prompt. Reuses the shared session Composer intact —
+ * Home just passes no live session state, so busy/context/attachments never
+ * fire here and the mode/model pills are display-only.
  */
 export function HomeComposer({
   projects,
@@ -89,60 +89,48 @@ export function HomeComposer({
 
   return (
     <div className="w-full">
-      <div className="rounded-2xl border border-border bg-card transition-colors duration-150 focus-within:border-ring">
-        <Textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            // Enter sends; Shift/⌘/Ctrl+Enter inserts a newline (same
-            // convention as the session composer).
-            if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
-              e.preventDefault();
-              submit();
-              return;
-            }
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-              // Textareas don't insert a newline on ⌘/Ctrl+Enter natively.
-              e.preventDefault();
-              const el = e.currentTarget;
-              const start = el.selectionStart ?? text.length;
-              const end = el.selectionEnd ?? text.length;
-              setText(text.slice(0, start) + "\n" + text.slice(end));
-              requestAnimationFrame(() => {
-                el.selectionStart = el.selectionEnd = start + 1;
-              });
-            }
-          }}
-          placeholder="Ask anything, or describe a task to start a session…  (Enter to send)"
-          className="min-h-[76px] resize-none border-0 bg-transparent px-4 pt-3.5 text-[15px] shadow-none focus-visible:ring-0 dark:bg-transparent"
-        />
-        <div className="flex items-center gap-1.5 px-2.5 pb-2.5">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon-sm" disabled>
-                <Plus className="size-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Attach · in session</TooltipContent>
-          </Tooltip>
-          <DisplayPill
-            label="Interactive"
-            hint="Autonomy is chosen per session"
-          />
-          <DisplayPill label="Auto" hint="Model is chosen per session" />
-          <div className="ml-auto">
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              className="text-primary hover:bg-primary/10 disabled:text-muted-foreground/40"
-              onClick={submit}
-              disabled={!text.trim()}
-            >
-              <ArrowUp className="size-4" />
-            </Button>
-          </div>
-        </div>
-      </div>
+      <Composer
+        value={text}
+        onChange={setText}
+        onKeyDown={(e) => {
+          // Enter sends; Shift/⌘/Ctrl+Enter inserts a newline (same
+          // convention as the session composer).
+          if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+            e.preventDefault();
+            submit();
+            return;
+          }
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            // Textareas don't insert a newline on ⌘/Ctrl+Enter natively.
+            e.preventDefault();
+            const el = e.currentTarget;
+            const start = el.selectionStart ?? text.length;
+            const end = el.selectionEnd ?? text.length;
+            setText(text.slice(0, start) + "\n" + text.slice(end));
+            requestAnimationFrame(() => {
+              el.selectionStart = el.selectionEnd = start + 1;
+            });
+          }
+        }}
+        placeholder="Ask anything, or describe a task to start a session…"
+        hint={
+          <>
+            <Kbd>Enter</Kbd> to send · <Kbd>Shift</Kbd> <Kbd>Enter</Kbd> new
+            line
+          </>
+        }
+        controls={
+          <>
+            <DisplayPill
+              label="Interactive"
+              hint="Autonomy is chosen per session"
+            />
+            <DisplayPill label="Auto" hint="Model is chosen per session" />
+          </>
+        }
+        canSend={!!text.trim()}
+        onSend={submit}
+      />
 
       {/* Target selectors */}
       <div className="mt-3 flex flex-wrap items-center gap-1.5 text-sm">

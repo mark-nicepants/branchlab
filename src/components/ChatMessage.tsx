@@ -84,7 +84,7 @@ export function isWorkBlock(b: Block): boolean {
   return b.type === "reasoning" || b.type === "tool";
 }
 
-/** Todo-list updates render in the composer's TodoButton, not the transcript. */
+/** Todo-list updates render in the ActiveTodoStrip above the composer, not the transcript. */
 function isTodoTool(b: Block): boolean {
   if (b.type !== "tool") return false;
   const input = (b.input ?? {}) as Record<string, unknown>;

@@ -1,30 +1,23 @@
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { cn } from "@/lib/utils";
-import { ArrowUp, ChevronUp, GitBranch, Square, X } from "lucide-react";
+import { ChevronUp, GitBranch } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChat } from "../hooks/useChat";
 import { useClipboardImages } from "../hooks/useClipboardImages";
 import { useTodos } from "../hooks/useTodos";
 import { chatGenerateTitle, renameWorkspace } from "../lib/api";
 import { filterCommands, isSlashTyping } from "../lib/slash";
-import type {
-  CommandOption,
-  ContextInfo,
-  UserEntry,
-  Workspace,
-} from "../lib/types";
+import type { CommandOption, UserEntry, Workspace } from "../lib/types";
+import { ActiveTodoStrip } from "./ActiveTodoStrip";
 import {
   AssistantTurnView,
   ChatMessage,
   SystemMessageView,
 } from "./ChatMessage";
+import { Composer, Kbd } from "./Composer";
 import { ConfigSelect } from "./ConfigSelect";
 import { ModelSelector } from "./ModelSelector";
 import { PermissionView } from "./PermissionView";
 import { usePreferences } from "./PreferencesProvider";
 import { SlashCommandPalette } from "./SlashCommandPalette";
-import { TodoButton } from "./TodoButton";
 
 /** Lifecycle actions exposed to the parent by the composer (commit/merge/push/pr). */
 export type WorkspaceAction =
@@ -58,7 +51,6 @@ export type OnFinishAction =
 
 interface Props {
   workspace: Workspace;
-  onContext: (info: ContextInfo | null) => void;
   onRenamed: (workspaceId: string, name: string) => void;
   /** A workspace lifecycle action to run; fired then onActionConsumed is called. */
   pendingAction: WorkspaceAction | null;
@@ -80,7 +72,6 @@ function deriveTitle(text: string): string {
  */
 export function Chat({
   workspace,
-  onContext,
   onRenamed,
   pendingAction,
   onActionConsumed,
@@ -92,6 +83,7 @@ export function Chat({
   const {
     attachments,
     handlePaste,
+    addFiles,
     remove: removeAttachment,
     clear: clearAttachments,
   } = useClipboardImages();
@@ -107,11 +99,6 @@ export function Chat({
   // back to the bottom re-attaches. Sending a message always re-attaches.
   const atBottom = useRef(true);
   const nameRequested = useRef(false);
-
-  // Report context-window usage up to the session header.
-  useEffect(() => {
-    onContext(chat.context);
-  }, [chat.context, onContext]);
 
   const trackScroll = useCallback(() => {
     const el = scrollRef.current;
@@ -299,131 +286,87 @@ export function Chat({
             />
           </div>
         )}
-        <div
-          className={cn(
-            "relative mx-auto max-w-4xl rounded-lg border border-border bg-card transition-colors duration-150 focus-within:border-ring",
-            chat.busy && "composer-loading",
+        <ActiveTodoStrip todos={todos} busy={chat.busy} />
+        <Composer
+          value={input}
+          onChange={setInput}
+          onBlur={() => saveDraft(input)}
+          onPaste={handlePaste}
+          placeholder="Ask the agent…"
+          hint={
+            <>
+              <Kbd>Enter</Kbd> to send · <Kbd>Shift</Kbd> <Kbd>Enter</Kbd> new
+              line · <Kbd>/</Kbd> commands · paste images to attach
+            </>
+          }
+          controls={chat.config.map((o) =>
+            o.category === "model" ? (
+              <ModelSelector
+                key={o.id}
+                option={o}
+                onChange={(v) => chat.setConfig(o.id, v)}
+                onManageModels={onManageModels}
+              />
+            ) : (
+              <ConfigSelect
+                key={o.id}
+                option={o}
+                onChange={(v) => chat.setConfig(o.id, v)}
+              />
+            ),
           )}
-        >
-          <div className="flex flex-wrap items-center gap-1.5 px-2 py-1.5">
-            {chat.config.map((o) =>
-              o.category === "model" ? (
-                <ModelSelector
-                  key={o.id}
-                  option={o}
-                  onChange={(v) => chat.setConfig(o.id, v)}
-                  onManageModels={onManageModels}
-                />
-              ) : (
-                <ConfigSelect
-                  key={o.id}
-                  option={o}
-                  onChange={(v) => chat.setConfig(o.id, v)}
-                />
-              ),
-            )}
-            <div className="ml-auto flex items-center gap-1">
-              <TodoButton todos={todos} />
-              {chat.busy ? (
-                <Button
-                  variant="destructive"
-                  size="icon"
-                  className="size-7"
-                  onClick={chat.abort}
-                >
-                  <Square className="size-3.5" />
-                </Button>
-              ) : (
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="size-7 text-primary hover:bg-primary/10 disabled:text-muted-foreground/40 disabled:hover:bg-transparent"
-                  onClick={() => void send()}
-                  disabled={!input.trim() && attachments.length === 0}
-                >
-                  <ArrowUp className="size-4" />
-                </Button>
-              )}
-            </div>
-          </div>
-          {attachments.length > 0 && (
-            <div className="flex flex-wrap gap-2 px-2 pb-1.5">
-              {attachments.map((a) => (
-                <div key={a.id} className="group relative">
-                  <img
-                    src={a.url}
-                    alt={a.filename}
-                    className="size-16 rounded border border-border object-cover"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeAttachment(a.id)}
-                    className="absolute -right-1.5 -top-1.5 flex size-4 items-center justify-center rounded-full border border-border bg-background text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
-                    aria-label="Remove attachment"
-                  >
-                    <X className="size-2.5" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-          <Textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onBlur={() => saveDraft(input)}
-            onPaste={handlePaste}
-            onKeyDown={(e) => {
-              // The slash palette captures Enter/Tab first.
-              if (showPalette && slashMatches.length > 0) {
-                if (e.key === "ArrowDown") {
-                  e.preventDefault();
-                  setSlashIndex((i) => (i + 1) % slashMatches.length);
-                  return;
-                } else if (e.key === "ArrowUp") {
-                  e.preventDefault();
-                  setSlashIndex(
-                    (i) => (i - 1 + slashMatches.length) % slashMatches.length,
-                  );
-                  return;
-                } else if (e.key === "Enter" || e.key === "Tab") {
-                  e.preventDefault();
-                  pickCommand(slashMatches[slashIndex].name);
-                  return;
-                } else if (e.key === "Escape") {
-                  e.preventDefault();
-                  setInput("");
-                  return;
-                }
-              }
-              // Enter sends; Shift/⌘/Ctrl+Enter inserts a newline.
-              if (
-                e.key === "Enter" &&
-                !e.shiftKey &&
-                !e.metaKey &&
-                !e.ctrlKey
-              ) {
+          attachments={attachments}
+          onRemoveAttachment={removeAttachment}
+          onAttachFiles={addFiles}
+          busy={chat.busy}
+          canSend={!!input.trim() || attachments.length > 0}
+          onSend={() => void send()}
+          onStop={chat.abort}
+          context={chat.context}
+          onKeyDown={(e) => {
+            // The slash palette captures Enter/Tab first.
+            if (showPalette && slashMatches.length > 0) {
+              if (e.key === "ArrowDown") {
                 e.preventDefault();
-                void send();
+                setSlashIndex((i) => (i + 1) % slashMatches.length);
+                return;
+              } else if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setSlashIndex(
+                  (i) => (i - 1 + slashMatches.length) % slashMatches.length,
+                );
+                return;
+              } else if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                pickCommand(slashMatches[slashIndex].name);
+                return;
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                setInput("");
                 return;
               }
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                // Textareas don't insert a newline on ⌘/Ctrl+Enter natively —
-                // do it by hand so the modifier means "literal newline".
-                e.preventDefault();
-                const el = e.currentTarget;
-                const start = el.selectionStart ?? input.length;
-                const end = el.selectionEnd ?? input.length;
-                const next = input.slice(0, start) + "\n" + input.slice(end);
-                setInput(next);
-                requestAnimationFrame(() => {
-                  el.selectionStart = el.selectionEnd = start + 1;
-                });
-              }
-            }}
-            placeholder="Ask the agent…  (Enter to send, Shift+Enter for a new line, / for commands, paste images to attach)"
-            className="min-h-[80px] resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
-          />
-        </div>
+            }
+            // Enter sends; Shift/⌘/Ctrl+Enter inserts a newline.
+            if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+              e.preventDefault();
+              void send();
+              return;
+            }
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              // Textareas don't insert a newline on ⌘/Ctrl+Enter natively —
+              // do it by hand so the modifier means "literal newline".
+              e.preventDefault();
+              const el = e.currentTarget;
+              const start = el.selectionStart ?? input.length;
+              const end = el.selectionEnd ?? input.length;
+              const next = input.slice(0, start) + "\n" + input.slice(end);
+              setInput(next);
+              requestAnimationFrame(() => {
+                el.selectionStart = el.selectionEnd = start + 1;
+              });
+            }
+          }}
+        />
       </div>
     </div>
   );
