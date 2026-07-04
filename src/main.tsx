@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import App from "./App";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { PreferencesProvider } from "@/components/PreferencesProvider";
+import { UpdateProvider } from "@/hooks/useUpdateChecker";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import { installGlobalLinkCatcher } from "@/lib/links";
@@ -17,10 +18,12 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <ThemeProvider>
       <PreferencesProvider>
-        <TooltipProvider delayDuration={300}>
-          <App />
-          <Toaster />
-        </TooltipProvider>
+        <UpdateProvider>
+          <TooltipProvider delayDuration={300}>
+            <App />
+            <Toaster />
+          </TooltipProvider>
+        </UpdateProvider>
       </PreferencesProvider>
     </ThemeProvider>
   </React.StrictMode>,

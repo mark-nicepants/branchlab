@@ -13,6 +13,7 @@ import { THEMES } from "@/lib/themes";
 import { cn } from "@/lib/utils";
 import {
   Accessibility,
+  ArrowUpCircle,
   Boxes,
   Check,
   ChevronDown,
@@ -46,6 +47,7 @@ import {
   usePreferences,
 } from "../PreferencesProvider";
 import { useTheme } from "../ThemeProvider";
+import { useAppUpdate } from "@/hooks/useUpdateChecker";
 
 export type SettingsTab =
   | "general"
@@ -195,6 +197,7 @@ export function SettingsScreen({
 
 function GeneralTab() {
   const { prefs, setPref } = usePreferences();
+  const { availableVersion, installing, installUpdate } = useAppUpdate();
   // Anonymous usage telemetry opt-out; the flag lives in the backend so it
   // also gates events the supervisor sends when this screen isn't open.
   const [telemetry, setTelemetry] = useState<boolean | null>(null);
@@ -203,11 +206,32 @@ function GeneralTab() {
   }, []);
   return (
     <div className="flex flex-col gap-6">
+      {availableVersion && (
+        <div className="flex items-center gap-3 rounded-lg border border-info/40 bg-info/10 px-4 py-3">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-info/15 text-info">
+            <ArrowUpCircle className="size-5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium">
+              BranchLab {availableVersion} is available
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Installs in the background, then restarts the app.
+            </div>
+          </div>
+          <Button size="sm" onClick={() => void installUpdate()} disabled={installing}>
+            {installing ? "Updating…" : "Update & restart"}
+          </Button>
+        </div>
+      )}
       <Row
         title="Automatically check for updates"
-        desc="Updates are managed by the desktop build."
+        desc="Checks the release feed on launch and every few hours."
       >
-        <Switch checked disabled />
+        <Switch
+          checked={prefs.autoCheckUpdates}
+          onCheckedChange={(on) => setPref("autoCheckUpdates", on)}
+        />
       </Row>
       <Row
         title="Share anonymous usage data"

@@ -14,7 +14,6 @@ import { SessionsSidebar } from "./components/shell/SessionsSidebar";
 import { useAppRouter } from "./hooks/useAppRouter";
 import { EmptyState } from "./components/ui/empty-state";
 import { useDesktopBehaviors } from "./hooks/useDesktopBehaviors";
-import { useUpdateChecker } from "./hooks/useUpdateChecker";
 import { GitHubProvider } from "./hooks/useGitHub";
 import { useShortcuts } from "./hooks/useShortcuts";
 import { WorkspaceDataProvider } from "./hooks/useWorkspaceData";
@@ -56,7 +55,6 @@ function App() {
   const [reloadNonce, setReloadNonce] = useState(0);
 
   useDesktopBehaviors();
-  useUpdateChecker();
 
   const check = useCallback(async () => {
     setRechecking(true);

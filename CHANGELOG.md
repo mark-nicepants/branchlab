@@ -7,7 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Update availability now shows everywhere it matters: a badge on the
+  settings gear, and an update banner with an "Update & restart" button at
+  the top of Settings → General.
+- The "Automatically check for updates" toggle is now functional — switch it
+  off to stop the app from polling the release feed.
+
 ### Changed
+
+- The update toast is now compact: a one-line notice instead of the full
+  release notes (read them anytime in Settings → General or the changelog).
 
 - New macOS app icon (rounded-square glyph artwork) across the bundle, dock,
   in-app favicon, and the website.

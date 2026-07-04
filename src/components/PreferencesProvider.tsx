@@ -17,6 +17,8 @@ export interface WorkspacePreferences {
 }
 
 export interface Preferences {
+  /** Poll the release endpoint for updates (launch + every few hours). */
+  autoCheckUpdates: boolean;
   /** macOS app name used for "Open in terminal" (open -a). */
   terminalApp: string;
   /** macOS app name used for "Open in IDE" (open -a). */
@@ -42,6 +44,7 @@ export interface Preferences {
 }
 
 const DEFAULTS: Preferences = {
+  autoCheckUpdates: true,
   terminalApp: "Terminal",
   editorApp: "Visual Studio Code",
   disabledModels: [],

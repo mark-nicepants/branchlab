@@ -1,4 +1,5 @@
 import { AccountAvatar } from "@/components/github/AccountAvatar";
+import { useAppUpdate } from "@/hooks/useUpdateChecker";
 import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
@@ -37,6 +38,7 @@ import { useGitHub } from "@/hooks/useGitHub";
 import { cn } from "@/lib/utils";
 import {
   BotMessageSquare,
+  ArrowUp,
   CalendarClock,
   ChevronDown,
   ChevronLeft,
@@ -151,6 +153,7 @@ export function SessionsSidebar({
   onOpenProjectSettings,
 }: Props) {
   const { prefs, setPref } = usePreferences();
+  const updateAvailable = useAppUpdate().availableVersion !== null;
   const [renaming, setRenaming] = useState<Workspace | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [filter, setFilter] = useState("");
@@ -462,13 +465,23 @@ export function SessionsSidebar({
             <Button
               variant="ghost"
               size="icon-sm"
-              className="text-muted-foreground"
+              className="relative text-muted-foreground"
               onClick={onOpenSettings}
             >
               <Settings className="size-4" />
+              {updateAvailable && (
+                <span
+                  aria-label="Update available"
+                  className="absolute -right-0.5 -top-0.5 flex size-3 items-center justify-center rounded-full bg-info text-background"
+                >
+                  <ArrowUp className="size-2.5" strokeWidth={3} />
+                </span>
+              )}
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Settings ⌘,</TooltipContent>
+          <TooltipContent>
+            {updateAvailable ? "Update available · Settings ⌘," : "Settings ⌘,"}
+          </TooltipContent>
         </Tooltip>
       </div>
 
