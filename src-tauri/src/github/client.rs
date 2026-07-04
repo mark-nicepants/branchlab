@@ -88,7 +88,9 @@ impl GithubClient {
 
     /// PR + CI status for `branch` in `owner/repo`, via one GraphQL query.
     /// Returns the same `git::PrStatus` shape as the legacy `gh` path (reusing
-    /// `git::parse_rollup`). `Ok(None)` when the branch has no PR.
+    /// `git::parse_rollup`). `Ok(None)` when the branch has no PR. Only works
+    /// when `branch` is the PR's real head ref — for PR-checkout worktrees
+    /// (local `pr-<n>` branches) use [`Self::pr_status_by_number`].
     pub async fn pr_status(
         &self,
         owner: &str,
@@ -99,46 +101,84 @@ impl GithubClient {
             "query": PR_STATUS_QUERY,
             "variables": { "owner": owner, "name": repo, "branch": branch },
         });
+        let pr = self.pr_status_node(body, "/repository/pullRequests/nodes/0").await?;
+        Ok(pr.as_ref().map(parse_pr_status))
+    }
+
+    /// PR + CI status by PR number — the authoritative lookup for workspaces
+    /// checked out *from* a PR, whose local branch name (`pr-<n>`) is not the
+    /// PR's head ref on GitHub. Also correct for fork PRs, where the head ref
+    /// lives in another repo entirely. `Ok(None)` when the PR doesn't exist.
+    pub async fn pr_status_by_number(
+        &self,
+        owner: &str,
+        repo: &str,
+        number: i64,
+    ) -> Result<Option<crate::git::PrStatus>, String> {
+        let body = serde_json::json!({
+            "query": PR_STATUS_BY_NUMBER_QUERY,
+            "variables": { "owner": owner, "name": repo, "number": number },
+        });
+        let pr = self.pr_status_node(body, "/repository/pullRequest").await?;
+        Ok(pr.as_ref().map(parse_pr_status))
+    }
+
+    /// Run a PR-status GraphQL query and pluck the PR node at `pointer`.
+    /// `Ok(None)` when the node is absent/null (no PR). GitHub reports a
+    /// missing PR number as a NOT_FOUND error alongside a null node — treat
+    /// that as `None` too, not as a transport failure.
+    async fn pr_status_node(
+        &self,
+        body: serde_json::Value,
+        pointer: &str,
+    ) -> Result<Option<serde_json::Value>, String> {
         let resp: serde_json::Value = Self::timed(self.crab.graphql(&body)).await?;
-        if let Some(err) = resp.pointer("/errors/0/message").and_then(|m| m.as_str()) {
-            return Err(format!("GitHub GraphQL error: {err}"));
-        }
         // octocrab may hand back the full envelope or just the data node.
         let root = resp.get("data").unwrap_or(&resp);
-        let Some(pr) = root.pointer("/repository/pullRequests/nodes/0") else {
-            return Ok(None);
-        };
-
-        // Flatten each rollup context to the shape git::parse_rollup expects
-        // (CheckRun.workflowName lives at a nested path in GraphQL).
-        let contexts: Vec<serde_json::Value> = pr
-            .pointer("/commits/nodes/0/commit/statusCheckRollup/contexts/nodes")
-            .and_then(|x| x.as_array())
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|mut c| {
-                if let Some(name) =
-                    c.pointer("/checkSuite/workflowRun/workflow/name").and_then(|x| x.as_str()).map(str::to_string)
-                {
-                    if let Some(obj) = c.as_object_mut() {
-                        obj.insert("workflowName".into(), serde_json::Value::String(name));
-                    }
+        let node = root.pointer(pointer).filter(|v| !v.is_null()).cloned();
+        if node.is_none() {
+            if let Some(err) = resp.pointer("/errors/0/message").and_then(|m| m.as_str()) {
+                let not_found = resp.pointer("/errors/0/type").and_then(|t| t.as_str()) == Some("NOT_FOUND");
+                if !not_found {
+                    return Err(format!("GitHub GraphQL error: {err}"));
                 }
-                c
-            })
-            .collect();
-        let (checks, rollup) = crate::git::parse_rollup(&contexts);
+            }
+        }
+        Ok(node)
+    }
+}
 
-        Ok(Some(crate::git::PrStatus {
-            number: pr.get("number").and_then(|x| x.as_i64()).unwrap_or(0),
-            url: pr.get("url").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-            state: pr.get("state").and_then(|x| x.as_str()).unwrap_or("OPEN").to_string(),
-            head_branch: pr.get("headRefName").and_then(|x| x.as_str()).unwrap_or(branch).to_string(),
-            head_sha: pr.get("headRefOid").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-            checks,
-            rollup,
-        }))
+/// Map a GraphQL PR node (shared shape of both status queries) to `PrStatus`.
+fn parse_pr_status(pr: &serde_json::Value) -> crate::git::PrStatus {
+    // Flatten each rollup context to the shape git::parse_rollup expects
+    // (CheckRun.workflowName lives at a nested path in GraphQL).
+    let contexts: Vec<serde_json::Value> = pr
+        .pointer("/commits/nodes/0/commit/statusCheckRollup/contexts/nodes")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|mut c| {
+            if let Some(name) =
+                c.pointer("/checkSuite/workflowRun/workflow/name").and_then(|x| x.as_str()).map(str::to_string)
+            {
+                if let Some(obj) = c.as_object_mut() {
+                    obj.insert("workflowName".into(), serde_json::Value::String(name));
+                }
+            }
+            c
+        })
+        .collect();
+    let (checks, rollup) = crate::git::parse_rollup(&contexts);
+
+    crate::git::PrStatus {
+        number: pr.get("number").and_then(|x| x.as_i64()).unwrap_or(0),
+        url: pr.get("url").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+        state: pr.get("state").and_then(|x| x.as_str()).unwrap_or("OPEN").to_string(),
+        head_branch: pr.get("headRefName").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+        head_sha: pr.get("headRefOid").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+        checks,
+        rollup,
     }
 }
 
@@ -361,6 +401,20 @@ query($owner:String!,$name:String!,$branch:String!){
   }
 }"#;
 
+const PR_STATUS_BY_NUMBER_QUERY: &str = r#"
+query($owner:String!,$name:String!,$number:Int!){
+  repository(owner:$owner,name:$name){
+    pullRequest(number:$number){
+      number url state headRefName headRefOid
+      commits(last:1){ nodes{ commit{ statusCheckRollup{ contexts(first:100){ nodes{
+        __typename
+        ... on CheckRun{ name status conclusion detailsUrl checkSuite{ workflowRun{ workflow{ name } } } }
+        ... on StatusContext{ context state targetUrl }
+      }}}}}}
+    }
+  }
+}"#;
+
 /// Map an octocrab error to a short string, flagging auth failures so callers
 /// can mark the account as needing re-auth.
 fn map_err(e: octocrab::Error) -> String {
@@ -369,4 +423,51 @@ fn map_err(e: octocrab::Error) -> String {
         return format!("GitHub API error: {}", source.message);
     }
     format!("GitHub request failed: {e}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The PR node shape shared by both status queries (by-branch and
+    /// by-number), as returned by GitHub GraphQL — verified live against
+    /// microsoft/vscode#200000.
+    #[test]
+    fn parses_pr_status_node() {
+        let pr = serde_json::json!({
+            "number": 666,
+            "url": "https://github.com/o/r/pull/666",
+            "state": "OPEN",
+            "headRefName": "feature/messages-conversation",
+            "headRefOid": "abc123",
+            "commits": { "nodes": [ { "commit": { "statusCheckRollup": { "contexts": { "nodes": [
+                { "__typename": "CheckRun", "name": "build", "status": "COMPLETED", "conclusion": "SUCCESS",
+                  "detailsUrl": "https://ci/1",
+                  "checkSuite": { "workflowRun": { "workflow": { "name": "CI" } } } },
+                { "__typename": "CheckRun", "name": "test", "status": "COMPLETED", "conclusion": "FAILURE",
+                  "detailsUrl": "https://ci/2",
+                  "checkSuite": { "workflowRun": { "workflow": { "name": "CI" } } } }
+            ] } } } } ] }
+        });
+        let s = parse_pr_status(&pr);
+        assert_eq!(s.number, 666);
+        assert_eq!(s.state, "OPEN");
+        assert_eq!(s.head_branch, "feature/messages-conversation");
+        assert_eq!(s.head_sha, "abc123");
+        assert_eq!(s.checks.len(), 2);
+        assert_eq!(s.rollup, "failure", "one failing check fails the rollup");
+    }
+
+    /// A PR with no checks yet (fresh push) must not panic and rolls up "none".
+    #[test]
+    fn parses_pr_status_without_rollup() {
+        let pr = serde_json::json!({
+            "number": 1, "url": "u", "state": "OPEN",
+            "headRefName": "b", "headRefOid": "s",
+            "commits": { "nodes": [ { "commit": { "statusCheckRollup": null } } ] }
+        });
+        let s = parse_pr_status(&pr);
+        assert_eq!(s.checks.len(), 0);
+        assert_eq!(s.rollup, "none");
+    }
 }

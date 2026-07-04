@@ -303,6 +303,8 @@ impl GithubManager {
 
     /// PR + CI status for a workspace's branch, resolved against the repo's
     /// bound account. `Ok(None)` = no PR; `Err` = no account / API failure.
+    /// Only valid when `branch` is the PR's real head ref — PR checkouts use
+    /// [`Self::pr_status_for_number`].
     pub async fn pr_status_for(
         &self,
         repo_root: &str,
@@ -311,18 +313,34 @@ impl GithubManager {
     ) -> Result<Option<crate::git::PrStatus>, String> {
         let (account, owner, repo) = self.resolve_account(repo_root, override_id)?;
         let client = self.client_for(&account.id)?;
-        match client.pr_status(&owner, &repo, branch).await {
-            Ok(v) => Ok(v),
-            Err(e) => {
-                // A 401 means the token is stale; flag the account for re-auth.
-                if e.contains("401") || e.to_lowercase().contains("bad credentials") {
-                    self.inner.tokens.lock().unwrap().remove(&account.id);
-                    self.inner.clients.lock().unwrap().remove(&account.id);
-                    self.inner.store.set_status(&account.id, AccountStatus::NeedsReauth);
-                    self.emit_accounts();
-                }
-                Err(e)
-            }
+        let result = client.pr_status(&owner, &repo, branch).await;
+        self.flag_stale_token(&account.id, &result);
+        result
+    }
+
+    /// PR + CI status by PR number — for workspaces checked out from a PR
+    /// (their local `pr-<n>` branch is not the head ref GitHub knows about).
+    pub async fn pr_status_for_number(
+        &self,
+        repo_root: &str,
+        number: i64,
+        override_id: Option<&str>,
+    ) -> Result<Option<crate::git::PrStatus>, String> {
+        let (account, owner, repo) = self.resolve_account(repo_root, override_id)?;
+        let client = self.client_for(&account.id)?;
+        let result = client.pr_status_by_number(&owner, &repo, number).await;
+        self.flag_stale_token(&account.id, &result);
+        result
+    }
+
+    /// A 401 means the token is stale; flag the account for re-auth.
+    fn flag_stale_token<T>(&self, account_id: &str, result: &Result<T, String>) {
+        let Err(e) = result else { return };
+        if e.contains("401") || e.to_lowercase().contains("bad credentials") {
+            self.inner.tokens.lock().unwrap().remove(account_id);
+            self.inner.clients.lock().unwrap().remove(account_id);
+            self.inner.store.set_status(account_id, AccountStatus::NeedsReauth);
+            self.emit_accounts();
         }
     }
 

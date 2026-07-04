@@ -125,6 +125,10 @@ struct DesiredWs {
     account_id: Option<String>,
     /// A fork PR checkout — read-only, so autofix is skipped.
     is_fork: bool,
+    /// The PR this workspace was checked out from. When set, PR status is
+    /// polled by number — the local `pr-<n>` branch is not the head ref GitHub
+    /// knows about, so a by-branch lookup would find nothing.
+    pr_number: Option<i64>,
     /// Persisted PR snapshot, to seed the runtime on first sight after restart.
     persisted_pr: Option<PrStatus>,
 }
@@ -246,6 +250,7 @@ impl Inner {
                     mode: ws.autofix_mode,
                     account_id: registry.project_account_id(&ws.project_id),
                     is_fork: ws.pr_is_fork,
+                    pr_number: ws.pr_number,
                     persisted_pr: ws.pr.clone(),
                 });
             }
@@ -295,35 +300,47 @@ impl Inner {
     }
 
     async fn poll_pipeline(self: &Arc<Inner>, d: &DesiredWs, branch: &str) {
-        // Resolve the worktree's *actual* checked-out branch: the agent may
-        // switch/create a branch inside the worktree (that new branch is the PR
-        // head), so the registry codename (`branch`) can be stale (§F5).
-        let cwd = d.path.clone();
-        let fallback = branch.to_string();
-        let resolved = tauri::async_runtime::spawn_blocking(move || git::current_branch(&cwd).unwrap_or(fallback))
-            .await
-            .unwrap_or_else(|_| branch.to_string());
-
-        // PR + CI status now comes from the GitHub API (routed through the
-        // account bound to this repo), not a `gh` shellout.
-        let result = self.github.pr_status_for(&d.root, &resolved, d.account_id.as_deref()).await;
+        // PR + CI status comes from the GitHub API (routed through the account
+        // bound to this repo). Two lookups:
+        //  - PR-checkout workspaces poll BY NUMBER: their local branch is a
+        //    synthetic `pr-<n>` name that doesn't exist as a head ref on
+        //    GitHub, so a by-branch lookup finds nothing (the `pr: null` bug).
+        //  - Regular worktrees poll by the *actual* checked-out branch: the
+        //    agent may switch/create a branch inside the worktree (that new
+        //    branch is the PR head), so the registry codename can be stale (§F5).
+        let (result, what) = match d.pr_number {
+            Some(n) => {
+                let result = self.github.pr_status_for_number(&d.root, n, d.account_id.as_deref()).await;
+                (result, format!("#{n}"))
+            }
+            None => {
+                let cwd = d.path.clone();
+                let fallback = branch.to_string();
+                let resolved =
+                    tauri::async_runtime::spawn_blocking(move || git::current_branch(&cwd).unwrap_or(fallback))
+                        .await
+                        .unwrap_or_else(|_| branch.to_string());
+                let result = self.github.pr_status_for(&d.root, &resolved, d.account_id.as_deref()).await;
+                (result, format!("branch={resolved}"))
+            }
+        };
         let status = match result {
             Ok(opt) => {
                 match &opt {
                     Some(pr) => crate::logf!(
                         "pr",
-                        "poll ws={} branch={resolved} -> PR #{} state={} rollup={}",
+                        "poll ws={} {what} -> PR #{} state={} rollup={}",
                         d.id,
                         pr.number,
                         pr.state,
                         pr.rollup
                     ),
-                    None => crate::logf!("pr", "poll ws={} branch={resolved} -> no PR", d.id),
+                    None => crate::logf!("pr", "poll ws={} {what} -> no PR", d.id),
                 }
                 opt
             }
             Err(e) => {
-                crate::logf!("pr", "poll ws={} branch={resolved} ERR: {e}", d.id);
+                crate::logf!("pr", "poll ws={} {what} ERR: {e}", d.id);
                 if let Some(rt) = self.runtimes.lock().unwrap().get_mut(&d.id) {
                     rt.last_error = Some(e);
                     rt.last_pr_poll = Some(Instant::now());
