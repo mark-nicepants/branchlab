@@ -218,11 +218,18 @@ as a Tauri event:
   selected is rejected as "unknown config option" — the option only exists
   while the current model has variants; switching models resets it to the
   model's default.) The chosen effort is stored in ACP session state and
-  applied by opencode to every prompt of that session. Across engine restarts
-  (compact/clear) the manager stashes `desired_effort` alongside
-  `desired_model` and re-applies it from the `ConfigChanged` that follows the
-  model re-apply. Reasoning is **never** written into `opencode.json` (the old
-  per-model config-file mechanism was removed).
+  applied by opencode to every prompt of that session. The chosen model and
+  level are **persisted per workspace** in the registry (`Workspace.model` /
+  `Workspace.effort`, written on `chat_set_config`). On session `Ready` the
+  manager re-applies the model (priority: pre-restart stash → workspace
+  persisted → global default — opencode ACP always boots at its own built-in
+  default and ignores the config's top-level `model`), and
+  `apply_desired_effort` re-applies the level on every `Ready` and
+  `ConfigChanged` — so both survive app restarts, compact/clear (where
+  pre-restart stashes win), and model switches (which reset opencode's session
+  effort to the model default).
+  Reasoning is **never** written into `opencode.json` (the old per-model
+  config-file mechanism was removed).
 - **AI titles:** opencode does not auto-title (no `SessionInfoUpdate`). The
   `chat_generate_title` command generates one via a **throwaway session on the
   workspace's existing ACP connection** (no extra process; its text is collected

@@ -104,6 +104,16 @@ pub struct Workspace {
     /// session; the supervisor falls back to creating one for background work.
     #[serde(default)]
     pub session_id: Option<String>,
+    /// Last selected model (`provider/model`) for this workspace. Re-applied to
+    /// every new engine session so a restart doesn't fall back to opencode's
+    /// built-in default. `None` = global default model (or opencode's default).
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Preferred thinking level (the ACP `effort` config option) for this
+    /// workspace. Re-applied to every new engine session — and after model
+    /// switches — while the selected model supports it. `None` = model default.
+    #[serde(default)]
+    pub effort: Option<String>,
     /// PR number, when this workspace was checked out from an existing PR
     /// (the PR→workspace flow). `None` for workspaces that predate a PR.
     #[serde(default)]
@@ -239,6 +249,8 @@ impl Registry {
                 init_prompt: None,
                 autofix_mode: AutofixMode::default(),
                 session_id: None,
+                model: None,
+                effort: None,
                 pr_number: None,
                 pr_url: None,
                 pr_head_repo: None,
@@ -279,6 +291,42 @@ impl Registry {
                 self.persist(&data);
             }
         }
+    }
+
+    /// Persist a workspace's last selected model (`None` = global default).
+    /// Only writes when the value actually changed, to avoid churning the file.
+    pub fn set_workspace_model(&self, workspace_id: &str, model: Option<String>) {
+        let mut data = self.data.lock().unwrap();
+        if let Some(w) = data.workspaces.iter_mut().find(|w| w.id == workspace_id) {
+            if w.model != model {
+                w.model = model;
+                self.persist(&data);
+            }
+        }
+    }
+
+    /// A workspace's persisted model, if any.
+    pub fn workspace_model(&self, workspace_id: &str) -> Option<String> {
+        let data = self.data.lock().unwrap();
+        data.workspaces.iter().find(|w| w.id == workspace_id).and_then(|w| w.model.clone())
+    }
+
+    /// Persist a workspace's preferred thinking level (`None` = model default).
+    /// Only writes when the value actually changed, to avoid churning the file.
+    pub fn set_workspace_effort(&self, workspace_id: &str, effort: Option<String>) {
+        let mut data = self.data.lock().unwrap();
+        if let Some(w) = data.workspaces.iter_mut().find(|w| w.id == workspace_id) {
+            if w.effort != effort {
+                w.effort = effort;
+                self.persist(&data);
+            }
+        }
+    }
+
+    /// A workspace's persisted thinking level, if any.
+    pub fn workspace_effort(&self, workspace_id: &str) -> Option<String> {
+        let data = self.data.lock().unwrap();
+        data.workspaces.iter().find(|w| w.id == workspace_id).and_then(|w| w.effort.clone())
     }
 
     /// A project's repo root path.
@@ -408,6 +456,8 @@ impl Registry {
             init_prompt,
             autofix_mode: AutofixMode::default(),
             session_id: None,
+            model: None,
+            effort: None,
             pr_number: None,
             pr_url: None,
             pr_head_repo: None,
@@ -448,6 +498,8 @@ impl Registry {
             init_prompt: None,
             autofix_mode: AutofixMode::default(),
             session_id: None,
+            model: None,
+            effort: None,
             pr_number: Some(meta.number),
             pr_url: Some(meta.url),
             pr_head_repo: meta.head_repo,
@@ -546,6 +598,49 @@ fn current_branch(path: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_effort_persists_and_survives_reload() {
+        let dir = std::env::temp_dir().join(format!("bl-reg-effort-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("registry.json");
+        let reg = Registry::load(file.clone(), dir.join("worktrees"));
+        {
+            let mut data = reg.data.lock().unwrap();
+            data.workspaces.push(Workspace {
+                id: "ws1".into(),
+                project_id: "p1".into(),
+                kind: WorkspaceKind::Worktree,
+                path: "/tmp/x".into(),
+                branch: None,
+                name: None,
+                base_branch: None,
+                init_prompt: None,
+                autofix_mode: AutofixMode::default(),
+                session_id: None,
+                model: None,
+                effort: None,
+                pr_number: None,
+                pr_url: None,
+                pr_head_repo: None,
+                pr_is_fork: false,
+                pr: None,
+            });
+            reg.persist(&data);
+        }
+        assert_eq!(reg.workspace_effort("ws1"), None);
+        assert_eq!(reg.workspace_model("ws1"), None);
+        reg.set_workspace_effort("ws1", Some("high".into()));
+        reg.set_workspace_model("ws1", Some("anthropic/claude-opus-4-8".into()));
+        assert_eq!(reg.workspace_effort("ws1").as_deref(), Some("high"));
+        assert_eq!(reg.workspace_model("ws1").as_deref(), Some("anthropic/claude-opus-4-8"));
+        // Survive a reload from disk (and older registries without the fields
+        // stay loadable via serde(default)).
+        let reg2 = Registry::load(file, dir.join("worktrees"));
+        assert_eq!(reg2.workspace_effort("ws1").as_deref(), Some("high"));
+        assert_eq!(reg2.workspace_model("ws1").as_deref(), Some("anthropic/claude-opus-4-8"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn id_for_is_stable_for_a_path() {

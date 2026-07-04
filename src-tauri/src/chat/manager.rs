@@ -311,6 +311,25 @@ impl ChatManager {
             let mut change = None;
             for opt in conv.config.iter_mut() {
                 if opt.id == id {
+                    // Persist the chosen model / thinking level per workspace so
+                    // new engine sessions (and model switches) re-apply them.
+                    match opt.category.as_deref() {
+                        Some("model") => {
+                            use tauri::Manager as _;
+                            self.inner
+                                .app
+                                .state::<crate::project::Registry>()
+                                .set_workspace_model(workspace_id, Some(value.clone()));
+                        }
+                        Some("thoughtLevel") => {
+                            use tauri::Manager as _;
+                            self.inner
+                                .app
+                                .state::<crate::project::Registry>()
+                                .set_workspace_effort(workspace_id, Some(value.clone()));
+                        }
+                        _ => {}
+                    }
                     if opt.current_value != value {
                         let choice_name = opt
                             .choices
@@ -454,6 +473,29 @@ impl Inner {
         events::emit_entry(&self.app, workspace_id, &with_seq(entry, seq));
     }
 
+    /// Drive the session's thought level toward the workspace's preference: a
+    /// pre-restart stash (`desired_effort`) wins, else the persisted registry
+    /// value. No-ops unless the current model advertises an effort option that
+    /// supports the value. Idempotent — the SetConfig it sends comes back as a
+    /// `ConfigChanged` whose value then already matches.
+    fn apply_desired_effort(&self, ws: &str, conv: &mut ConvState) {
+        let target = conv.desired_effort.take().or_else(|| {
+            use tauri::Manager as _;
+            self.app.state::<crate::project::Registry>().workspace_effort(ws)
+        });
+        let Some(effort) = target else { return };
+        let Some(opt) = conv.config.iter_mut().find(|o| o.category.as_deref() == Some("thoughtLevel")) else {
+            return;
+        };
+        if opt.current_value != effort && opt.choices.iter().any(|c| c.value == effort) {
+            crate::logf!("chat", "apply effort ws={ws} id={} value={effort}", opt.id);
+            opt.current_value = effort.clone();
+            if let Some(engine) = &conv.engine {
+                engine.send(EngineCommand::SetConfig { id: opt.id.clone(), value: effort });
+            }
+        }
+    }
+
     fn handle_event(self: &Arc<Inner>, ws: &str, ev: EngineEvent) {
         match ev {
             EngineEvent::Ready { session_id, config } => {
@@ -464,14 +506,19 @@ impl Inner {
                 // Enforce the desired model over ACP. opencode ACP always starts
                 // at its own built-in default (e.g. `opencode/big-pickle`) and
                 // ignores the config's top-level `model`, so we set it explicitly.
-                // Priority: a model selected before a restart (reasoning-change
-                // reset) wins; otherwise the global default model for all
-                // workspaces. The response to that SetConfig carries the full
-                // refreshed option set (incl. the dynamic `effort` option for
-                // variant-capable models) — folded in via `ConfigChanged`.
+                // Priority: a model selected before an in-app restart wins, then
+                // the workspace's persisted last-selected model (survives app
+                // restarts), then the global default model. The response to that
+                // SetConfig carries the full refreshed option set (incl. the
+                // dynamic `effort` option for variant-capable models) — folded
+                // in via `ConfigChanged`, which also re-applies the effort.
                 let desired = conv
                     .desired_model
                     .take()
+                    .or_else(|| {
+                        use tauri::Manager as _;
+                        self.app.state::<crate::project::Registry>().workspace_model(ws)
+                    })
                     .or_else(|| crate::config::get_default_model(&crate::config::global_dir()));
                 if let Some(desired) = desired {
                     if let Some(model_opt) = conv.config.iter_mut().find(|o| o.category.as_deref() == Some("model")) {
@@ -483,6 +530,10 @@ impl Inner {
                         }
                     }
                 }
+                // If the session's default model already advertises the effort
+                // option (no model SetConfig coming), apply the workspace's
+                // preferred thinking level now.
+                self.apply_desired_effort(ws, conv);
                 {
                     let db = self.db.lock().unwrap();
                     let _ = db.add_engine_session(
@@ -500,18 +551,10 @@ impl Inner {
                 let mut convs = self.convs.lock().unwrap();
                 let Some(conv) = convs.get_mut(ws) else { return };
                 conv.config = config;
-                // Re-apply the pre-restart thought level once the effort option
-                // (dynamic; appears with the model) is back and the value fits.
-                if let Some(effort) = conv.desired_effort.take() {
-                    if let Some(opt) = conv.config.iter_mut().find(|o| o.category.as_deref() == Some("thoughtLevel")) {
-                        if opt.current_value != effort && opt.choices.iter().any(|c| c.value == effort) {
-                            opt.current_value = effort.clone();
-                            if let Some(engine) = &conv.engine {
-                                engine.send(EngineCommand::SetConfig { id: opt.id.clone(), value: effort });
-                            }
-                        }
-                    }
-                }
+                // Re-apply the workspace's thinking level: the effort option is
+                // dynamic (appears with the model), and a model change resets it
+                // to the model's default.
+                self.apply_desired_effort(ws, conv);
                 events::emit_config(&self.app, ws, &conv.config);
             }
             EngineEvent::TurnEnded { stop } => self.finish_turn(ws, stop),
