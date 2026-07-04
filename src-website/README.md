@@ -17,11 +17,17 @@ npm run build      # → dist/ (minified HTML/CSS/JS, screenshots as WebP)
 npm run preview    # serve dist/ locally
 ```
 
-Upload `dist/` to any static host (GitHub Pages, Netlify, Cloudflare Pages).
+Deploys are automated: pushing changes under `src-website/` to `main` runs
+`.github/workflows/deploy-site.yml`, which builds `dist/`, uploads it to the
+VPS, and (re)builds a slim nginx:alpine container (`deploy/Dockerfile` +
+`deploy/nginx.conf`) named `branchlab-site` on the shared `npm` docker
+network — nginx-proxy-manager terminates TLS and proxies the public hostname
+to it on :80. Required repo secrets: `VPS_HOST`, `VPS_USER`, `VPS_PASSWORD`.
+
 The og:image stays PNG for social-card crawlers; everything else ships WebP.
-The auto-updater expects `https://branchlab.dev/releases/latest.json`, so when
-hosting at branchlab.dev, serve the `dist-release/` updater artifacts under
-`/releases/` alongside this site.
+The auto-updater expects `https://branchlab.dev/releases/latest.json`, so
+`/releases/` (the `dist-release/` updater artifacts) still needs a home —
+either baked into this container later or proxied separately.
 
 ## Updating screenshots
 

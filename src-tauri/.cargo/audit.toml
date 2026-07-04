@@ -1,0 +1,12 @@
+# cargo-audit configuration (read from src-tauri/, where CI runs `cargo audit`).
+
+[advisories]
+ignore = [
+  # RUSTSEC-2023-0071 — "Marvin Attack" timing sidechannel in `rsa`.
+  # Pulled in transitively via octocrab → jsonwebtoken → rsa. No fixed
+  # release exists upstream. BranchLab authenticates to GitHub with OAuth
+  # device-flow / personal-access tokens only — the RSA (GitHub App JWT)
+  # code path is never exercised. Re-check when octocrab/jsonwebtoken ship
+  # a patched rsa.
+  "RUSTSEC-2023-0071",
+]

@@ -1,0 +1,74 @@
+name: Deploy website
+
+# Builds and deploys branchlab.dev — only when the site actually changed.
+# The VPS runs docker with an existing `npm` network (nginx-proxy-manager
+# handles TLS + the public hostname and proxies to this container on :80).
+#
+# Required repo secrets: VPS_HOST, VPS_USER, VPS_PASSWORD.
+on:
+  push:
+    branches: [main]
+    paths: ["src-website/**"]
+  workflow_dispatch:
+
+# One deploy at a time; a newer push supersedes an in-flight one.
+concurrency:
+  group: deploy-site
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Build & deploy branchlab.dev
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src-website
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: src-website/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build site (minify + WebP)
+        run: npm run build
+
+      # Ship the built dist/ plus the Docker context to the VPS. `rm: true`
+      # clears the target dir first so stale assets never linger.
+      - name: Upload to VPS
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          source: "src-website/dist,src-website/deploy"
+          target: ~/apps/branchlab-site
+          strip_components: 1
+          rm: true
+
+      - name: Build image & restart container
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          script: |
+            set -euo pipefail
+            cd ~/apps/branchlab-site
+            docker build -f deploy/Dockerfile -t branchlab-site:latest .
+            docker network inspect npm >/dev/null 2>&1 || docker network create npm
+            docker rm -f branchlab-site 2>/dev/null || true
+            docker run -d \
+              --name branchlab-site \
+              --restart unless-stopped \
+              --network npm \
+              branchlab-site:latest
+            docker image prune -f
