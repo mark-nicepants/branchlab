@@ -33,8 +33,10 @@ export interface Preferences {
   collapsedProjects: Record<string, boolean>;
   /** Vertical spacing density for chat messages. */
   chatDensity: ChatDensity;
-  /** Width of the session changes panel, as a % of the session body (shared across sessions). */
-  changesPanelWidthPct: number;
+  /** Width of the session changes panel in pixels (shared across sessions).
+   *  Pixel-based so window resizes keep the panel stable and only the chat
+   *  column flexes. */
+  changesPanelWidthPx: number;
   /** Whether the session changes panel is open (shared across sessions). */
   changesPanelOpen: boolean;
 }
@@ -47,7 +49,7 @@ const DEFAULTS: Preferences = {
   workspace: {},
   collapsedProjects: {},
   chatDensity: "loose",
-  changesPanelWidthPct: 34,
+  changesPanelWidthPx: 420,
   changesPanelOpen: false,
 };
 
@@ -73,6 +75,8 @@ type LegacyPreferences = Partial<
     workspaceModels: Record<string, string>;
     workspaceVariants: Record<string, string>;
     workspaceSessions: Record<string, string>;
+    /** Pre-pixel panel width, as a % of the session body. */
+    changesPanelWidthPct: number;
   }
 >;
 
@@ -96,7 +100,19 @@ function migrate(raw: LegacyPreferences): Preferences {
       workspace[id] = { ...workspace[id], sessionId };
     }
   }
-  return { ...DEFAULTS, ...raw, workspace };
+  // Panel width moved from % of the body to fixed pixels — approximate the old
+  // percentage against the current window so the panel keeps its familiar size.
+  let changesPanelWidthPx = raw.changesPanelWidthPx;
+  if (changesPanelWidthPx == null && raw.changesPanelWidthPct != null) {
+    changesPanelWidthPx = Math.round(
+      (raw.changesPanelWidthPct / 100) * (window.innerWidth || 1280),
+    );
+  }
+  changesPanelWidthPx = Math.min(
+    1200,
+    Math.max(320, changesPanelWidthPx ?? DEFAULTS.changesPanelWidthPx),
+  );
+  return { ...DEFAULTS, ...raw, workspace, changesPanelWidthPx };
 }
 
 function load(): Preferences {

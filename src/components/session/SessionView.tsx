@@ -5,17 +5,26 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { ArrowLeft, Columns2 } from "lucide-react";
+import { ArrowLeft, Columns2, Maximize2, Minimize2 } from "lucide-react";
 import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
+import { useChat } from "../../hooks/useChat";
 import { usePrPipeline } from "../../hooks/usePrPipeline";
 import { useWorkspaceData } from "../../hooks/useWorkspaceData";
 import { chatNewSession, setAutofixMode } from "../../lib/api";
+import {
+  buildReviewMessage,
+  type ChangeScope,
+  type LastTurnInfo,
+  type NewReviewComment,
+  type ReviewComment,
+} from "../../lib/review";
 import type { AutofixMode, ProjectView, Workspace } from "../../lib/types";
 import { workspaceLabel } from "../../lib/types";
 import { ChangesView } from "../center/ChangesView";
@@ -44,6 +53,10 @@ type PanelMode =
   | { kind: "diff"; file: string | null }
   | { kind: "file"; file: string };
 
+/** Panel width bounds: the panel itself and the chat column beside it. */
+const MIN_PANEL_PX = 320;
+const MIN_CHAT_PX = 360;
+
 /**
  * A session = one workspace's chat (driven by the Rust ACP engine + SQLite
  * cache), with an on-demand git changes panel that slides in from the right.
@@ -65,6 +78,10 @@ export function SessionView({
   const isQuickChat = workspace.kind === "QuickChat";
   const isWorktree = workspace.kind === "Worktree";
   const changedCount = diffStats[workspace.id]?.files ?? 0;
+
+  // Chat store lives here (not in <Chat>) so the changes panel can read turn
+  // state ("Last turn" scoping) and send batched review comments.
+  const chat = useChat(workspace.id);
 
   // PR pipeline state is pushed by the backend supervisor (which also runs the
   // autofix/superfix loop). This is a pure view over it.
@@ -90,6 +107,7 @@ export function SessionView({
 
   const changesOpen = prefs.changesPanelOpen;
   const [panelMode, setPanelMode] = useState<PanelMode>({ kind: "list" });
+  const [panelMax, setPanelMax] = useState(false);
   const [viewed, setViewed] = useState<Set<string>>(new Set());
 
   const toggleViewed = useCallback((path: string) => {
@@ -105,8 +123,73 @@ export function SessionView({
     [],
   );
 
-  // ── Resizable changes panel (percentage of the session body, persisted
-  //    globally in preferences so it's shared across all sessions) ──
+  // ── "Last turn" scope source: the newest assistant turn's edited files plus
+  //    the user prompt that started it (the collapse summary is backend-computed
+  //    and streams live, so this stays correct mid-turn). ──
+  const lastTurn: LastTurnInfo | null = useMemo(() => {
+    const es = chat.entries;
+    for (let i = es.length - 1; i >= 0; i--) {
+      const e = es[i];
+      if (e.type !== "assistant") continue;
+      let label: string | null = null;
+      for (let j = i - 1; j >= 0; j--) {
+        const u = es[j];
+        if (u.type === "user") {
+          label = u.display || null;
+          break;
+        }
+      }
+      return { files: e.summary.filesEdited, label };
+    }
+    return null;
+  }, [chat.entries]);
+
+  // Changes-panel scope, shared between the file list and the diff view.
+  // Reset to "Last turn" per workspace — reviewing the newest work is the
+  // default posture after an AI turn.
+  const [changeScope, setChangeScope] = useState<ChangeScope>("turn");
+  useEffect(() => setChangeScope("turn"), [workspace.id]);
+
+  // Bumps as the newest turn progresses (per completed step and on terminal
+  // status), so per-file diffs re-fetch even when an edit leaves a file's
+  // +/− counts unchanged (e.g. rewriting one line) and the diff-cache
+  // signature alone wouldn't notice.
+  const diffNonce = useMemo(() => {
+    const es = chat.entries;
+    for (let i = es.length - 1; i >= 0; i--) {
+      const e = es[i];
+      if (e.type === "assistant")
+        return `${e.seq}:${e.status}:${e.summary.stepCount}`;
+    }
+    return "";
+  }, [chat.entries]);
+
+  // ── Pending review comments (per workspace, in-memory) ──
+  const [comments, setComments] = useState<ReviewComment[]>([]);
+  useEffect(() => setComments([]), [workspace.id]);
+
+  const addComment = useCallback(
+    (c: NewReviewComment) =>
+      setComments((prev) => [...prev, { ...c, id: crypto.randomUUID() }]),
+    [],
+  );
+  const removeComment = useCallback(
+    (id: string) => setComments((prev) => prev.filter((c) => c.id !== id)),
+    [],
+  );
+  const clearComments = useCallback(() => setComments([]), []);
+  const sendComments = useCallback(() => {
+    setComments((prev) => {
+      if (prev.length > 0) {
+        const msg = buildReviewMessage(prev);
+        void chat.send({ display: msg.display, sent: msg.sent, origin: "user" });
+      }
+      return [];
+    });
+  }, [chat]);
+
+  // ── Resizable changes panel (fixed pixel width, persisted globally in
+  //    preferences so it's shared across all sessions) ──
   const bodyRef = useRef<HTMLDivElement>(null);
   const [bodyWidth, setBodyWidth] = useState(0);
   const [dragging, setDragging] = useState(false);
@@ -114,14 +197,17 @@ export function SessionView({
   // panel appears at its saved state instantly on mount / session switch, and
   // only animates on an explicit toggle thereafter.
   const [animate, setAnimate] = useState(false);
-  const [changesPct, setChangesPct] = useState(() =>
-    Math.min(70, Math.max(20, prefs.changesPanelWidthPct)),
+  const [changesPx, setChangesPx] = useState(() =>
+    Math.max(MIN_PANEL_PX, prefs.changesPanelWidthPx),
   );
-  const changesPctRef = useRef(changesPct);
-  changesPctRef.current = changesPct;
-  // Fixed pixel width for the panel + its content: derived from the % so the
-  // content keeps its layout while the panel opens/closes (clip, not reflow).
-  const changesPx = Math.round((changesPct / 100) * bodyWidth);
+  const changesPxRef = useRef(changesPx);
+  changesPxRef.current = changesPx;
+  // Keep the chat column usable when the window shrinks: cap the panel to the
+  // body width minus the chat minimum (the saved width is restored on regrow).
+  const effectivePx =
+    bodyWidth > 0
+      ? Math.min(changesPx, Math.max(MIN_PANEL_PX, bodyWidth - MIN_CHAT_PX))
+      : changesPx;
 
   // Measure synchronously before paint so the panel renders at its real width
   // on the very first frame (no 0 → measured jump that would animate on mount).
@@ -151,24 +237,58 @@ export function SessionView({
       setDragging(true);
       document.body.style.cursor = "col-resize";
       const onMove = (ev: MouseEvent) => {
-        const pct = Math.min(
-          70,
-          Math.max(20, ((rect.right - ev.clientX) / rect.width) * 100),
+        const px = Math.min(
+          Math.max(MIN_PANEL_PX, rect.width - MIN_CHAT_PX),
+          Math.max(MIN_PANEL_PX, rect.right - ev.clientX),
         );
-        changesPctRef.current = pct;
-        setChangesPct(pct);
+        changesPxRef.current = px;
+        setChangesPx(px);
       };
       const onUp = () => {
         setDragging(false);
         document.body.style.cursor = "";
         window.removeEventListener("mousemove", onMove);
         window.removeEventListener("mouseup", onUp);
-        setPref("changesPanelWidthPct", Math.round(changesPctRef.current));
+        setPref("changesPanelWidthPx", Math.round(changesPxRef.current));
       };
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
     },
     [setPref],
+  );
+
+  // ── Focus mode: the panel maximizes over the whole session body ──
+  useEffect(() => {
+    if (!changesOpen) setPanelMax(false);
+  }, [changesOpen]);
+  useEffect(() => {
+    if (!panelMax) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPanelMax(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [panelMax]);
+
+  const maxToggle = (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={() => setPanelMax((v) => !v)}
+        >
+          {panelMax ? (
+            <Minimize2 className="size-3.5" />
+          ) : (
+            <Maximize2 className="size-3.5" />
+          )}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>
+        {panelMax ? "Exit focus mode (Esc)" : "Focus mode"}
+      </TooltipContent>
+    </Tooltip>
   );
 
   // "Restart engine" from the tools panel: start a fresh ACP session (keeps all
@@ -248,7 +368,7 @@ export function SessionView({
       </header>
 
       {/* Body: chat + sliding, resizable changes panel */}
-      <div ref={bodyRef} className="flex min-h-0 flex-1">
+      <div ref={bodyRef} className="relative flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
           {isWorktree && (
             <PrPipeline
@@ -262,6 +382,7 @@ export function SessionView({
           <Chat
             key={workspace.id}
             workspace={workspace}
+            chat={chat}
             onRenamed={onRenamed}
             pendingAction={pendingAction}
             onActionConsumed={() => setPendingAction(null)}
@@ -269,7 +390,7 @@ export function SessionView({
           />
         </div>
 
-        {!isQuickChat && changesOpen && (
+        {!isQuickChat && changesOpen && !panelMax && (
           <div
             onMouseDown={startResize}
             className={cn(
@@ -280,7 +401,7 @@ export function SessionView({
         )}
         {!isQuickChat && (
           <div
-            style={{ width: changesOpen ? changesPx : 0 }}
+            style={{ width: changesOpen ? effectivePx : 0 }}
             className={cn(
               "shrink-0 overflow-hidden",
               dragging || !animate
@@ -289,7 +410,15 @@ export function SessionView({
               changesOpen ? "opacity-100" : "opacity-0",
             )}
           >
-            <div className="flex h-full flex-col" style={{ width: changesPx }}>
+            {/* In focus mode this escapes the width-clipped wrapper and covers
+                the session body (same instance, so panel state survives). */}
+            <div
+              className={cn(
+                "flex h-full flex-col",
+                panelMax && "absolute inset-0 z-20 bg-background",
+              )}
+              style={panelMax ? undefined : { width: effectivePx }}
+            >
               {panelMode.kind === "list" ? (
                 <ChangesPanel
                   workspace={workspace}
@@ -302,6 +431,10 @@ export function SessionView({
                     setPanelMode({ kind: "file", file: path })
                   }
                   onRestart={restart}
+                  actions={maxToggle}
+                  lastTurn={lastTurn}
+                  scope={changeScope}
+                  onScopeChange={setChangeScope}
                 />
               ) : (
                 <>
@@ -313,12 +446,19 @@ export function SessionView({
                     >
                       <ArrowLeft className="size-3.5" />
                     </Button>
-                    <span
-                      className="min-w-0 flex-1 truncate font-mono"
-                      title={panelMode.file ?? undefined}
-                    >
-                      {panelMode.file ?? "Changes"}
-                    </span>
+                    {panelMode.kind === "diff" ? (
+                      <span className="min-w-0 flex-1 truncate font-medium">
+                        Change details
+                      </span>
+                    ) : (
+                      <span
+                        className="min-w-0 flex-1 truncate font-mono"
+                        title={panelMode.file}
+                      >
+                        {panelMode.file}
+                      </span>
+                    )}
+                    {maxToggle}
                   </div>
                   <div className="min-h-0 flex-1">
                     {panelMode.kind === "diff" ? (
@@ -328,6 +468,16 @@ export function SessionView({
                         viewed={viewed}
                         onToggleViewed={toggleViewed}
                         onMarkAllViewed={markAllViewed}
+                        lastTurn={lastTurn}
+                        scope={changeScope}
+                        onScopeChange={setChangeScope}
+                        diffNonce={diffNonce}
+                        comments={comments}
+                        onAddComment={addComment}
+                        onRemoveComment={removeComment}
+                        onClearComments={clearComments}
+                        onSendComments={sendComments}
+                        busy={chat.busy}
                       />
                     ) : (
                       <FileView

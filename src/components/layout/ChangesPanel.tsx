@@ -1,4 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Input } from "@/components/ui/input";
+import { TabBarItem } from "@/components/ui/tab-bar";
+import { fileStatus } from "@/lib/status";
+import { buildTree, type TreeNode } from "@/lib/tree";
+import { cn } from "@/lib/utils";
 import {
   CheckCircle2,
   ChevronDown,
@@ -10,18 +15,19 @@ import {
   Search,
   SquareArrowOutUpRight,
 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { openExternal, workspaceFiles } from "../../lib/api";
-import type { Workspace } from "../../lib/types";
-import { Input } from "@/components/ui/input";
-import { EmptyState } from "@/components/ui/empty-state";
-import { TabBarItem } from "@/components/ui/tab-bar";
-import { fileStatus } from "@/lib/status";
-import { buildTree, type TreeNode } from "@/lib/tree";
 import { useWorkspaceData } from "../../hooks/useWorkspaceData";
+import { openExternal, workspaceFiles } from "../../lib/api";
+import {
+  turnFilePaths,
+  type ChangeScope,
+  type LastTurnInfo,
+} from "../../lib/review";
+import type { Workspace } from "../../lib/types";
+import { HiddenFilesNote, ScopeToggle } from "../center/ChangesView";
 import { usePreferences } from "../PreferencesProvider";
 import { ServerToolsPanel } from "../session/ServerToolsPanel";
-import { cn } from "@/lib/utils";
 
 interface Props {
   workspace: Workspace | null;
@@ -32,6 +38,12 @@ interface Props {
   onViewFile: (path: string) => void;
   /** Restart the workspace's ACP engine (Config tab). */
   onRestart?: () => void;
+  /** Extra controls rendered at the right edge of the tab header. */
+  actions?: React.ReactNode;
+  /** Last-turn info + shared scope, kept in sync with the diff view. */
+  lastTurn: LastTurnInfo | null;
+  scope: ChangeScope;
+  onScopeChange: (s: ChangeScope) => void;
 }
 
 type Tab = "changes" | "files" | "config";
@@ -43,6 +55,10 @@ export function ChangesPanel({
   onOpenFile,
   onViewFile,
   onRestart,
+  actions,
+  lastTurn,
+  scope,
+  onScopeChange,
 }: Props) {
   const [tab, setTab] = useState<Tab>("changes");
 
@@ -61,6 +77,7 @@ export function ChangesPanel({
         <TabBarItem active={tab === "config"} onClick={() => setTab("config")}>
           Config
         </TabBarItem>
+        {actions && <div className="ml-auto py-1">{actions}</div>}
       </header>
 
       {!workspace ? (
@@ -71,6 +88,9 @@ export function ChangesPanel({
           viewed={viewed}
           onToggleViewed={onToggleViewed}
           onOpenFile={onOpenFile}
+          lastTurn={lastTurn}
+          scope={scope}
+          onScopeChange={onScopeChange}
         />
       ) : tab === "files" ? (
         <FilesTab workspace={workspace} onViewFile={onViewFile} />
@@ -99,23 +119,48 @@ function ChangesTab({
   viewed,
   onToggleViewed,
   onOpenFile,
+  lastTurn,
+  scope,
+  onScopeChange,
 }: {
   workspace: Workspace;
   viewed: Set<string>;
   onToggleViewed: (path: string) => void;
   onOpenFile: (path: string) => void;
+  lastTurn: LastTurnInfo | null;
+  scope: ChangeScope;
+  onScopeChange: (s: ChangeScope) => void;
 }) {
   const [filter, setFilter] = useState("");
   const { changes } = useWorkspaceData();
   const files = changes ?? [];
-  const shown = files.filter((f) =>
+
+  const turnPaths = useMemo(
+    () => turnFilePaths(files, lastTurn),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [files.map((f) => f.path).join(","), lastTurn],
+  );
+  const effScope: ChangeScope =
+    scope === "turn" && turnPaths.size > 0 ? "turn" : "all";
+  const scoped =
+    effScope === "turn" ? files.filter((f) => turnPaths.has(f.path)) : files;
+  const shown = scoped.filter((f) =>
     f.path.toLowerCase().includes(filter.toLowerCase()),
   );
+  const hiddenCount = files.length - scoped.length;
 
   if (files.length === 0) return <EmptyIcon>No changes yet</EmptyIcon>;
 
   return (
     <>
+      <div className="flex items-center gap-2 px-3 pt-2">
+        <ScopeToggle
+          scope={effScope}
+          turnCount={turnPaths.size}
+          allCount={files.length}
+          onChange={onScopeChange}
+        />
+      </div>
       <div className="relative px-3 py-2">
         <Search className="absolute top-1/2 left-5 size-3.5 -translate-y-1/2 text-muted-foreground" />
         <Input
@@ -126,6 +171,12 @@ function ChangesTab({
         />
       </div>
       <div className="flex-1 overflow-y-auto pb-1">
+        {effScope === "turn" && hiddenCount > 0 && (
+          <HiddenFilesNote
+            count={hiddenCount}
+            onShowAll={() => onScopeChange("all")}
+          />
+        )}
         {shown.map((f) => {
           const slash = f.path.lastIndexOf("/");
           const dir = slash >= 0 ? f.path.slice(0, slash + 1) : "";

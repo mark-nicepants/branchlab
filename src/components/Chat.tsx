@@ -1,6 +1,6 @@
 import { ChevronUp, GitBranch } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useChat } from "../hooks/useChat";
+import type { ChatStore } from "../hooks/useChat";
 import { useClipboardImages } from "../hooks/useClipboardImages";
 import { useTodos } from "../hooks/useTodos";
 import { chatGenerateTitle, renameWorkspace } from "../lib/api";
@@ -51,6 +51,9 @@ export type OnFinishAction =
 
 interface Props {
   workspace: Workspace;
+  /** The workspace's chat store — owned by SessionView so siblings (e.g. the
+   *  changes panel's review flow) can send messages and read turn state. */
+  chat: ChatStore;
   onRenamed: (workspaceId: string, name: string) => void;
   /** A workspace lifecycle action to run; fired then onActionConsumed is called. */
   pendingAction: WorkspaceAction | null;
@@ -72,13 +75,13 @@ function deriveTitle(text: string): string {
  */
 export function Chat({
   workspace,
+  chat,
   onRenamed,
   pendingAction,
   onActionConsumed,
   onManageModels,
 }: Props) {
   const { prefs, setWorkspacePref } = usePreferences();
-  const chat = useChat(workspace.id);
   const { todos } = useTodos(workspace.id);
   const {
     attachments,
