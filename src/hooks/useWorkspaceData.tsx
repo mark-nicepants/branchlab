@@ -12,9 +12,15 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
-import { requestGitRefresh, resync, setActiveWorkspace } from "../lib/api";
+import {
+  getSidebarSnapshot,
+  refreshPrStatus,
+  requestGitRefresh,
+  setActiveWorkspace,
+} from "../lib/api";
 import {
   onWorkspaceGit,
   onWorkspacePr,
@@ -76,9 +82,11 @@ export function WorkspaceDataProvider({
     Record<string, SessionPayload>
   >({});
 
-  // Subscribe to backend git + PR + session pushes once; seed via resync. The
-  // backend computes session state (including `needsAttention`), so there's no
-  // client-side derivation — we just store what it pushes.
+  // Subscribe to backend git + PR + session pushes once, then seed the store
+  // from one complete snapshot read ("pull once, push forever"). The snapshot
+  // is a synchronous read of backend caches, so no startup ordering race can
+  // leave a workspace blank; events only apply deltas afterwards. The backend
+  // computes session state (including `needsAttention`) — no client derivation.
   useEffect(() => {
     const unlisteners: Array<() => void> = [];
     let cancelled = false;
@@ -100,12 +108,53 @@ export function WorkspaceDataProvider({
         setSessionByWorkspace((prev) => ({ ...prev, [p.workspaceId]: p })),
       ),
     );
-    // Events aren't buffered for late subscribers, so request current state now.
-    void resync();
+    // Seed AFTER subscribing, so a delta arriving in between isn't lost (a
+    // stale snapshot entry would just be overwritten by the newer event).
+    void getSidebarSnapshot().then((snapshot) => {
+      if (cancelled) return;
+      setById((prev) => {
+        const next = { ...prev };
+        for (const w of snapshot) {
+          if (!next[w.workspaceId])
+            next[w.workspaceId] = {
+              workspaceId: w.workspaceId,
+              diffStat: w.diffStat,
+              changes: null,
+            };
+        }
+        return next;
+      });
+      setPrByWorkspace((prev) => {
+        const next = { ...prev };
+        for (const w of snapshot)
+          if (!next[w.workspaceId]) next[w.workspaceId] = w.pr;
+        return next;
+      });
+      setSessionByWorkspace((prev) => {
+        const next = { ...prev };
+        for (const w of snapshot)
+          if (!next[w.workspaceId]) next[w.workspaceId] = w.session;
+        return next;
+      });
+    });
     return () => {
       cancelled = true;
       unlisteners.forEach((fn) => fn());
     };
+  }, []);
+
+  // Window focus → immediate PR re-poll (throttled): the user is looking, so
+  // the slow safety-net cadence isn't fresh enough.
+  const lastFocusPoke = useRef(0);
+  useEffect(() => {
+    const onFocus = () => {
+      const now = Date.now();
+      if (now - lastFocusPoke.current < 15_000) return;
+      lastFocusPoke.current = now;
+      void refreshPrStatus();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
   }, []);
 
   // Tell the backend which workspace is active (it then also emits `changes`

@@ -56,6 +56,9 @@ struct LiveTurn {
     origin: TurnOrigin,
     started_at: i64,
     streaming: bool,
+    /// Last time the live blocks were flushed to the store (throttled so token
+    /// deltas don't hammer SQLite). `None` until the first flush.
+    last_persist: Option<std::time::Instant>,
 }
 
 struct ConvState {
@@ -255,6 +258,7 @@ impl ChatManager {
             origin,
             started_at: now,
             streaming: false,
+            last_persist: None,
         });
 
         let inputs = build_inputs(&sent, &attachments);
@@ -648,6 +652,29 @@ impl Inner {
                             origin,
                             status: TurnStatus::Streaming,
                         });
+                    }
+                    // Persist the live blocks continuously (block-level changes
+                    // immediately; token appends throttled) so a snapshot taken
+                    // mid-turn — switching workspaces, app restart — carries the
+                    // in-progress work instead of an empty entry.
+                    let block_level = delta.text_append.is_none();
+                    let due = cur.last_persist.is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(400));
+                    if block_level || due {
+                        cur.last_persist = Some(std::time::Instant::now());
+                        let entry = Entry::Assistant(AssistantEntry {
+                            seq: cur.seq,
+                            entry_id: cur.entry_id.clone(),
+                            engine_session_id: None,
+                            status: TurnStatus::Streaming,
+                            origin: cur.origin,
+                            blocks: conv.assembler.blocks.clone(),
+                            summary: compute_collapse(&conv.assembler.blocks, true),
+                            usage: None,
+                            started_at: cur.started_at,
+                            ended_at: None,
+                        });
+                        let db = self.db.lock().unwrap();
+                        let _ = db.update_entry(&entry);
                     }
                 }
             }

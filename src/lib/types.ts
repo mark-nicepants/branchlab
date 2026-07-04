@@ -160,6 +160,15 @@ export interface GitPayload {
 }
 
 /** `workspace:pr` — PR pipeline + autofix state for one workspace. */
+/** One workspace's complete sidebar state, from `get_sidebar_snapshot` — the
+ *  race-free mount seed the `workspace:*` events then apply deltas over. */
+export interface SidebarWorkspace {
+  workspaceId: string;
+  diffStat: DiffStat;
+  session: SessionPayload;
+  pr: PrPayload;
+}
+
 export interface PrPayload {
   workspaceId: string;
   status: PrStatus | null;

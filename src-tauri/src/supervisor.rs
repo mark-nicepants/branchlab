@@ -27,8 +27,13 @@ use crate::project::{AutofixMode, Registry, WorkspaceKind};
 
 /// Reconcile cadence: PR pipeline poll for driven worktrees.
 const TICK: Duration = Duration::from_secs(5);
-/// PR status is polled (via `gh`) at most this often per workspace.
+/// PR status is polled at most this often for driven workspaces (active or
+/// autofix-enabled).
 const PR_POLL_INTERVAL: Duration = Duration::from_secs(15);
+/// Background workspaces (not on screen, autofix off) get a slow safety-net
+/// sweep only — freshness comes from event-triggered refreshes (turn end,
+/// lifecycle actions, window focus, workspace activation).
+const BG_PR_POLL_INTERVAL: Duration = Duration::from_secs(180);
 /// Superfix attempt cap on a single failing streak.
 const MAX_SUPER_ATTEMPTS: u32 = 5;
 
@@ -51,7 +56,7 @@ impl Activity {
 /// Pipeline phase — mirrors the old frontend `PipelinePhase`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum Phase {
+pub enum Phase {
     #[default]
     Idle,
     Running,
@@ -86,23 +91,23 @@ struct WsRuntime {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SessionPayload {
-    workspace_id: String,
-    activity: String,
-    awaiting_input: bool,
-    needs_attention: bool,
-    error: Option<String>,
+pub struct SessionPayload {
+    pub workspace_id: String,
+    pub activity: String,
+    pub awaiting_input: bool,
+    pub needs_attention: bool,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct PrPayload {
-    workspace_id: String,
-    status: Option<PrStatus>,
-    phase: Phase,
-    attempts: u32,
-    mode: AutofixMode,
-    error: Option<String>,
+pub struct PrPayload {
+    pub workspace_id: String,
+    pub status: Option<PrStatus>,
+    pub phase: Phase,
+    pub attempts: u32,
+    pub mode: AutofixMode,
+    pub error: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -125,6 +130,8 @@ struct DesiredWs {
     account_id: Option<String>,
     /// A fork PR checkout — read-only, so autofix is skipped.
     is_fork: bool,
+    /// Not on screen and autofix off: polled on the slow background cadence.
+    background: bool,
     /// The PR this workspace was checked out from. When set, PR status is
     /// polled by number — the local `pr-<n>` branch is not the head ref GitHub
     /// knows about, so a by-branch lookup would find nothing.
@@ -214,22 +221,79 @@ impl Supervisor {
         self.reconcile_now();
     }
 
-    /// Re-emit current session/pr snapshots (frontend remount seed).
-    pub fn resync(&self) {
-        let ids: Vec<String> = self.inner.runtimes.lock().unwrap().keys().cloned().collect();
-        for id in &ids {
-            if let Some(rt) = self.inner.runtimes.lock().unwrap().get_mut(id) {
-                rt.last_session_emit = None;
-                rt.last_pr_emit = None;
-            }
-            self.inner.emit_session(id);
-            self.inner.emit_pr(id);
+    /// A complete, race-free read of every workspace's session + PR state for
+    /// the frontend's mount snapshot. Uses the live runtime when one exists,
+    /// else seeds from the registry's persisted PR — so the sidebar is fully
+    /// populated at t=0 without waiting for any poll or event.
+    pub fn sidebar_snapshot(&self) -> Vec<WorkspaceStatus> {
+        let registry = self.inner.app.state::<Registry>();
+        let rts = self.inner.runtimes.lock().unwrap();
+        registry
+            .all_workspaces()
+            .into_iter()
+            .map(|w| {
+                let rt = rts.get(&w.id);
+                let pr_status = rt.map(|r| r.pr.clone()).unwrap_or_else(|| w.pr.clone());
+                let phase = match rt {
+                    Some(r) => r.phase,
+                    // Same seeding as reconcile's first sight of a workspace.
+                    None => match pr_status.as_ref().map(|p| p.rollup.as_str()) {
+                        Some("success") => Phase::Passing,
+                        Some("failure") => Phase::Failing,
+                        _ => Phase::Idle,
+                    },
+                };
+                WorkspaceStatus {
+                    session: SessionPayload {
+                        workspace_id: w.id.clone(),
+                        activity: rt.map(|r| r.activity).unwrap_or_default().as_str().to_string(),
+                        awaiting_input: rt.is_some_and(|r| r.awaiting_input),
+                        needs_attention: rt.is_some_and(|r| r.needs_attention),
+                        error: rt.and_then(|r| r.last_error.clone()),
+                    },
+                    pr: PrPayload {
+                        workspace_id: w.id.clone(),
+                        status: pr_status,
+                        phase,
+                        attempts: rt.map(|r| r.super_attempts).unwrap_or(0),
+                        mode: rt.map(|r| r.mode).unwrap_or(w.autofix_mode),
+                        error: rt.and_then(|r| r.last_error.clone()),
+                    },
+                }
+            })
+            .collect()
+    }
+
+    /// Schedule an immediate PR re-poll for one workspace (lifecycle actions:
+    /// push / merge / PR created — the remote state just changed).
+    pub fn poke(&self, workspace_id: &str) {
+        if let Some(rt) = self.inner.runtimes.lock().unwrap().get_mut(workspace_id) {
+            rt.last_pr_poll = None;
         }
+        self.reconcile_now();
+    }
+
+    /// Schedule an immediate PR re-poll for every workspace (window focus —
+    /// the user is looking, make it fresh).
+    pub fn poke_all(&self) {
+        for rt in self.inner.runtimes.lock().unwrap().values_mut() {
+            rt.last_pr_poll = None;
+        }
+        self.reconcile_now();
     }
 }
 
+/// One workspace's session + PR state, for the mount snapshot.
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceStatus {
+    pub session: SessionPayload,
+    pub pr: PrPayload,
+}
+
 impl Inner {
-    /// Driven set: active + autofix-enabled worktrees (for PR poll + autofix).
+    /// Every registered workspace. The sidebar shows PR/CI + session state for
+    /// all of them, so all are polled — active/autofix-enabled ones on the fast
+    /// cadence, the rest in the background.
     fn snapshot_desired(&self) -> Vec<DesiredWs> {
         let registry = self.app.state::<Registry>();
         let active = self.active.lock().unwrap().clone();
@@ -237,9 +301,6 @@ impl Inner {
         for w in registry.all_workspaces() {
             let is_active = Some(&w.id) == active.as_ref();
             let enabled = w.autofix_mode != AutofixMode::Off;
-            if !is_active && !enabled {
-                continue;
-            }
             if let Some((ws, root)) = registry.workspace_with_root(&w.id) {
                 out.push(DesiredWs {
                     id: ws.id.clone(),
@@ -250,6 +311,7 @@ impl Inner {
                     mode: ws.autofix_mode,
                     account_id: registry.project_account_id(&ws.project_id),
                     is_fork: ws.pr_is_fork,
+                    background: !is_active && !enabled,
                     pr_number: ws.pr_number,
                     persisted_pr: ws.pr.clone(),
                 });
@@ -287,9 +349,10 @@ impl Inner {
             }
             if d.is_worktree {
                 if let Some(branch) = d.branch.clone() {
+                    let interval = if d.background { BG_PR_POLL_INTERVAL } else { PR_POLL_INTERVAL };
                     let due = {
                         let rts = inner.runtimes.lock().unwrap();
-                        rts.get(&d.id).is_none_or(|rt| rt.last_pr_poll.is_none_or(|t| t.elapsed() >= PR_POLL_INTERVAL))
+                        rts.get(&d.id).is_none_or(|rt| rt.last_pr_poll.is_none_or(|t| t.elapsed() >= interval))
                     };
                     if due {
                         inner.poll_pipeline(&d, &branch).await;
@@ -340,6 +403,13 @@ impl Inner {
                 opt
             }
             Err(e) => {
+                // Accounts load asynchronously at startup; a resolve failure is
+                // transient and local (no API call was made) — retry on the next
+                // tick instead of burning the whole poll interval.
+                if e.contains("no GitHub account signed in") {
+                    crate::logf!("pr", "poll ws={} {what} deferred: {e}", d.id);
+                    return;
+                }
                 crate::logf!("pr", "poll ws={} {what} ERR: {e}", d.id);
                 if let Some(rt) = self.runtimes.lock().unwrap().get_mut(&d.id) {
                     rt.last_error = Some(e);
@@ -423,9 +493,11 @@ impl Inner {
                     // Autofix hand-off: the fix turn finished.
                     if ev.origin == TurnOrigin::Autofix && rt.phase == Phase::Fixing {
                         rt.phase = if rt.mode == AutofixMode::Super { Phase::Running } else { Phase::AwaitingPush };
-                        rt.last_pr_poll = None;
                         pr_changed = true;
                     }
+                    // Any finished turn may have pushed / opened a PR — re-poll
+                    // right away instead of waiting out the interval.
+                    rt.last_pr_poll = None;
                 }
             }
         }

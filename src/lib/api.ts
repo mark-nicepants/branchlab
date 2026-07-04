@@ -24,6 +24,7 @@ import type {
   PushResult,
   RemoteInfo,
   ServerInfo,
+  SidebarWorkspace,
   ToolsStatus,
   Workspace,
 } from "./types";
@@ -383,10 +384,15 @@ export function setAutofixMode(
   return invoke<void>("set_autofix_mode", { workspaceId, mode });
 }
 
-/** Ask the backend to re-emit current git/session/pr snapshots (call once
- *  after attaching event listeners — Tauri events aren't buffered). */
-export function resync(): Promise<void> {
-  return invoke<void>("resync");
+/** A complete snapshot of every workspace's sidebar state (diff stat, session,
+ *  PR/CI). Seeds the store on mount; `workspace:*` events apply deltas after. */
+export function getSidebarSnapshot(): Promise<SidebarWorkspace[]> {
+  return invoke<SidebarWorkspace[]>("get_sidebar_snapshot");
+}
+
+/** Schedule an immediate PR re-poll for every workspace (window focus). */
+export function refreshPrStatus(): Promise<void> {
+  return invoke<void>("refresh_pr_status");
 }
 
 /** Force a git recompute + push for one workspace (used by refreshChanges). */

@@ -1,6 +1,6 @@
 // Mock backend event bus for the browser harness (`dev:browser`).
 // Shadows events.ts. Since there is no Rust backend to push events, this bus
-// lets api.mock.ts (its `resync`) fire canned payloads so the sidebar badges,
+// lets api.mock.ts fire canned payloads so the sidebar badges,
 // changes list, PR bar, and todos still render. Same public surface as events.ts
 // plus `mockEmit` for driving a scripted timeline.
 

@@ -61,9 +61,10 @@ function BucketIcon({
   return <Loader2 className={cn("animate-spin text-warning", className)} />;
 }
 
-/** Summary line for the rollup, e.g. "2 checks failing". */
+/** Summary line for the rollup, e.g. "2 checks failing". Skipped checks are
+ *  excluded from the totals — same accounting as the sidebar's PR chip. */
 function summary(status: PrStatus): string {
-  const total = status.checks.length;
+  const total = status.checks.filter((c) => c.bucket !== "skipped").length;
   switch (status.rollup) {
     case "success":
       return `All ${total} checks passing`;

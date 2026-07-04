@@ -378,6 +378,11 @@ pub fn compute_collapse(blocks: &[Block], collapsed: bool) -> CollapseSummary {
         match b {
             Block::Reasoning { .. } => step_count += 1,
             Block::Tool(t) => {
+                // Todo-list updates are surfaced by the composer's TodoButton
+                // and filtered from the transcript — don't count them as steps.
+                if t.input.get("todos").is_some() {
+                    continue;
+                }
                 step_count += 1;
                 if is_edit_tool(&t.name) {
                     if let Some(p) = tool_file_path(t) {
@@ -450,11 +455,13 @@ mod tests {
             // duplicate file must not double-count
             tool("write", json!({ "path": "b.rs" }), None),
             tool("bash", json!({ "command": "cargo test" }), None),
+            // todo-list updates live in the composer, not the transcript — not a step
+            tool("todowrite", json!({ "todos": [{ "content": "x" }] }), None),
             Block::Text { block_id: "t1".into(), text: "done".into() },
         ];
         let s = compute_collapse(&blocks, true);
         assert!(s.collapsed);
-        // reasoning + 5 tools = 6 steps
+        // reasoning + 5 tools = 6 steps (the todo update doesn't count)
         assert_eq!(s.step_count, 6);
         assert_eq!(s.files_edited, vec!["a.rs".to_string(), "b.rs".to_string()]);
         assert_eq!(s.commands_run, 1);

@@ -251,17 +251,28 @@ pub fn commit_workspace(workspace_id: String, message: String, registry: State<R
 
 /// Merge the workspace branch into its base branch in the parent repo.
 #[tauri::command]
-pub fn merge_workspace(workspace_id: String, registry: State<Registry>) -> Result<MergeResult, String> {
+pub fn merge_workspace(
+    workspace_id: String,
+    registry: State<Registry>,
+    supervisor: State<Supervisor>,
+) -> Result<MergeResult, String> {
     let (_ws, root, branch, base) = resolve_workspace_branch(&registry, &workspace_id)?;
     let summary = git::merge_into_base(&root, &branch, &base)?;
+    supervisor.poke(&workspace_id);
     Ok(MergeResult { branch, base, summary })
 }
 
 /// Push the workspace branch to `origin`.
 #[tauri::command]
-pub fn push_workspace(workspace_id: String, registry: State<Registry>) -> Result<PushResult, String> {
+pub fn push_workspace(
+    workspace_id: String,
+    registry: State<Registry>,
+    supervisor: State<Supervisor>,
+) -> Result<PushResult, String> {
     let (_ws, root, branch, _base) = resolve_workspace_branch(&registry, &workspace_id)?;
-    git::push_branch(&root, "origin", &branch).map(|output| PushResult { branch, remote: "origin".to_string(), output })
+    let output = git::push_branch(&root, "origin", &branch)?;
+    supervisor.poke(&workspace_id);
+    Ok(PushResult { branch, remote: "origin".to_string(), output })
 }
 
 /// Push the branch and open a GitHub PR via the API (routed through the repo's
@@ -273,6 +284,7 @@ pub async fn create_workspace_pr(
     body: String,
     registry: State<'_, Registry>,
     github: State<'_, crate::github::GithubManager>,
+    supervisor: State<'_, Supervisor>,
 ) -> Result<PrResult, String> {
     let (ws, root, branch, base) = resolve_workspace_branch(&registry, &workspace_id)?;
     if ws.pr_is_fork {
@@ -282,6 +294,7 @@ pub async fn create_workspace_pr(
     git::push_branch(&root, "origin", &branch)?;
     let account_id = registry.project_account_id(&ws.project_id);
     let url = github.create_pr_for(&root, &branch, &base, &title, &body, account_id.as_deref()).await?;
+    supervisor.poke(&workspace_id);
     Ok(PrResult { branch, base, url })
 }
 
@@ -334,13 +347,48 @@ pub fn set_autofix_mode(
     supervisor.note_autofix_mode(&workspace_id, mode);
 }
 
-/// Force the backend to re-emit current git/session/pr snapshots. The frontend
-/// calls this once after attaching its event listeners, since Tauri events are
-/// not buffered for late subscribers.
+/// A complete, synchronous read of every workspace's sidebar state (diff stat,
+/// session activity, PR/CI). The frontend seeds its store from this on mount,
+/// then applies `workspace:*` event deltas — no startup ordering races, since
+/// nothing depends on events emitted before the webview subscribed.
 #[tauri::command]
-pub fn resync(watcher: State<GitWatcher>, supervisor: State<Supervisor>) {
-    watcher.resync();
-    supervisor.resync();
+pub fn get_sidebar_snapshot(
+    registry: State<Registry>,
+    watcher: State<GitWatcher>,
+    supervisor: State<Supervisor>,
+) -> Vec<SidebarWorkspace> {
+    let statuses: std::collections::HashMap<String, crate::supervisor::WorkspaceStatus> =
+        supervisor.sidebar_snapshot().into_iter().map(|s| (s.session.workspace_id.clone(), s)).collect();
+    registry
+        .all_workspaces()
+        .into_iter()
+        .filter_map(|w| {
+            let status = statuses.get(&w.id)?;
+            Some(SidebarWorkspace {
+                workspace_id: w.id.clone(),
+                diff_stat: watcher.diff_stat_snapshot(&w.id, &w.path),
+                session: status.session.clone(),
+                pr: status.pr.clone(),
+            })
+        })
+        .collect()
+}
+
+/// One workspace's complete sidebar state (see [`get_sidebar_snapshot`]).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SidebarWorkspace {
+    pub workspace_id: String,
+    pub diff_stat: crate::git::DiffStat,
+    pub session: crate::supervisor::SessionPayload,
+    pub pr: crate::supervisor::PrPayload,
+}
+
+/// Schedule an immediate PR re-poll for every workspace. Called on window
+/// focus — the user is looking, so the safety-net cadence isn't fresh enough.
+#[tauri::command]
+pub fn refresh_pr_status(supervisor: State<Supervisor>) {
+    supervisor.poke_all();
 }
 
 /// Force a git recompute + emit for one workspace (used by `refreshChanges`).

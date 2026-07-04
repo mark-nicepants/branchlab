@@ -102,6 +102,10 @@ export function Chat({
   const [slashIndex, setSlashIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Stick-to-bottom: follow the stream only while the user IS at the bottom.
+  // Scrolling up detaches (reading history isn't yanked back down); scrolling
+  // back to the bottom re-attaches. Sending a message always re-attaches.
+  const atBottom = useRef(true);
   const nameRequested = useRef(false);
 
   // Report context-window usage up to the session header.
@@ -109,10 +113,22 @@ export function Chat({
     onContext(chat.context);
   }, [chat.context, onContext]);
 
-  // Auto-scroll to the newest content.
+  const trackScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    atBottom.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 48;
+  }, []);
+
+  // Auto-scroll to the newest content — only while attached to the bottom.
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+    if (atBottom.current)
+      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [chat.entries]);
+
+  // A freshly opened workspace always starts attached at the bottom.
+  useEffect(() => {
+    atBottom.current = true;
+  }, [workspace.id]);
 
   // Run a lifecycle action: show `display`, send `prompt`.
   useEffect(() => {
@@ -158,6 +174,8 @@ export function Chat({
     const text = input.trim();
     if ((!text && attachments.length === 0) || chat.busy) return;
     const origin = text.startsWith("/") ? "slash" : "user";
+    // Sending re-attaches the transcript to the bottom.
+    atBottom.current = true;
 
     // First interaction → title the workspace: ask the engine for an AI title
     // (throwaway session on the same connection), falling back to a deterministic
@@ -207,7 +225,11 @@ export function Chat({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+      <div
+        ref={scrollRef}
+        onScroll={trackScroll}
+        className="flex-1 overflow-y-auto"
+      >
         <div className="mx-auto flex max-w-4xl flex-col gap-0 p-5">
           {chat.hasMore && (
             <button

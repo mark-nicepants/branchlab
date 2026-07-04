@@ -1,4 +1,3 @@
-import { useGitHub } from "@/hooks/useGitHub";
 import { AccountAvatar } from "@/components/github/AccountAvatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -34,8 +33,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useGitHub } from "@/hooks/useGitHub";
 import { cn } from "@/lib/utils";
 import {
+  BotMessageSquare,
   CalendarClock,
   ChevronDown,
   ChevronLeft,
@@ -164,17 +165,18 @@ export function SessionsSidebar({
       ),
   );
 
-  const toggleCollapsed = (id: string) =>
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      const record: Record<string, boolean> = { ...prefs.collapsedProjects };
-      if (next.has(id)) record[id] = true;
-      else delete record[id];
-      setPref("collapsedProjects", record);
-      return next;
-    });
+  const toggleCollapsed = (id: string) => {
+    // Compute outside the state updater — calling setPref (another component's
+    // state) from inside it is a React setState-in-render violation.
+    const next = new Set(collapsed);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    const record: Record<string, boolean> = { ...prefs.collapsedProjects };
+    if (next.has(id)) record[id] = true;
+    else delete record[id];
+    setCollapsed(next);
+    setPref("collapsedProjects", record);
+  };
 
   async function deleteWorkspace(w: Workspace) {
     try {
@@ -310,34 +312,47 @@ export function SessionsSidebar({
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="px-1 pb-2">
-          {/* Quick chats */}
-          <GroupHeader
-            icon={
-              <MessagesSquare className="size-3.5 shrink-0 text-muted-foreground" />
-            }
+          {/* Quick chats — same collapsible group as the projects. */}
+          <SidebarGroup
+            icon={<BotMessageSquare className="size-4" />}
             label="Quick chats"
-            onAdd={onNewQuickChat}
-            addHint="New quick chat"
-          />
-          {shownQuickChats.length === 0
-            ? !q && (
-                <button
-                  onClick={onNewQuickChat}
-                  className="mb-2 ml-6 block px-2 py-1 text-left text-xs text-muted-foreground hover:text-foreground"
-                >
-                  Start a context-free chat…
-                </button>
-              )
-            : shownQuickChats.map((w) => (
-                <WorkspaceRow
-                  key={w.id}
-                  workspace={w}
-                  selected={w.id === selectedWorkspaceId}
-                  onSelect={() => onSelectWorkspace(w)}
-                  onDelete={() => onRemoveQuickChat(w.id)}
-                  onRename={() => startRename(w)}
-                />
-              ))}
+            collapsed={collapsed.has(QUICK_CHATS_ID) && !q}
+            onToggle={() => toggleCollapsed(QUICK_CHATS_ID)}
+            actions={
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={onNewQuickChat}
+                  >
+                    <Plus className="size-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>New quick chat</TooltipContent>
+              </Tooltip>
+            }
+          >
+            {shownQuickChats.length === 0
+              ? !q && (
+                  <button
+                    onClick={onNewQuickChat}
+                    className="block px-2 py-1 text-left text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    Start a context-free chat…
+                  </button>
+                )
+              : shownQuickChats.map((w) => (
+                  <WorkspaceRow
+                    key={w.id}
+                    workspace={w}
+                    selected={w.id === selectedWorkspaceId}
+                    onSelect={() => onSelectWorkspace(w)}
+                    onDelete={() => onRemoveQuickChat(w.id)}
+                    onRename={() => startRename(w)}
+                  />
+                ))}
+          </SidebarGroup>
 
           {projects.length === 0 && (
             <EmptyState dense className="px-3 py-4 text-xs">
@@ -349,33 +364,15 @@ export function SessionsSidebar({
           {projects.map((p) => {
             const shown = p.workspaces.filter(matches);
             if (q && shown.length === 0) return null;
-            const isCollapsed = collapsed.has(p.id) && !q;
             return (
-              <div key={p.id} className="mb-2">
-                {/* Header: one icon slot aligned with the children's status
-                    column — folder at rest, chevron on hover (the collapse
-                    affordance). Actions are hover-only to keep titles quiet. */}
-                <div className="group/project ml-4 flex min-w-0 items-center rounded-md px-2 py-1 hover:bg-sidebar-accent/40">
-                  <button
-                    className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-                    onClick={() => toggleCollapsed(p.id)}
-                  >
-                    <span className="flex size-3.5 shrink-0 items-center justify-center text-muted-foreground">
-                      <Folder className="size-3.5 group-hover/project:hidden" />
-                      {isCollapsed ? (
-                        <ChevronRight className="hidden size-3.5 group-hover/project:block" />
-                      ) : (
-                        <ChevronDown className="hidden size-3.5 group-hover/project:block" />
-                      )}
-                    </span>
-                    <span
-                      className="min-w-0 flex-1 truncate text-[13px] font-medium"
-                      title={p.name}
-                    >
-                      {p.name}
-                    </span>
-                  </button>
-                  <span className="flex shrink-0 items-center text-muted-foreground opacity-0 focus-within:opacity-100 group-hover/project:opacity-100">
+              <SidebarGroup
+                key={p.id}
+                icon={<Folder className="size-4" />}
+                label={p.name}
+                collapsed={collapsed.has(p.id) && !q}
+                onToggle={() => toggleCollapsed(p.id)}
+                actions={
+                  <>
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button
@@ -430,10 +427,14 @@ export function SessionsSidebar({
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
+                  </>
+                }
+              >
+                {shown.length === 0 && !q ? (
+                  <span className="px-2 py-1 text-xs text-muted-foreground">
+                    No sessions yet
                   </span>
-                </div>
-
-                {!isCollapsed &&
+                ) : (
                   shown.map((w) => (
                     <WorkspaceRow
                       key={w.id}
@@ -446,15 +447,16 @@ export function SessionsSidebar({
                       editorApp={prefs.editorApp}
                       onOpenIn={openIn}
                     />
-                  ))}
-              </div>
+                  ))
+                )}
+              </SidebarGroup>
             );
           })}
         </div>
       </ScrollArea>
 
       {/* Bottom account / settings bar */}
-      <div className="flex items-center gap-2 border-t border-sidebar-border p-2">
+      <div className="flex items-center gap-2 p-2">
         <AccountIndicator onOpenAccounts={onOpenAccounts} />
         <Tooltip>
           <TooltipTrigger asChild>
@@ -531,38 +533,70 @@ function NavRow({
   );
 }
 
-function GroupHeader({
+/** Collapse-state key for the Quick chats group (lives in the same persisted
+ *  `collapsedProjects` record as project ids). */
+const QUICK_CHATS_ID = "quick-chats";
+
+/**
+ * One collapsible sidebar group: a header row (16px icon slot that swaps to a
+ * chevron on hover, hover-only actions) and children hanging off a vertical
+ * guide line indented to the start of the header text. Shared by Quick chats
+ * and the projects so the treatments can't drift apart.
+ */
+function SidebarGroup({
   icon,
   label,
-  onAdd,
-  addHint,
+  collapsed,
+  onToggle,
+  actions,
+  children,
 }: {
   icon: React.ReactNode;
   label: string;
-  onAdd: () => void;
-  addHint: string;
+  collapsed: boolean;
+  onToggle: () => void;
+  actions?: React.ReactNode;
+  children: React.ReactNode;
 }) {
   return (
-    <div className="group/project ml-4 flex min-w-0 items-center rounded-md px-2 py-1 hover:bg-sidebar-accent/40">
-      <div className="flex min-w-0 flex-1 items-center gap-1.5">
-        {icon}
-        <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
-          {label}
+    <div className="mb-0.5">
+      <div className="group/project ml-1.5 flex min-w-0 items-center rounded-md px-2 py-1 hover:bg-sidebar-accent/40">
+        {/* gap-2.5 matches the top nav rows so header text sits in the same
+            column as "Home" / "Search". */}
+        <button
+          className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+          onClick={onToggle}
+        >
+          <span className="flex size-4 shrink-0 items-center justify-center text-muted-foreground">
+            {collapsed ? (
+              // A collapsed group always shows the chevron — its state should
+              // be visible without hovering.
+              <ChevronRight className="size-4" />
+            ) : (
+              <>
+                <span className="group-hover/project:hidden">{icon}</span>
+                <ChevronDown className="hidden size-4 group-hover/project:block" />
+              </>
+            )}
+          </span>
+          <span
+            className="min-w-0 flex-1 truncate text-[13px] font-medium"
+            title={label}
+          >
+            {label}
+          </span>
+        </button>
+        <span className="flex shrink-0 items-center text-muted-foreground opacity-0 focus-within:opacity-100 group-hover/project:opacity-100">
+          {actions}
         </span>
       </div>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="shrink-0 text-muted-foreground opacity-0 focus-visible:opacity-100 group-hover/project:opacity-100"
-            onClick={onAdd}
-          >
-            <Plus className="size-3.5" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{addHint}</TooltipContent>
-      </Tooltip>
+      {/* Children: guide line under the header icon's center; the children's
+          icon column starts exactly where the header text starts. */}
+      {!collapsed && (
+        <div className="ml-[22px] flex flex-col border-l border-sidebar-border pl-[9px]">
+          {children}
+        </div>
+      )}
     </div>
   );
 }
@@ -759,16 +793,18 @@ function WorkspaceRow({
   const row = (
     <div
       className={cn(
-        "group/ws ml-4 flex min-w-0 items-start rounded-md hover:bg-sidebar-accent/60",
+        "group/ws relative min-w-0 rounded-md hover:bg-sidebar-accent/60",
         selected && "bg-sidebar-accent hover:bg-sidebar-accent",
       )}
     >
       <button
-        className="flex min-w-0 flex-1 flex-col gap-0.5 px-2 py-1.5 text-left"
+        className="flex w-full min-w-0 flex-col gap-0.5 px-2 py-1.5 text-left"
         onClick={onSelect}
       >
-        <span className="flex min-w-0 items-center gap-1.5">
-          <span className="flex size-3.5 shrink-0 items-center justify-center">
+        {/* On hover, row 1 yields space to the (absolute) ⋮ so the diff slides
+            left instead of being overlapped — the mock's slide-in. */}
+        <span className="flex min-w-0 items-center gap-1.5 transition-[padding] duration-150 group-focus-within/ws:pr-6 group-hover/ws:pr-6 motion-reduce:transition-none">
+          <span className="flex size-4 shrink-0 items-center justify-center">
             {ai.icon}
           </span>
           <span
@@ -790,7 +826,7 @@ function WorkspaceRow({
           ) : null}
         </span>
         {hasRow2 && (
-          <span className="flex min-w-0 items-center gap-1.5 overflow-hidden pl-5">
+          <span className="flex min-w-0 items-center gap-1.5 overflow-hidden pl-[22px]">
             {pr && <PrChip pr={pr} />}
             {ai.label && (
               <span
@@ -814,13 +850,15 @@ function WorkspaceRow({
         )}
       </button>
       {/* Hover-only overflow menu (also available via right-click): rename,
-          open-in, delete — no instantly-destructive X on the row. */}
+          open-in, delete — no instantly-destructive X on the row. Absolutely
+          positioned on row 1 so it never inflates the row height (keeps
+          single-line rows vertically aligned). */}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
             variant="ghost"
             size="icon-sm"
-            className="mr-1 mt-1 shrink-0 text-muted-foreground opacity-0 focus-visible:opacity-100 group-hover/ws:opacity-100 data-[state=open]:opacity-100"
+            className="absolute right-1 top-0.5 size-6 text-muted-foreground opacity-0 focus-visible:opacity-100 group-hover/ws:opacity-100 data-[state=open]:opacity-100"
             aria-label="Session actions"
           >
             <MoreVertical className="size-3.5" />

@@ -52,7 +52,8 @@ pub fn run() {
             app.manage(git_watcher.clone());
             // Seed watches off-thread so the per-workspace git recompute doesn't
             // block startup (the initial emit has no listener yet anyway; the
-            // frontend calls `resync` once mounted to get the first snapshot).
+            // frontend seeds via `get_sidebar_snapshot` once mounted, which
+            // computes any diff stat the watcher hasn't cached yet).
             let seed_handle = app.handle().clone();
             std::thread::spawn(move || {
                 for w in seed_handle.state::<Registry>().all_workspaces() {
@@ -118,7 +119,8 @@ pub fn run() {
             commands::github_detect_account,
             commands::set_active_workspace,
             commands::set_autofix_mode,
-            commands::resync,
+            commands::get_sidebar_snapshot,
+            commands::refresh_pr_status,
             commands::request_git_refresh,
             commands::list_remotes,
             commands::workspace_tools,

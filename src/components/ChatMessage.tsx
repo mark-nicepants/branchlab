@@ -1,6 +1,6 @@
 import { parseDiff, synthesizeDiff } from "@/lib/diff";
 import { cn } from "@/lib/utils";
-import { ChevronRight, X } from "lucide-react";
+import { ChevronRight, Loader2, X } from "lucide-react";
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -84,24 +84,37 @@ export function isWorkBlock(b: Block): boolean {
   return b.type === "reasoning" || b.type === "tool";
 }
 
+/** Todo-list updates render in the composer's TodoButton, not the transcript. */
+function isTodoTool(b: Block): boolean {
+  if (b.type !== "tool") return false;
+  const input = (b.input ?? {}) as Record<string, unknown>;
+  return (
+    input.todos !== undefined || b.name === "todowrite" || b.name === "todo"
+  );
+}
+
 /**
- * Renders one assistant turn. While the turn is live (not collapsed), all blocks
- * show inline. Once the turn finishes, its reasoning/tool "work" collapses under
- * a deterministic headline ("Edited 3 files · ran 5 commands"); the final text
- * stays visible below.
+ * Renders one assistant turn. The reasoning/tool "work" always lives in one
+ * collapsible panel — live and finished turns present identically (the live
+ * turn's panel updates in place and is continuously persisted backend-side, so
+ * switching sessions mid-turn loses nothing). Prose renders below the panel.
  */
 export function AssistantTurnView({ entry }: { entry: AssistantEntry }) {
-  const collapsed = entry.summary.collapsed;
-  const work = entry.blocks.filter(isWorkBlock);
+  const work = entry.blocks.filter(isWorkBlock).filter((b) => !isTodoTool(b));
   const prose = entry.blocks.filter((b) => !isWorkBlock(b));
   const failed = entry.status === "failed";
+  const live = entry.status === "queued" || entry.status === "streaming";
+  // A freshly streaming entry has no backend headline yet — derive a live one.
+  const headline =
+    entry.summary.headline ||
+    (work.length > 0
+      ? `Working — ${work.length} step${work.length === 1 ? "" : "s"}`
+      : "Working…");
 
   return (
     <>
-      {collapsed && work.length > 0 ? (
-        <CollapsedWork headline={entry.summary.headline} blocks={work} />
-      ) : (
-        work.map((b) => <BlockView key={b.blockId} block={b} />)
+      {work.length > 0 && (
+        <CollapsedWork headline={headline} blocks={work} live={live} />
       )}
       {prose.map((b) => (
         <BlockView key={b.blockId} block={b} />
@@ -118,9 +131,11 @@ export function AssistantTurnView({ entry }: { entry: AssistantEntry }) {
 function CollapsedWork({
   headline,
   blocks,
+  live,
 }: {
   headline: string;
   blocks: Block[];
+  live?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -136,6 +151,9 @@ function CollapsedWork({
           )}
         />
         <span className="min-w-0 truncate">{headline}</span>
+        {live && (
+          <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />
+        )}
       </button>
       {open && (
         <div className="mt-1 flex flex-col gap-2 border-l border-border pl-3">
@@ -247,7 +265,9 @@ function asString(v: unknown): string | undefined {
   return typeof v === "string" ? v : undefined;
 }
 
-function toolDescription(block: ToolBlock): string {
+/** The description shown next to the label, plus a tooltip with the full
+ *  value. File tools show just `name.ext` — the full path lives in the title. */
+function toolDescription(block: ToolBlock): { text: string; full: string } {
   const input = (block.input ?? {}) as Record<string, unknown>;
   if (
     block.name === "read" ||
@@ -256,9 +276,10 @@ function toolDescription(block: ToolBlock): string {
   ) {
     const file =
       asString(input.file) ?? asString(input.path) ?? asString(input.filePath);
-    if (file) return file;
+    if (file) return { text: file.split("/").pop() ?? file, full: file };
   }
-  return block.title ?? "";
+  const t = block.title ?? "";
+  return { text: t, full: t };
 }
 
 function ToolCallView({ block }: { block: ToolBlock }) {
@@ -274,9 +295,12 @@ function ToolCallView({ block }: { block: ToolBlock }) {
       >
         <div className="flex w-full items-center gap-2">
           <span className="shrink-0 font-medium">{toolLabel(block.name)}</span>
-          {description && (
-            <span className="min-w-0 truncate text-muted-foreground">
-              {description}
+          {description.text && (
+            <span
+              className="min-w-0 truncate text-muted-foreground"
+              title={description.full}
+            >
+              {description.text}
             </span>
           )}
           {block.status === "failed" && (

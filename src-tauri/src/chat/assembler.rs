@@ -96,6 +96,13 @@ impl TurnAssembler {
             }
         };
 
+        // Only continue a block that is still the TAIL of the transcript. Once
+        // another block (a tool call, or the other stream) landed after it, a
+        // new burst starts its own block at the bottom — the transcript stays
+        // chronological instead of one ever-growing reasoning block up top
+        // swallowing every later thought (§reasoning-placement).
+        let existing = existing.filter(|&idx| idx == self.blocks.len() - 1);
+
         if let Some(idx) = existing {
             match &mut self.blocks[idx] {
                 Block::Text { text: t, .. } | Block::Reasoning { text: t, .. } => t.push_str(text),
@@ -105,8 +112,14 @@ impl TurnAssembler {
         }
 
         let prefix = if is_thought { "thought" } else { "text" };
+        // Keyed ids get a uniquifying counter: the same messageId can open a
+        // second block after a tool call, and block ids must stay unique (the
+        // frontend upserts by blockId).
         let block_id = match &msg_id {
-            Some(m) => format!("{prefix}-{m}"),
+            Some(m) => {
+                self.counter += 1;
+                format!("{prefix}-{m}.{}", self.counter)
+            }
             None => self.next_id(prefix),
         };
         let block = if is_thought {
@@ -323,6 +336,25 @@ mod tests {
             Block::Text { text, .. } => assert_eq!(text, "Hello"),
             _ => panic!("expected text block"),
         }
+    }
+
+    /// A text/reasoning burst only continues its block while that block is the
+    /// transcript tail — after an intervening tool call, the same messageId
+    /// starts a NEW block at the bottom (chronological transcript; no single
+    /// ever-growing reasoning block up top).
+    #[test]
+    fn interleaved_tool_call_splits_same_message_text() {
+        let mut a = TurnAssembler::new();
+        a.apply(&text_chunk("before", Some("m1")));
+        a.apply(&acp::SessionUpdate::ToolCall(acp::ToolCall::new("c1", "Read file")));
+        let d = a.apply(&text_chunk("after", Some("m1"))).unwrap();
+        assert_eq!(a.blocks.len(), 3, "same messageId after a tool call starts a new block");
+        assert_eq!(d.index, 2);
+        assert_eq!(d.text_append, None, "new block, not an append");
+        let (Block::Text { block_id: b0, .. }, Block::Text { block_id: b2, .. }) = (&a.blocks[0], &a.blocks[2]) else {
+            panic!("expected text blocks at 0 and 2");
+        };
+        assert_ne!(b0, b2, "block ids stay unique per burst");
     }
 
     #[test]

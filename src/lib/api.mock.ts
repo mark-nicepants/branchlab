@@ -26,6 +26,7 @@ import type {
   ReviewInboxItem,
   ServerInfo,
   SessionPayload,
+  SidebarWorkspace,
   Workspace,
 } from "./types";
 
@@ -922,9 +923,9 @@ export function setActiveWorkspace(workspaceId: string | null): Promise<void> {
   return Promise.resolve();
 }
 
-export function resync(): Promise<void> {
-  // One of each sidebar state, so the redesigned two-row list can be reviewed
-  // in the browser harness: working+PR-pending, awaiting-input (no PR),
+export function getSidebarSnapshot(): Promise<SidebarWorkspace[]> {
+  // One of each sidebar state, so the two-row list can be reviewed in the
+  // browser harness: working+PR-pending, awaiting-input+failing PR,
   // merged PR (idle), closed PR + failed turn, finished-unseen (base).
   const session: Record<string, Partial<SessionPayload>> = {
     "p1-ws1": { activity: "working" },
@@ -933,56 +934,76 @@ export function resync(): Promise<void> {
     "p2-base": { needsAttention: true },
   };
   const pr: Record<string, { status: PrStatus; phase: PipelinePhase }> = {
-    "p1-ws1": {
-      status: mockPr(712, "OPEN", "pending"),
-      phase: "running",
-    },
+    "p1-ws1": { status: mockPr(712, "OPEN", "pending"), phase: "running" },
+    "p1-ws2": { status: mockFailingPr(), phase: "failing" },
     "p1-ws3": { status: mockPr(666, "MERGED", "none"), phase: "idle" },
     "p1-ws4": { status: mockPr(91, "CLOSED", "none"), phase: "idle" },
   };
+  const out: SidebarWorkspace[] = [];
   for (const p of projects) {
     for (const w of p.workspaces) {
-      mockEmit("workspace:git", {
+      const st = session[w.id] ?? {};
+      out.push({
         workspaceId: w.id,
         diffStat: diffStats[w.id] ?? { files: 0, insertions: 0, deletions: 0 },
-        changes: null,
-      });
-      const st = session[w.id] ?? {};
-      mockEmit("workspace:session", {
-        workspaceId: w.id,
-        activity: st.activity ?? "idle",
-        awaitingInput: st.awaitingInput ?? false,
-        needsAttention: st.needsAttention ?? false,
-        error: st.error ?? null,
-      });
-      if (pr[w.id]) {
-        mockEmit("workspace:pr", {
+        session: {
           workspaceId: w.id,
-          status: pr[w.id].status,
-          phase: pr[w.id].phase,
+          activity: st.activity ?? "idle",
+          awaitingInput: st.awaitingInput ?? false,
+          needsAttention: st.needsAttention ?? false,
+          error: st.error ?? null,
+        },
+        pr: {
+          workspaceId: w.id,
+          status: pr[w.id]?.status ?? null,
+          phase: pr[w.id]?.phase ?? "idle",
           attempts: 0,
           mode: "off",
           error: null,
-        });
-      } else if (w.kind === "Worktree") {
-        // nimble-otter keeps the failing PR from workspacePrStatus() so the
-        // failing chip + count is visible too.
-        if (w.id === "p1-ws2") {
-          void workspacePrStatus().then((status) =>
-            mockEmit("workspace:pr", {
-              workspaceId: w.id,
-              status,
-              phase: "failing",
-              attempts: 0,
-              mode: "off",
-              error: null,
-            }),
-          );
-        }
-      }
+        },
+      });
     }
   }
+  return Promise.resolve(out);
+}
+
+export function refreshPrStatus(): Promise<void> {
   return Promise.resolve();
+}
+
+/** The failing PR (with checks) used by the pipeline bar demo. */
+function mockFailingPr(): PrStatus {
+  return {
+    number: 42,
+    url: "https://github.com/test/repo/pull/42",
+    state: "OPEN",
+    head_branch: "feature",
+    head_sha: "abc1234",
+    rollup: "failure",
+    checks: [
+      {
+        name: "lint",
+        bucket: "success",
+        state: "SUCCESS",
+        url: null,
+        workflow: "CI",
+      },
+      {
+        name: "test",
+        bucket: "failure",
+        state: "FAILURE",
+        url: null,
+        workflow: "CI",
+      },
+      {
+        name: "build",
+        bucket: "pending",
+        state: "IN_PROGRESS",
+        url: null,
+        workflow: "CI",
+      },
+    ],
+  };
 }
 
 /** A minimal PrStatus for the sidebar mock states. */

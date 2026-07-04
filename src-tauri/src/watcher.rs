@@ -143,16 +143,16 @@ impl GitWatcher {
         self.inner.recompute_and_emit(workspace_id);
     }
 
-    /// Re-emit every watched workspace's git snapshot, bypassing no-op
-    /// suppression. Called on frontend (re)mount to seed a fresh listener.
-    pub fn resync(&self) {
-        let ids: Vec<String> = self.inner.entries.lock().unwrap().keys().cloned().collect();
-        for id in ids {
-            if let Some(e) = self.inner.entries.lock().unwrap().get_mut(&id) {
-                e.last = None;
+    /// The current diff stat for one workspace, for the mount snapshot: the
+    /// watcher's cached last emit when available, else computed on the spot —
+    /// so the snapshot never depends on the watch-seeding thread having run.
+    pub fn diff_stat_snapshot(&self, workspace_id: &str, path: &str) -> DiffStat {
+        if let Some(e) = self.inner.entries.lock().unwrap().get(workspace_id) {
+            if let Some(last) = &e.last {
+                return last.diff_stat.clone();
             }
-            self.inner.recompute_and_emit(&id);
         }
+        git::diff_stat(path)
     }
 }
 

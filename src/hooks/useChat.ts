@@ -1,7 +1,7 @@
 // The chat store hook — a thin view over the Rust chat layer.
 //
 // Seeds from `chatOpen` (a one-time snapshot, since Tauri events aren't
-// buffered — same discipline as useWorkspaceData/resync) and then applies
+// buffered — same discipline as useWorkspaceData's snapshot seed) and applies
 // `chat:*` deltas into a normalized per-seq map. All transcript state lives in
 // the Rust backend + SQLite; this is just the rendered projection, so switching
 // workspaces reloads instantly from cache and survives restarts.
