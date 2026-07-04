@@ -58,7 +58,6 @@ import {
   Loader2,
   MessageCircleQuestion,
   MessagesSquare,
-  MonitorSmartphone,
   MoreVertical,
   PanelLeft,
   Pencil,
@@ -270,8 +269,8 @@ export function SessionsSidebar({
       </nav>
 
       {/* Sessions */}
-      <div className="flex items-center gap-1 px-3 pb-1 pt-1">
-        <span className="flex-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <div className="flex items-center gap-1 px-3 pb-1 pt-4">
+        <span className="flex-1 text-[12px] pl-1 font-medium text-muted-foreground">
           Sessions
         </span>
         <Tooltip>
@@ -559,8 +558,11 @@ function SidebarGroup({
   children: React.ReactNode;
 }) {
   return (
-    <div className="mb-0.5">
-      <div className="group/project ml-1.5 flex min-w-0 items-center rounded-md px-2 py-1 hover:bg-sidebar-accent/40">
+    <div>
+      {/* Same pill geometry as the top NavRows (8px inset each side,
+          px-2.5 py-1.5) so project rows and nav rows read as one family;
+          the icon column and text column stay aligned with the nav. */}
+      <div className="group/project mx-1 flex h-8 min-w-0 items-center rounded-md px-2.5 hover:bg-sidebar-accent/60">
         {/* gap-2.5 matches the top nav rows so header text sits in the same
             column as "Home" / "Search". */}
         <button
@@ -579,10 +581,7 @@ function SidebarGroup({
               </>
             )}
           </span>
-          <span
-            className="min-w-0 flex-1 truncate text-[13px] font-medium"
-            title={label}
-          >
+          <span className="min-w-0 flex-1 truncate text-sm" title={label}>
             {label}
           </span>
         </button>
@@ -951,9 +950,6 @@ function NewSessionMenu({
         <DropdownMenuItem onClick={onNewQuickChat}>
           <MessagesSquare className="size-4" /> Quick chat
         </DropdownMenuItem>
-        <DropdownMenuItem disabled>
-          <MonitorSmartphone className="size-4" /> Resume remote session…
-        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -992,7 +988,7 @@ function AccountIndicator({ onOpenAccounts }: { onOpenAccounts: () => void }) {
       >
         <AccountAvatar account={a} className="size-6" />
         <span className="min-w-0 flex-1 truncate text-sm font-medium">
-          @{a.login}
+          {a.login}
         </span>
       </button>
     );

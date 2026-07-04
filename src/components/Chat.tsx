@@ -373,30 +373,54 @@ export function Chat({
             onBlur={() => saveDraft(input)}
             onPaste={handlePaste}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault();
-                void send();
-                return;
-              }
+              // The slash palette captures Enter/Tab first.
               if (showPalette && slashMatches.length > 0) {
                 if (e.key === "ArrowDown") {
                   e.preventDefault();
                   setSlashIndex((i) => (i + 1) % slashMatches.length);
+                  return;
                 } else if (e.key === "ArrowUp") {
                   e.preventDefault();
                   setSlashIndex(
                     (i) => (i - 1 + slashMatches.length) % slashMatches.length,
                   );
+                  return;
                 } else if (e.key === "Enter" || e.key === "Tab") {
                   e.preventDefault();
                   pickCommand(slashMatches[slashIndex].name);
+                  return;
                 } else if (e.key === "Escape") {
                   e.preventDefault();
                   setInput("");
+                  return;
                 }
               }
+              // Enter sends; Shift/⌘/Ctrl+Enter inserts a newline.
+              if (
+                e.key === "Enter" &&
+                !e.shiftKey &&
+                !e.metaKey &&
+                !e.ctrlKey
+              ) {
+                e.preventDefault();
+                void send();
+                return;
+              }
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                // Textareas don't insert a newline on ⌘/Ctrl+Enter natively —
+                // do it by hand so the modifier means "literal newline".
+                e.preventDefault();
+                const el = e.currentTarget;
+                const start = el.selectionStart ?? input.length;
+                const end = el.selectionEnd ?? input.length;
+                const next = input.slice(0, start) + "\n" + input.slice(end);
+                setInput(next);
+                requestAnimationFrame(() => {
+                  el.selectionStart = el.selectionEnd = start + 1;
+                });
+              }
             }}
-            placeholder="Ask the agent…  (⌘/Ctrl+Enter to send, / for commands, paste images to attach)"
+            placeholder="Ask the agent…  (Enter to send, Shift+Enter for a new line, / for commands, paste images to attach)"
             className="min-h-[80px] resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
           />
         </div>

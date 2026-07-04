@@ -94,12 +94,26 @@ export function HomeComposer({
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            // Enter sends; Shift/⌘/Ctrl+Enter inserts a newline (same
+            // convention as the session composer).
+            if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
               e.preventDefault();
               submit();
+              return;
+            }
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              // Textareas don't insert a newline on ⌘/Ctrl+Enter natively.
+              e.preventDefault();
+              const el = e.currentTarget;
+              const start = el.selectionStart ?? text.length;
+              const end = el.selectionEnd ?? text.length;
+              setText(text.slice(0, start) + "\n" + text.slice(end));
+              requestAnimationFrame(() => {
+                el.selectionStart = el.selectionEnd = start + 1;
+              });
             }
           }}
-          placeholder="Ask anything, or describe a task to start a session…  (⌘/Ctrl+Enter)"
+          placeholder="Ask anything, or describe a task to start a session…  (Enter to send)"
           className="min-h-[76px] resize-none border-0 bg-transparent px-4 pt-3.5 text-[15px] shadow-none focus-visible:ring-0 dark:bg-transparent"
         />
         <div className="flex items-center gap-1.5 px-2.5 pb-2.5">
