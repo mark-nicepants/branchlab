@@ -66,9 +66,14 @@ jobs:
             docker build -f deploy/Dockerfile -t branchlab-site:latest .
             docker network inspect npm >/dev/null 2>&1 || docker network create npm
             docker rm -f branchlab-site 2>/dev/null || true
+            # App releases live OUTSIDE ~/apps/branchlab-site (which the scp
+            # step wipes on every deploy) and are bind-mounted in, so they
+            # survive site redeploys. Uploaded per RELEASING.md.
+            mkdir -p ~/apps/branchlab-releases
             docker run -d \
               --name branchlab-site \
               --restart unless-stopped \
               --network npm \
+              -v ~/apps/branchlab-releases:/usr/share/nginx/html/releases:ro \
               branchlab-site:latest
             docker image prune -f

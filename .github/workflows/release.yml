@@ -1,0 +1,98 @@
+name: Release
+
+# Builds and publishes a BranchLab release when a version tag is pushed.
+# Flow: run `./scripts/release.sh <version>` locally (changelog rollover +
+# version bumps), commit, `git tag v<version>`, push — this workflow builds
+# the universal DMG + signed updater artifacts and deploys them to
+# https://branchlab.dev/releases/, plus attaches them to a GitHub release.
+#
+# Required repo secrets:
+#   TAURI_SIGNING_PRIVATE_KEY  content of ~/.tauri/branchlab.key (updater key)
+#   VPS_HOST / VPS_USER / VPS_PASSWORD
+# Optional (once the Apple Developer account exists): APPLE_SIGNING_IDENTITY,
+# APPLE_CERTIFICATE*, APPLE_API_* — see RELEASING.md.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # create the GitHub release
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build & publish ${{ github.ref_name }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # The tag must match the version committed by the prepare step —
+      # otherwise the built app and the repo disagree about its version.
+      - name: Verify tag matches tauri.conf.json version
+        run: |
+          VERSION=$(node -p 'require("./src-tauri/tauri.conf.json").version')
+          TAG="${GITHUB_REF_NAME#v}"
+          if [[ "$VERSION" != "$TAG" ]]; then
+            echo "Tag v$TAG does not match tauri.conf.json version $VERSION." >&2
+            echo "Run './scripts/release.sh $TAG' locally, commit, and re-tag." >&2
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install Rust toolchain (universal targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build release artifacts
+        run: ./scripts/release.sh --build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+
+      # Binaries first, latest.json last — the moment latest.json lands,
+      # running apps may start downloading the new artifacts.
+      - name: Upload artifacts to VPS
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          source: "dist-release/*.dmg,dist-release/*.tar.gz"
+          target: ~/apps/branchlab-releases
+          strip_components: 1
+
+      - name: Publish latest.json to VPS
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          source: "dist-release/latest.json"
+          target: ~/apps/branchlab-releases
+          strip_components: 1
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: BranchLab ${{ github.ref_name }}
+          body_path: dist-release/notes.md
+          files: |
+            dist-release/BranchLab_[0-9]*_universal.dmg
+            dist-release/BranchLab_[0-9]*_universal.app.tar.gz
+            dist-release/latest.json

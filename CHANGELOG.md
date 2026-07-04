@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-04
+
 ### Added
 
 - Auto-update support: the app checks the release endpoint on launch (and every

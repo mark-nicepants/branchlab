@@ -1,73 +1,167 @@
 #!/usr/bin/env bash
-# Build a signed, notarized, universal macOS release and stage everything the
-# website needs (DMG for new users, .app.tar.gz + latest.json for the
-# auto-updater) into dist-release/.
+# BranchLab release tooling. Two modes:
 #
-# Usage: ./scripts/release.sh 0.2.0 [--notes "Override release notes"]
+#   release.sh <version> [--notes "..."]   PREPARE (run locally)
+#     Rolls CHANGELOG.md ([Unreleased] -> [<version>] - <date>) and bumps the
+#     version in package.json / tauri.conf.json / Cargo.toml. Commit, tag
+#     v<version>, and push — the tag triggers .github/workflows/release.yml,
+#     which runs the build and deploys to branchlab.dev/releases/.
 #
-# Release notes come from CHANGELOG.md: the `## [Unreleased]` section is
-# renamed to `## [<version>] - <date>` (a fresh empty [Unreleased] is inserted
-# above it) and its content becomes the `notes` field in latest.json — shown in
-# the in-app update toast. `--notes` skips the changelog and uses the given
-# text instead.
+#   release.sh --build                      BUILD (run by CI, or locally)
+#     Builds the universal .app + DMG + signed updater artifacts for the
+#     version already in tauri.conf.json, and stages everything the website
+#     serves into dist-release/ (DMG, latest-DMG alias, .app.tar.gz,
+#     latest.json, notes.md).
 #
-# Required env:
-#   TAURI_SIGNING_PRIVATE_KEY_PATH  (or TAURI_SIGNING_PRIVATE_KEY)
-#     Updater signing key, e.g. ~/.tauri/branchlab.key
-# Required for notarization (Gatekeeper) once the Apple Developer ID exists:
-#   APPLE_SIGNING_IDENTITY   e.g. "Developer ID Application: Name (TEAMID)"
-#   APPLE_API_ISSUER / APPLE_API_KEY / APPLE_API_KEY_PATH
-#     (or APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID)
+# Build env:
+#   TAURI_SIGNING_PRIVATE_KEY  Updater signing key: key content or a path to
+#     it (Tauri v2 has no _PATH variant). Defaults to ~/.tauri/branchlab.key.
+#   APPLE_SIGNING_IDENTITY + APPLE_API_* for signing/notarization (optional;
+#     without them the build is unsigned — Gatekeeper warns real users).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-VERSION="${1:?usage: release.sh <version> [--notes \"...\"]}"
+BASE_URL="${RELEASE_BASE_URL:-https://branchlab.dev/releases}"
+
+# ── helpers ──────────────────────────────────────────────────────────────
+
+# Print the body of a "## [<heading>]" CHANGELOG section.
+changelog_section() {
+  HEADING="$1" node -e '
+    const text = require("fs").readFileSync("CHANGELOG.md", "utf8");
+    const h = process.env.HEADING.replace(/\./g, "\\.");
+    const m = text.match(new RegExp(`^## \\[${h}\\][^\n]*\n([\\s\\S]*?)(?=^## \\[|(?![\\s\\S]))`, "m"));
+    if (m) process.stdout.write(m[1].trim());
+  '
+}
+
+# ── BUILD mode (CI) ──────────────────────────────────────────────────────
+
+if [[ "${1:-}" == "--build" ]]; then
+  VERSION=$(node -p 'require("./src-tauri/tauri.conf.json").version')
+  NOTES=$(changelog_section "$VERSION")
+  if [[ -z "$NOTES" ]]; then
+    echo "ERROR: CHANGELOG.md has no [$VERSION] section — run 'release.sh $VERSION' (prepare) first." >&2
+    exit 1
+  fi
+
+  if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+    export TAURI_SIGNING_PRIVATE_KEY="$HOME/.tauri/branchlab.key"
+    echo "==> Using default updater key: $TAURI_SIGNING_PRIVATE_KEY"
+  fi
+  # Key was generated with an empty password; the variable must still exist
+  # or the CLI prompts interactively.
+  export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}"
+  if [[ -z "${APPLE_SIGNING_IDENTITY:-}" ]]; then
+    echo "WARNING: APPLE_SIGNING_IDENTITY not set — build will be unsigned/un-notarized."
+  fi
+
+  echo "==> Ensuring both mac targets are installed (universal build)"
+  rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null
+
+  BUNDLE_DIR="src-tauri/target/universal-apple-darwin/release/bundle"
+  DMG_NAME="BranchLab_${VERSION}_universal.dmg"
+  TAR_NAME="BranchLab_${VERSION}_universal.app.tar.gz"
+
+  echo "==> Building universal app + DMG ($VERSION, this takes a while)"
+  # `|| true`: on some macOS setups `hdiutil convert` inside bundle_dmg.sh
+  # fails with "Resource temporarily unavailable" AFTER the .app and updater
+  # artifacts are done; the fallback below rebuilds the DMG another way.
+  npm run tauri build -- --target universal-apple-darwin || true
+
+  TARBALL="$BUNDLE_DIR/macos/BranchLab.app.tar.gz"
+  [[ -f "$TARBALL" && -f "$TARBALL.sig" ]] || {
+    echo "ERROR: updater artifacts missing — the build itself failed." >&2
+    exit 1
+  }
+
+  if [[ ! -f "$BUNDLE_DIR/dmg/$DMG_NAME" ]]; then
+    echo "==> DMG bundling failed (hdiutil convert quirk) — building DMG via hdiutil create"
+    STAGE=$(mktemp -d)
+    # Prefer the styled rw image create-dmg left behind (Finder layout, volume
+    # icon); fall back to a plain staging folder.
+    RW=$(ls "$BUNDLE_DIR"/macos/rw.*.dmg 2>/dev/null | tail -1 || true)
+    if [[ -n "$RW" ]]; then
+      MNT=$(mktemp -d)
+      hdiutil attach "$RW" -nobrowse -noautoopen -mountpoint "$MNT" >/dev/null
+      rm -rf "$MNT/BranchLab.app"
+      ditto "$BUNDLE_DIR/macos/BranchLab.app" "$MNT/BranchLab.app"
+      hdiutil create -volname BranchLab -srcfolder "$MNT" -format UDZO -fs HFS+ -ov \
+        "$BUNDLE_DIR/dmg/$DMG_NAME" >/dev/null
+      hdiutil detach "$MNT" >/dev/null
+    else
+      ditto "$BUNDLE_DIR/macos/BranchLab.app" "$STAGE/BranchLab.app"
+      ln -s /Applications "$STAGE/Applications"
+      hdiutil create -volname BranchLab -srcfolder "$STAGE" -format UDZO -fs HFS+ -ov \
+        "$BUNDLE_DIR/dmg/$DMG_NAME" >/dev/null
+    fi
+    rm -rf "$STAGE"
+    rm -f "$BUNDLE_DIR"/macos/rw.*.dmg
+  fi
+
+  echo "==> Staging dist-release/"
+  OUT="dist-release"
+  rm -rf "$OUT" && mkdir -p "$OUT"
+  cp "$BUNDLE_DIR/dmg/$DMG_NAME" "$OUT/$DMG_NAME"
+  # Stable name the website's Download button links to.
+  cp "$BUNDLE_DIR/dmg/$DMG_NAME" "$OUT/BranchLab_latest_universal.dmg"
+  cp "$TARBALL" "$OUT/$TAR_NAME"
+  printf '%s\n' "$NOTES" > "$OUT/notes.md"
+
+  echo "==> Writing latest.json"
+  SIGNATURE=$(cat "$TARBALL.sig") VERSION="$VERSION" NOTES="$NOTES" BASE_URL="$BASE_URL" TAR_NAME="$TAR_NAME" \
+  node -e '
+    const { SIGNATURE, VERSION, NOTES, BASE_URL, TAR_NAME } = process.env;
+    const entry = { signature: SIGNATURE, url: `${BASE_URL}/${TAR_NAME}` };
+    const manifest = {
+      version: VERSION,
+      notes: NOTES,
+      pub_date: new Date().toISOString(),
+      platforms: { "darwin-aarch64": entry, "darwin-x86_64": entry },
+    };
+    require("fs").writeFileSync("dist-release/latest.json", JSON.stringify(manifest, null, 2) + "\n");
+  '
+
+  echo && echo "Done:" && ls -lh "$OUT"
+  exit 0
+fi
+
+# ── PREPARE mode (local) ─────────────────────────────────────────────────
+
+VERSION="${1:?usage: release.sh <version> [--notes \"...\"] | release.sh --build}"
 NOTES=""
 if [[ "${2:-}" == "--notes" ]]; then
   NOTES="${3:?--notes requires a value}"
 fi
 
-# Where the updater fetches releases from. Must match plugins.updater.endpoints
-# in src-tauri/tauri.conf.json.
-BASE_URL="${RELEASE_BASE_URL:-https://branchlab.dev/releases}"
-
-if [[ -z "${TAURI_SIGNING_PRIVATE_KEY_PATH:-}" && -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
-  export TAURI_SIGNING_PRIVATE_KEY_PATH="$HOME/.tauri/branchlab.key"
-  echo "==> Using default updater key: $TAURI_SIGNING_PRIVATE_KEY_PATH"
-fi
-if [[ -z "${APPLE_SIGNING_IDENTITY:-}" ]]; then
-  echo "WARNING: APPLE_SIGNING_IDENTITY not set — build will be unsigned/un-notarized."
-  echo "         Fine for local testing; downloads will hit Gatekeeper for real users."
-fi
-
 if [[ -z "$NOTES" ]]; then
   echo "==> Rolling over CHANGELOG.md [Unreleased] -> [$VERSION]"
-  NOTES=$(VERSION="$VERSION" DATE="$(date -u +%Y-%m-%d)" node -e '
-    const fs = require("fs");
-    const { VERSION, DATE } = process.env;
-    const path = "CHANGELOG.md";
-    let text = fs.readFileSync(path, "utf8");
-
-    // Body of a "## [heading]" section = everything up to the next "## [".
-    const section = (heading) => {
-      const m = text.match(new RegExp(`^## \\[${heading}\\][^\n]*\n([\\s\\S]*?)(?=^## \\[|(?![\\s\\S]))`, "m"));
-      return m && m[1].trim();
-    };
-
-    // Idempotent re-run: this version was already rolled over.
-    let notes = section(VERSION.replace(/\./g, "\\."));
-    if (notes == null) {
-      notes = section("Unreleased");
-      if (!notes) {
-        console.error("CHANGELOG.md: [Unreleased] is empty — document the release or pass --notes.");
-        process.exit(1);
-      }
+  # Idempotent: skip if this version's section already exists.
+  if [[ -z "$(changelog_section "$VERSION")" ]]; then
+    if [[ -z "$(changelog_section "Unreleased")" ]]; then
+      echo "ERROR: CHANGELOG.md [Unreleased] is empty — document the release first." >&2
+      exit 1
+    fi
+    VERSION="$VERSION" DATE="$(date -u +%Y-%m-%d)" node -e '
+      const fs = require("fs");
+      const { VERSION, DATE } = process.env;
+      let text = fs.readFileSync("CHANGELOG.md", "utf8");
       text = text.replace(/^## \[Unreleased\][^\n]*$/m, `## [Unreleased]\n\n## [${VERSION}] - ${DATE}`);
-      fs.writeFileSync(path, text);
+      fs.writeFileSync("CHANGELOG.md", text);
+    '
+  fi
+else
+  echo "==> Inserting provided notes as the [$VERSION] changelog section"
+  VERSION="$VERSION" DATE="$(date -u +%Y-%m-%d)" NOTES="$NOTES" node -e '
+    const fs = require("fs");
+    const { VERSION, DATE, NOTES } = process.env;
+    let text = fs.readFileSync("CHANGELOG.md", "utf8");
+    if (!text.includes(`## [${VERSION}]`)) {
+      text = text.replace(/^## \[Unreleased\][^\n]*$/m, `## [Unreleased]\n\n## [${VERSION}] - ${DATE}\n\n${NOTES}`);
+      fs.writeFileSync("CHANGELOG.md", text);
     }
-    process.stdout.write(notes);
-  ')
+  '
 fi
 
 echo "==> Bumping version to $VERSION"
@@ -80,44 +174,11 @@ node -e '
   fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
 ' "$VERSION"
 perl -0pi -e "s/^version = \"[^\"]+\"/version = \"$VERSION\"/m" src-tauri/Cargo.toml
-
-echo "==> Ensuring both mac targets are installed (universal build)"
-rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null
-
-echo "==> Building universal app + DMG (this takes a while)"
-npm run tauri build -- --target universal-apple-darwin
-
-BUNDLE_DIR="src-tauri/target/universal-apple-darwin/release/bundle"
-DMG=$(ls "$BUNDLE_DIR"/dmg/*.dmg)
-TARBALL=$(ls "$BUNDLE_DIR"/macos/*.app.tar.gz)
-SIG=$(ls "$BUNDLE_DIR"/macos/*.app.tar.gz.sig)
-
-OUT="dist-release"
-rm -rf "$OUT" && mkdir -p "$OUT"
-DMG_NAME="BranchLab_${VERSION}_universal.dmg"
-TAR_NAME="BranchLab_${VERSION}_universal.app.tar.gz"
-cp "$DMG" "$OUT/$DMG_NAME"
-cp "$TARBALL" "$OUT/$TAR_NAME"
-
-echo "==> Writing latest.json"
-SIGNATURE=$(cat "$SIG") VERSION="$VERSION" NOTES="$NOTES" BASE_URL="$BASE_URL" TAR_NAME="$TAR_NAME" \
-node -e '
-  const { SIGNATURE, VERSION, NOTES, BASE_URL, TAR_NAME } = process.env;
-  const entry = { signature: SIGNATURE, url: `${BASE_URL}/${TAR_NAME}` };
-  const manifest = {
-    version: VERSION,
-    notes: NOTES,
-    pub_date: new Date().toISOString(),
-    platforms: {
-      "darwin-aarch64": entry,
-      "darwin-x86_64": entry,
-    },
-  };
-  require("fs").writeFileSync("dist-release/latest.json", JSON.stringify(manifest, null, 2) + "\n");
-'
+# Keep Cargo.lock's own entry in sync so CI's --locked builds don't drift.
+(cd src-tauri && cargo update -p branchlab --precise "$VERSION" 2>/dev/null || cargo generate-lockfile >/dev/null 2>&1 || true)
 
 echo
-echo "Done. Upload the contents of $OUT/ to $BASE_URL/:"
-ls -lh "$OUT"
-echo
-echo "Then tag the release: git commit -am \"release: v$VERSION\" && git tag v$VERSION"
+echo "Prepared. Now ship it:"
+echo "  git add -A && git commit -m \"release: v$VERSION\""
+echo "  git tag v$VERSION && git push && git push --tags"
+echo "The v$VERSION tag triggers the Release workflow (build + deploy)."

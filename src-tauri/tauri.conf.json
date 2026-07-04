@@ -20,7 +20,10 @@
         "minHeight": 600,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "trafficLightPosition": { "x": 12, "y": 24 },
+        "trafficLightPosition": {
+          "x": 12,
+          "y": 24
+        },
         "visible": false
       }
     ],
@@ -30,7 +33,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
+    "targets": [
+      "app",
+      "dmg"
+    ],
     "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
@@ -42,7 +48,9 @@
   },
   "plugins": {
     "updater": {
-      "endpoints": ["https://branchlab.dev/releases/latest.json"],
+      "endpoints": [
+        "https://branchlab.dev/releases/latest.json"
+      ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkxNTFCQ0Y1NTk1RjRCOUUKUldTZVMxOVo5YnhSa1Y2ZDRYZDZRN1Rkc3NNdGhEZnB3QS9CMExMUG55K2x6Y2wxcUVxREE1bk8K"
     }
   }
