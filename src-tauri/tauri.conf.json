@@ -30,7 +30,8 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app"],
+    "targets": ["app", "dmg"],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -38,5 +39,11 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": ["https://branchlab.dev/releases/latest.json"],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkxNTFCQ0Y1NTk1RjRCOUUKUldTZVMxOVo5YnhSa1Y2ZDRYZDZRN1Rkc3NNdGhEZnB3QS9CMExMUG55K2x6Y2wxcUVxREE1bk8K"
+    }
   }
 }

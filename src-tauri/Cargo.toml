@@ -48,4 +48,6 @@ agent-client-protocol = "=1.0.1"
 # it can reach api.github.com / GHE — the bare `reqwest` above is localhost-only.
 # One `Octocrab` per account (token from `gh auth token`) gives clean isolation.
 octocrab = "0.53.1"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
