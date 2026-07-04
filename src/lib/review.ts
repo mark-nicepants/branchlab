@@ -1,5 +1,8 @@
 // Inline review comments on the Changes view: pending-comment model plus the
-// chat message built from them (clean display text, full context for the AI).
+// chat message built from them (a typed display payload rendered as a review
+// card in the transcript, full context for the AI).
+
+import { encodeTypedDisplay } from "./chatDisplay";
 
 export interface ReviewComment {
   id: string;
@@ -53,32 +56,28 @@ export function turnFilePaths(
   );
 }
 
-const DISPLAY_SNIPPET = 96;
-
 /**
- * Build the chat message for a batch of review comments: `display` is the
- * clean summary shown in the transcript; `sent` carries every comment with
- * file, line, side and the exact line content so the agent can iterate
- * without re-locating anything.
+ * Build the chat message for a batch of review comments: `display` is a typed
+ * payload (rendered as a review card by ChatMessage.tsx); `sent` carries every
+ * comment with file, line, side and the exact line content so the agent can
+ * iterate without re-locating anything.
  */
 export function buildReviewMessage(comments: ReviewComment[]): {
   display: string;
   sent: string;
 } {
-  const files = new Set(comments.map((c) => c.file)).size;
   const n = comments.length;
   const plural = (k: number, w: string) => `${k} ${w}${k === 1 ? "" : "s"}`;
 
-  const display = [
-    `Review feedback · ${plural(n, "comment")} on ${plural(files, "file")}`,
-    ...comments.map((c) => {
-      const snippet =
-        c.text.length > DISPLAY_SNIPPET
-          ? `${c.text.slice(0, DISPLAY_SNIPPET)}…`
-          : c.text;
-      return `• ${fileName(c.file)}:${c.line} — ${snippet}`;
-    }),
-  ].join("\n");
+  const display = encodeTypedDisplay({
+    $kind: "review",
+    v: 1,
+    comments: comments.map((c) => ({
+      file: c.file,
+      line: c.line,
+      text: c.text,
+    })),
+  });
 
   const sent = [
     `I reviewed your latest changes in the diff view and left ${plural(n, "inline comment")}. Address each one, then briefly summarize what you changed.`,

@@ -5,12 +5,13 @@ import { useClipboardImages } from "../hooks/useClipboardImages";
 import { useTodos } from "../hooks/useTodos";
 import { chatGenerateTitle, renameWorkspace } from "../lib/api";
 import { filterCommands, isSlashTyping } from "../lib/slash";
-import type { CommandOption, UserEntry, Workspace } from "../lib/types";
+import type { CommandOption, Workspace } from "../lib/types";
 import { ActiveTodoStrip } from "./ActiveTodoStrip";
 import {
   AssistantTurnView,
-  ChatMessage,
+  MessageShell,
   SystemMessageView,
+  UserMessageView,
 } from "./ChatMessage";
 import { Composer, Kbd } from "./Composer";
 import { ConfigSelect } from "./ConfigSelect";
@@ -251,12 +252,12 @@ export function Chat({
           )}
           {chat.entries.map((entry) => {
             if (entry.type === "user")
-              return <UserEntryView key={entry.entryId} entry={entry} />;
+              return <UserMessageView key={entry.entryId} entry={entry} />;
             if (entry.type === "assistant")
               return (
-                <ChatMessage key={entry.entryId} role="assistant">
+                <MessageShell key={entry.entryId} role="assistant">
                   <AssistantTurnView entry={entry} />
-                </ChatMessage>
+                </MessageShell>
               );
             return <SystemMessageView key={entry.entryId} entry={entry} />;
           })}
@@ -375,25 +376,3 @@ export function Chat({
   );
 }
 
-/** A user message bubble — shows `display` text and any image attachments. */
-function UserEntryView({ entry }: { entry: UserEntry }) {
-  return (
-    <ChatMessage role="user">
-      {entry.display && (
-        <div className="whitespace-pre-wrap">{entry.display}</div>
-      )}
-      {entry.attachments.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {entry.attachments.map((a, i) => (
-            <img
-              key={i}
-              src={a.url}
-              alt={a.filename ?? "image"}
-              className="size-16 rounded border border-border object-cover"
-            />
-          ))}
-        </div>
-      )}
-    </ChatMessage>
-  );
-}

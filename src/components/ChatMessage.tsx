@@ -1,6 +1,8 @@
+import { parseTypedDisplay, type TypedDisplay } from "@/lib/chatDisplay";
 import { parseDiff, synthesizeDiff } from "@/lib/diff";
+import { fileName } from "@/lib/review";
 import { cn } from "@/lib/utils";
-import { ChevronRight, Loader2, X } from "lucide-react";
+import { ChevronRight, Loader2, MessageSquare, X } from "lucide-react";
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -9,46 +11,61 @@ import type {
   Block,
   SystemEntry,
   ToolBlock,
+  UserEntry,
 } from "../lib/types";
 import { UnifiedDiff } from "./DiffBody";
 import { usePreferences, type ChatDensity } from "./PreferencesProvider";
 
-interface MessageProps {
-  role: "user" | "assistant";
+// ── Message base ──────────────────────────────────────────────────────────
+//
+// Every transcript entry renders inside a `MessageShell` (side, width, and
+// density spacing — the one thing all message types share), then picks its
+// chrome: the classic user bubble, a structured `MessageCard`, or bare
+// content (assistant prose). New typed messages compose these primitives so
+// user / assistant / system variants stay coherent.
+
+/** Single source of truth for vertical spacing, keyed by chat density. */
+const DENSITY: Record<
+  ChatDensity,
+  { assistant: string; userMargin: string; userPad: string; gap: string }
+> = {
+  tight: { assistant: "py-1", userMargin: "my-1", userPad: "py-2", gap: "gap-2" },
+  loose: { assistant: "py-3", userMargin: "my-3", userPad: "py-2.5", gap: "gap-6" },
+  roomy: { assistant: "py-5", userMargin: "my-5", userPad: "py-3", gap: "gap-10" },
+};
+
+interface ShellProps {
+  role: "user" | "assistant" | "system";
+  /** "bubble" = classic user bubble; "none" = the child brings its own chrome
+   *  (cards) or renders bare (assistant prose). */
+  chrome?: "bubble" | "none";
   children: React.ReactNode;
 }
 
-// Single source of truth for vertical spacing (see original design notes).
-const DENSITY: Record<
-  ChatDensity,
-  { assistant: string; user: string; gap: string }
-> = {
-  tight: { assistant: "py-1", user: "my-1 py-2", gap: "gap-2" },
-  loose: { assistant: "py-3", user: "my-3 py-2.5", gap: "gap-6" },
-  roomy: { assistant: "py-5", user: "my-5 py-3", gap: "gap-10" },
-};
-
-export function ChatMessage({ role, children }: MessageProps) {
+export function MessageShell({ role, chrome = "none", children }: ShellProps) {
   const { prefs } = usePreferences();
-  const isUser = role === "user";
   const d = DENSITY[prefs.chatDensity] ?? DENSITY.loose;
+  const isUser = role === "user";
   return (
     <div
       className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}
     >
       <div
         className={cn(
-          "flex max-w-[85%] flex-col select-text text-sm",
+          "flex flex-col select-text text-sm",
           d.gap,
-          isUser
-            ? cn(
-                "self-start rounded-2xl rounded-tl-sm border border-border bg-card px-4",
-                d.user,
-              )
-            : cn(
-                "w-full rounded-2xl rounded-tr-sm px-0 text-foreground",
-                d.assistant,
-              ),
+          // Bubbles hug their content; cards span the column for a steady
+          // silhouette across typed messages.
+          isUser &&
+            cn("max-w-[85%]", chrome === "none" && "w-full", d.userMargin),
+          !isUser && "w-full max-w-[85%]",
+          role === "assistant" && cn("max-w-full", d.assistant),
+          role === "system" && d.assistant,
+          chrome === "bubble" &&
+            cn(
+              "self-start rounded-2xl rounded-tl-sm border border-border bg-card px-4",
+              d.userPad,
+            ),
         )}
       >
         {children}
@@ -57,25 +74,125 @@ export function ChatMessage({ role, children }: MessageProps) {
   );
 }
 
+/** Shared chrome for structured messages: header (icon · title · badge),
+ *  body, and an optional muted footer. Used by typed user messages today;
+ *  system/assistant cards should compose the same shape. */
+export function MessageCard({
+  icon,
+  title,
+  badge,
+  footer,
+  children,
+}: {
+  icon?: React.ReactNode;
+  title: string;
+  badge?: string;
+  footer?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="w-full overflow-hidden rounded-xl border border-border bg-card">
+      <div className="flex items-center gap-2.5 border-b border-border px-4 py-2.5">
+        {icon && <span className="shrink-0 text-primary">{icon}</span>}
+        <span className="min-w-0 truncate text-sm font-semibold">{title}</span>
+        {badge && (
+          <span className="ml-auto shrink-0 rounded-full bg-primary/15 px-2.5 py-0.5 text-xs font-medium text-primary">
+            {badge}
+          </span>
+        )}
+      </div>
+      <div className="px-4 py-3">{children}</div>
+      {footer && (
+        <div className="border-t border-border bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
+          {footer}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── User messages ─────────────────────────────────────────────────────────
+
+/** One user entry: typed payloads get their dedicated renderer, everything
+ *  else renders as the classic bubble (text + image attachments). */
+export function UserMessageView({ entry }: { entry: UserEntry }) {
+  const typed = parseTypedDisplay(entry.display);
+  if (typed?.$kind === "review") {
+    return (
+      <MessageShell role="user">
+        <ReviewFeedbackMessage payload={typed} />
+      </MessageShell>
+    );
+  }
+  return (
+    <MessageShell role="user" chrome="bubble">
+      {entry.display && (
+        <div className="whitespace-pre-wrap">{entry.display}</div>
+      )}
+      {entry.attachments.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {entry.attachments.map((a, i) => (
+            <img
+              key={i}
+              src={a.url}
+              alt={a.filename ?? "image"}
+              className="size-16 rounded border border-border object-cover"
+            />
+          ))}
+        </div>
+      )}
+    </MessageShell>
+  );
+}
+
+const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
+
+/** Batched inline review comments, sent from the Changes panel. */
+function ReviewFeedbackMessage({ payload }: { payload: TypedDisplay }) {
+  const files = new Set(payload.comments.map((c) => c.file)).size;
+  return (
+    <MessageCard
+      icon={<MessageSquare className="size-4" />}
+      title="Review feedback"
+      badge={`${plural(payload.comments.length, "comment")} · ${plural(files, "file")}`}
+      footer="The agent receives each comment with its file, line number, and the exact line content."
+    >
+      <div className="flex flex-col gap-2.5">
+        {payload.comments.map((c, i) => (
+          <div key={i} className="flex items-baseline gap-3">
+            <span
+              className="shrink-0 font-mono text-xs text-primary"
+              title={c.file}
+            >
+              {fileName(c.file)}:{c.line}
+            </span>
+            <span className="min-w-0 whitespace-pre-wrap">{c.text}</span>
+          </div>
+        ))}
+      </div>
+    </MessageCard>
+  );
+}
+
+// ── System messages ───────────────────────────────────────────────────────
+
 export function SystemMessageView({ entry }: { entry: SystemEntry }) {
-  const { prefs } = usePreferences();
-  const d = DENSITY[prefs.chatDensity] ?? DENSITY.loose;
   const kindStyles = {
     info: "border-border bg-muted/50 text-muted-foreground",
     success: "border-additions/30 bg-additions/10 text-additions",
     error: "border-destructive/30 bg-destructive/10 text-destructive",
   };
   return (
-    <div className={cn("flex w-full justify-start", d.assistant)}>
+    <MessageShell role="system">
       <div
         className={cn(
-          "max-w-[85%] rounded-lg border px-3 py-1.5 text-xs",
+          "self-start rounded-lg border px-3 py-1.5 text-xs",
           kindStyles[entry.kind],
         )}
       >
         {entry.text}
       </div>
-    </div>
+    </MessageShell>
   );
 }
 

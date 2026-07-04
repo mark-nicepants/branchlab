@@ -18,6 +18,7 @@ import { useChat } from "../../hooks/useChat";
 import { usePrPipeline } from "../../hooks/usePrPipeline";
 import { useWorkspaceData } from "../../hooks/useWorkspaceData";
 import { chatNewSession, setAutofixMode } from "../../lib/api";
+import { displayText } from "../../lib/chatDisplay";
 import {
   buildReviewMessage,
   type ChangeScope,
@@ -135,7 +136,8 @@ export function SessionView({
       for (let j = i - 1; j >= 0; j--) {
         const u = es[j];
         if (u.type === "user") {
-          label = u.display || null;
+          // Typed displays (e.g. review cards) project to a one-line label.
+          label = displayText(u.display) || null;
           break;
         }
       }
