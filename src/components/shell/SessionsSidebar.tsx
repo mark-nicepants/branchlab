@@ -40,18 +40,22 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  CircleX,
   Cloud,
   Code2,
   Folder,
   FolderOpen,
   FolderPlus,
   GitBranch,
+  GitMerge,
   GitPullRequest,
+  GitPullRequestClosed,
   House,
   Link2,
   ListFilter,
   ListTodo,
   Loader2,
+  MessageCircleQuestion,
   MessagesSquare,
   MonitorSmartphone,
   MoreVertical,
@@ -63,7 +67,6 @@ import {
   Terminal,
   Trash2,
   TriangleAlert,
-  X,
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -71,7 +74,10 @@ import { useWorkspaceData } from "../../hooks/useWorkspaceData";
 import { openExternal, removeProject, removeWorkspace } from "../../lib/api";
 import {
   workspaceLabel,
+  type PipelinePhase,
   type ProjectView,
+  type PrStatus,
+  type SessionPayload,
   type Workspace,
 } from "../../lib/types";
 import { usePreferences } from "../PreferencesProvider";
@@ -346,17 +352,22 @@ export function SessionsSidebar({
             const isCollapsed = collapsed.has(p.id) && !q;
             return (
               <div key={p.id} className="mb-2">
-                <div className="group/project flex min-w-0 items-center px-2 py-1">
+                {/* Header: one icon slot aligned with the children's status
+                    column — folder at rest, chevron on hover (the collapse
+                    affordance). Actions are hover-only to keep titles quiet. */}
+                <div className="group/project ml-4 flex min-w-0 items-center rounded-md px-2 py-1 hover:bg-sidebar-accent/40">
                   <button
                     className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
                     onClick={() => toggleCollapsed(p.id)}
                   >
-                    {isCollapsed ? (
-                      <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-                    ) : (
-                      <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-                    )}
-                    <Folder className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="flex size-3.5 shrink-0 items-center justify-center text-muted-foreground">
+                      <Folder className="size-3.5 group-hover/project:hidden" />
+                      {isCollapsed ? (
+                        <ChevronRight className="hidden size-3.5 group-hover/project:block" />
+                      ) : (
+                        <ChevronDown className="hidden size-3.5 group-hover/project:block" />
+                      )}
+                    </span>
                     <span
                       className="min-w-0 flex-1 truncate text-[13px] font-medium"
                       title={p.name}
@@ -364,7 +375,7 @@ export function SessionsSidebar({
                       {p.name}
                     </span>
                   </button>
-                  <span className="flex shrink-0 items-center text-muted-foreground">
+                  <span className="flex shrink-0 items-center text-muted-foreground opacity-0 focus-within:opacity-100 group-hover/project:opacity-100">
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button
@@ -532,7 +543,7 @@ function GroupHeader({
   addHint: string;
 }) {
   return (
-    <div className="group/project flex min-w-0 items-center px-2 py-1">
+    <div className="group/project ml-4 flex min-w-0 items-center rounded-md px-2 py-1 hover:bg-sidebar-accent/40">
       <div className="flex min-w-0 flex-1 items-center gap-1.5">
         {icon}
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
@@ -544,7 +555,7 @@ function GroupHeader({
           <Button
             variant="ghost"
             size="icon-sm"
-            className="shrink-0 text-muted-foreground"
+            className="shrink-0 text-muted-foreground opacity-0 focus-visible:opacity-100 group-hover/project:opacity-100"
             onClick={onAdd}
           >
             <Plus className="size-3.5" />
@@ -553,6 +564,124 @@ function GroupHeader({
         <TooltipContent>{addHint}</TooltipContent>
       </Tooltip>
     </div>
+  );
+}
+
+/** The row-1 AI status icon + row-2 activity label, from pushed state. */
+function aiState(
+  session: SessionPayload | undefined,
+  phase: PipelinePhase | undefined,
+): { icon: React.ReactNode; label?: string; labelClass?: string } {
+  const working = session?.activity === "working";
+  if (working) {
+    return {
+      icon: (
+        <Loader2
+          className="size-3.5 shrink-0 animate-spin text-primary"
+          aria-label="Working"
+        />
+      ),
+      label: phase === "fixing" ? "Fixing CI…" : "Working…",
+      labelClass: "text-primary",
+    };
+  }
+  if (session?.awaitingInput) {
+    return {
+      icon: (
+        <MessageCircleQuestion
+          className="size-3.5 shrink-0 text-warning"
+          aria-label="Waiting for you"
+        />
+      ),
+      label: "Waiting for you",
+      labelClass: "text-warning",
+    };
+  }
+  if (session?.needsAttention) {
+    return {
+      icon: (
+        <span
+          className="size-[7px] shrink-0 rounded-full bg-primary"
+          aria-label="Finished — unseen"
+        />
+      ),
+      label: "Ready for review",
+      labelClass: "text-warning",
+    };
+  }
+  if (phase === "exhausted") {
+    return {
+      icon: (
+        <TriangleAlert
+          className="size-3.5 shrink-0 text-warning"
+          aria-label="Autofix paused"
+        />
+      ),
+      label: "Autofix paused",
+      labelClass: "text-muted-foreground",
+    };
+  }
+  if (session?.error) {
+    return {
+      icon: (
+        <CircleX
+          className="size-3.5 shrink-0 text-destructive"
+          aria-label="Last turn failed"
+        />
+      ),
+      label: "Last turn failed",
+      labelClass: "text-destructive",
+    };
+  }
+  return {
+    icon: <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />,
+  };
+}
+
+/** Compact PR chip: state icon (color = open/merged/closed) + number + CI dot.
+ *  Failing adds a `n/total` count; merged/closed say it with the icon alone. */
+function PrChip({ pr }: { pr: PrStatus }) {
+  const failing = pr.checks.filter((c) => c.bucket === "failure").length;
+  const counted = pr.checks.filter((c) => c.bucket !== "skipped").length;
+  const Icon =
+    pr.state === "MERGED"
+      ? GitMerge
+      : pr.state === "CLOSED"
+        ? GitPullRequestClosed
+        : GitPullRequest;
+  const iconClass =
+    pr.state === "MERGED"
+      ? "text-[#a371f7]"
+      : pr.state === "CLOSED"
+        ? "text-destructive"
+        : "text-additions";
+  const title =
+    pr.state === "OPEN"
+      ? failing > 0
+        ? `PR #${pr.number} — ${failing} of ${counted} checks failing`
+        : `PR #${pr.number} — checks ${pr.rollup === "success" ? "passing" : pr.rollup === "pending" ? "running" : "none"}`
+      : `PR #${pr.number} — ${pr.state.toLowerCase()}`;
+  return (
+    <span
+      className="flex shrink-0 items-center gap-1 rounded-full bg-foreground/[0.06] py-px pl-1 pr-1.5 font-mono text-[10px] leading-4"
+      title={title}
+    >
+      <Icon className={cn("size-[11px] shrink-0", iconClass)} />#{pr.number}
+      {pr.state === "OPEN" && pr.rollup === "success" && (
+        <span className="size-[7px] rounded-full bg-additions" />
+      )}
+      {pr.state === "OPEN" && pr.rollup === "pending" && (
+        <span className="size-[7px] animate-pulse rounded-full bg-warning" />
+      )}
+      {pr.state === "OPEN" && pr.rollup === "failure" && (
+        <>
+          <span className="size-[7px] rounded-full bg-destructive" />
+          <span className="text-destructive">
+            {failing}/{counted}
+          </span>
+        </>
+      )}
+    </span>
   );
 }
 
@@ -575,74 +704,156 @@ function WorkspaceRow({
   editorApp?: string;
   onOpenIn?: (w: Workspace, app?: string) => void;
 }) {
-  const { diffStats: stats, sessionByWorkspace } = useWorkspaceData();
+  const {
+    diffStats: stats,
+    sessionByWorkspace,
+    prByWorkspace,
+  } = useWorkspaceData();
   const stat = stats[w.id];
   const session = sessionByWorkspace[w.id];
+  const prPayload = prByWorkspace[w.id];
+  const pr = prPayload?.status ?? null;
   const isQuickChat = w.kind === "QuickChat";
-  // Spinner while the AI is actively working; warning triangle when the backend
-  // says the workspace needs the user (pending question, or a finished/unseen
-  // turn). Both come straight from the pushed session state.
-  const working = session?.activity === "working";
-  const needsAttention = !working && session?.needsAttention;
+
+  const ai = aiState(session, prPayload?.phase);
+  // Row 1 is identity: the branch (mono), else the label for quick chats.
+  const primary = (!isQuickChat && w.branch) || workspaceLabel(w);
+  // Row 2 is status: PR chip + AI activity + the AI-generated name (secondary).
+  // Quiet rows (nothing to say) stay single-line. With both a PR chip and an
+  // active AI label there's no useful room left — the name yields until the
+  // row goes quiet (it stays available as the row tooltip).
+  const secondaryName =
+    !isQuickChat && w.name && !(pr && ai.label) ? w.name : null;
+  const hasRow2 = Boolean(pr || ai.label || secondaryName);
+
+  const menuItems = (
+    <>
+      {!isQuickChat && (
+        <>
+          <ContextMenuItem onClick={() => onOpenIn?.(w, terminalApp)}>
+            <Terminal className="size-4" /> Open in terminal
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => onOpenIn?.(w)}>
+            <FolderOpen className="size-4" /> Open in Finder
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => onOpenIn?.(w, editorApp)}>
+            <Code2 className="size-4" /> Open in IDE
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+        </>
+      )}
+      <ContextMenuItem onClick={onRename}>
+        <Pencil className="size-4" /> Rename
+      </ContextMenuItem>
+      <ContextMenuItem variant="destructive" onClick={onDelete}>
+        <Trash2 className="size-4" />{" "}
+        {isQuickChat
+          ? "Delete quick chat"
+          : w.kind === "Base"
+            ? "Delete base workspace"
+            : "Delete session"}
+      </ContextMenuItem>
+    </>
+  );
 
   const row = (
     <div
       className={cn(
-        "group/ws ml-4 flex min-w-0 items-center rounded-md hover:bg-sidebar-accent",
-        selected && "bg-sidebar-accent",
+        "group/ws ml-4 flex min-w-0 items-start rounded-md hover:bg-sidebar-accent/60",
+        selected && "bg-sidebar-accent hover:bg-sidebar-accent",
       )}
     >
       <button
-        className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left"
+        className="flex min-w-0 flex-1 flex-col gap-0.5 px-2 py-1.5 text-left"
         onClick={onSelect}
       >
-        {working ? (
-          <Loader2
-            className="size-3.5 shrink-0 animate-spin text-primary"
-            aria-label="Working"
-          />
-        ) : needsAttention ? (
-          <TriangleAlert
-            className="size-3.5 shrink-0 text-warning"
-            aria-label="Needs your attention"
-          />
-        ) : (
-          <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
-        )}
-        <span
-          className="min-w-0 flex-1 truncate text-sm"
-          title={workspaceLabel(w)}
-        >
-          {workspaceLabel(w)}
-        </span>
-        {stat?.files ? (
-          <span className="ml-auto shrink-0 font-mono text-[10px]">
-            <span className="text-additions">+{stat.insertions}</span>{" "}
-            <span className="text-deletions">−{stat.deletions}</span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="flex size-3.5 shrink-0 items-center justify-center">
+            {ai.icon}
           </span>
-        ) : (
-          w.kind === "Base" && (
-            <span className="ml-auto shrink-0 text-[10px] uppercase text-muted-foreground">
-              repo
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate",
+              isQuickChat
+                ? "text-sm"
+                : "font-mono text-xs tracking-tight text-sidebar-accent-foreground",
+            )}
+            title={!isQuickChat && w.name ? `${primary} — ${w.name}` : primary}
+          >
+            {primary}
+          </span>
+          {stat?.files ? (
+            <span className="shrink-0 font-mono text-[10px] tabular-nums">
+              <span className="text-additions">+{stat.insertions}</span>{" "}
+              <span className="text-deletions">−{stat.deletions}</span>
             </span>
-          )
+          ) : null}
+        </span>
+        {hasRow2 && (
+          <span className="flex min-w-0 items-center gap-1.5 overflow-hidden pl-5">
+            {pr && <PrChip pr={pr} />}
+            {ai.label && (
+              <span
+                className={cn(
+                  "shrink-0 text-[10.5px] font-medium",
+                  ai.labelClass,
+                )}
+              >
+                {ai.label}
+              </span>
+            )}
+            {secondaryName && (
+              <span
+                className="min-w-0 truncate text-[11px] text-muted-foreground"
+                title={secondaryName}
+              >
+                {secondaryName}
+              </span>
+            )}
+          </span>
         )}
       </button>
-      <Tooltip>
-        <TooltipTrigger asChild>
+      {/* Hover-only overflow menu (also available via right-click): rename,
+          open-in, delete — no instantly-destructive X on the row. */}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
           <Button
             variant="ghost"
             size="icon-sm"
-            className="mr-1 text-destructive opacity-0 group-hover/ws:opacity-100"
-            onClick={onDelete}
+            className="mr-1 mt-1 shrink-0 text-muted-foreground opacity-0 focus-visible:opacity-100 group-hover/ws:opacity-100 data-[state=open]:opacity-100"
+            aria-label="Session actions"
           >
-            <X className="size-3.5" />
+            <MoreVertical className="size-3.5" />
           </Button>
-        </TooltipTrigger>
-        <TooltipContent>
-          {isQuickChat ? "Delete quick chat" : "Delete session"}
-        </TooltipContent>
-      </Tooltip>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          {!isQuickChat && (
+            <>
+              <DropdownMenuItem onClick={() => onOpenIn?.(w, terminalApp)}>
+                <Terminal className="size-4" /> Open in terminal
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onOpenIn?.(w)}>
+                <FolderOpen className="size-4" /> Open in Finder
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onOpenIn?.(w, editorApp)}>
+                <Code2 className="size-4" /> Open in IDE
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
+          )}
+          <DropdownMenuItem onClick={onRename}>
+            <Pencil className="size-4" /> Rename
+          </DropdownMenuItem>
+          <DropdownMenuItem variant="destructive" onClick={onDelete}>
+            <Trash2 className="size-4" />{" "}
+            {isQuickChat
+              ? "Delete quick chat"
+              : w.kind === "Base"
+                ? "Delete base workspace"
+                : "Delete session"}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 
@@ -651,25 +862,7 @@ function WorkspaceRow({
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
-      <ContextMenuContent>
-        <ContextMenuItem onClick={() => onOpenIn?.(w, terminalApp)}>
-          <Terminal className="size-4" /> Open in terminal
-        </ContextMenuItem>
-        <ContextMenuItem onClick={() => onOpenIn?.(w)}>
-          <FolderOpen className="size-4" /> Open in Finder
-        </ContextMenuItem>
-        <ContextMenuItem onClick={() => onOpenIn?.(w, editorApp)}>
-          <Code2 className="size-4" /> Open in IDE
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem onClick={onRename}>
-          <Pencil className="size-4" /> Rename
-        </ContextMenuItem>
-        <ContextMenuItem variant="destructive" onClick={onDelete}>
-          <Trash2 className="size-4" />{" "}
-          {w.kind === "Base" ? "Delete base workspace" : "Delete session"}
-        </ContextMenuItem>
-      </ContextMenuContent>
+      <ContextMenuContent>{menuItems}</ContextMenuContent>
     </ContextMenu>
   );
 }

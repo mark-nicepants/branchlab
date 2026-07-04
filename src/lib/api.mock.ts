@@ -14,6 +14,7 @@ import type {
   FileChange,
   FileContent,
   MergeResult,
+  PipelinePhase,
   PrResult,
   PrStatus,
   PrSummary,
@@ -24,6 +25,7 @@ import type {
   RemoteInfo,
   ReviewInboxItem,
   ServerInfo,
+  SessionPayload,
   Workspace,
 } from "./types";
 
@@ -70,6 +72,26 @@ let projects: ProjectView[] = [
         path: "/Users/me/Library/Application Support/branchlab/worktrees/branchlab-nimble-otter",
         branch: "nimble-otter",
         name: "Fix project settings popup modal regression",
+        base_branch: "main",
+        init_prompt: null,
+      },
+      {
+        id: "p1-ws3",
+        project_id: "p1",
+        kind: "Worktree",
+        path: "/Users/me/Library/Application Support/branchlab/worktrees/branchlab-messages-v2",
+        branch: "feat/messages-v2",
+        name: "Create a new conversation",
+        base_branch: "main",
+        init_prompt: null,
+      },
+      {
+        id: "p1-ws4",
+        project_id: "p1",
+        kind: "Worktree",
+        path: "/Users/me/Library/Application Support/branchlab/worktrees/branchlab-graphql-cache",
+        branch: "spike/graphql-cache",
+        name: "Abandoned spike",
         base_branch: "main",
         init_prompt: null,
       },
@@ -528,7 +550,8 @@ export function renameWorkspace(
 
 const diffStats: Record<string, DiffStat> = {
   "p1-ws1": { files: 3, insertions: 42, deletions: 7 },
-  "p1-ws2": { files: 0, insertions: 0, deletions: 0 },
+  "p1-ws2": { files: 2, insertions: 21, deletions: 4 },
+  "p1-ws4": { files: 1, insertions: 3, deletions: 1 },
   "p2-base": { files: 12, insertions: 120, deletions: 45 },
 };
 
@@ -900,12 +923,23 @@ export function setActiveWorkspace(workspaceId: string | null): Promise<void> {
 }
 
 export function resync(): Promise<void> {
-  // Illustrate the sidebar states in the browser harness: p1-ws1 working
-  // (spinner), p1-ws2 awaiting a question + p2-base finished-unseen (both
-  // warning triangle).
-  const working = new Set(["p1-ws1"]);
-  const awaiting = new Set(["p1-ws2"]);
-  const attention = new Set(["p1-ws2", "p2-base"]);
+  // One of each sidebar state, so the redesigned two-row list can be reviewed
+  // in the browser harness: working+PR-pending, awaiting-input (no PR),
+  // merged PR (idle), closed PR + failed turn, finished-unseen (base).
+  const session: Record<string, Partial<SessionPayload>> = {
+    "p1-ws1": { activity: "working" },
+    "p1-ws2": { awaitingInput: true, needsAttention: true },
+    "p1-ws4": { error: "engine closed" },
+    "p2-base": { needsAttention: true },
+  };
+  const pr: Record<string, { status: PrStatus; phase: PipelinePhase }> = {
+    "p1-ws1": {
+      status: mockPr(712, "OPEN", "pending"),
+      phase: "running",
+    },
+    "p1-ws3": { status: mockPr(666, "MERGED", "none"), phase: "idle" },
+    "p1-ws4": { status: mockPr(91, "CLOSED", "none"), phase: "idle" },
+  };
   for (const p of projects) {
     for (const w of p.workspaces) {
       mockEmit("workspace:git", {
@@ -913,28 +947,70 @@ export function resync(): Promise<void> {
         diffStat: diffStats[w.id] ?? { files: 0, insertions: 0, deletions: 0 },
         changes: null,
       });
+      const st = session[w.id] ?? {};
       mockEmit("workspace:session", {
         workspaceId: w.id,
-        activity: working.has(w.id) ? "working" : "idle",
-        awaitingInput: awaiting.has(w.id),
-        needsAttention: attention.has(w.id),
-        error: null,
+        activity: st.activity ?? "idle",
+        awaitingInput: st.awaitingInput ?? false,
+        needsAttention: st.needsAttention ?? false,
+        error: st.error ?? null,
       });
-      if (w.kind === "Worktree") {
-        void workspacePrStatus().then((status) =>
-          mockEmit("workspace:pr", {
-            workspaceId: w.id,
-            status,
-            phase: "failing",
-            attempts: 0,
-            mode: w.autofix_mode ?? "off",
-            error: null,
-          }),
-        );
+      if (pr[w.id]) {
+        mockEmit("workspace:pr", {
+          workspaceId: w.id,
+          status: pr[w.id].status,
+          phase: pr[w.id].phase,
+          attempts: 0,
+          mode: "off",
+          error: null,
+        });
+      } else if (w.kind === "Worktree") {
+        // nimble-otter keeps the failing PR from workspacePrStatus() so the
+        // failing chip + count is visible too.
+        if (w.id === "p1-ws2") {
+          void workspacePrStatus().then((status) =>
+            mockEmit("workspace:pr", {
+              workspaceId: w.id,
+              status,
+              phase: "failing",
+              attempts: 0,
+              mode: "off",
+              error: null,
+            }),
+          );
+        }
       }
     }
   }
   return Promise.resolve();
+}
+
+/** A minimal PrStatus for the sidebar mock states. */
+function mockPr(
+  number: number,
+  state: string,
+  rollup: PrStatus["rollup"],
+): PrStatus {
+  return {
+    number,
+    url: `https://github.com/test/repo/pull/${number}`,
+    state,
+    head_branch: "feature",
+    head_sha: `sha-${number}`,
+    rollup,
+    checks:
+      rollup === "pending"
+        ? [
+            {
+              name: "build",
+              bucket: "pending",
+              state: "IN_PROGRESS",
+              url: null,
+              workflow: "CI",
+            },
+          ]
+        : [],
+  };
 }
 
 export function workspacePrStatus(): Promise<PrStatus | null> {
