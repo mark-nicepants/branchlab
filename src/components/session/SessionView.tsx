@@ -58,6 +58,15 @@ type PanelMode =
 const MIN_PANEL_PX = 320;
 const MIN_CHAT_PX = 360;
 
+/** True while any popup layer is open (dialog, dropdown, select, popover,
+ *  context menu…) — those own the Esc key. Radix portals its poppers into
+ *  `[data-radix-popper-content-wrapper]`; dialogs carry our shadcn data-slot. */
+function hasOpenOverlay(): boolean {
+  return !!document.querySelector(
+    '[data-slot="dialog-content"][data-state="open"], [data-radix-popper-content-wrapper]',
+  );
+}
+
 /**
  * A session = one workspace's chat (driven by the Rust ACP engine + SQLite
  * cache), with an on-demand git changes panel that slides in from the right.
@@ -263,14 +272,27 @@ export function SessionView({
   useEffect(() => {
     if (!changesOpen) setPanelMax(false);
   }, [changesOpen]);
+
+  // Esc peels back one layer at a time: popups first (dialogs, menus — they
+  // handle Esc themselves, we stay out of the way), then focus mode, then the
+  // panel itself. Typing contexts keep Esc for their own cancel semantics.
   useEffect(() => {
-    if (!panelMax) return;
+    if (!changesOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setPanelMax(false);
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)
+      )
+        return;
+      if (hasOpenOverlay()) return;
+      if (panelMax) setPanelMax(false);
+      else setPref("changesPanelOpen", false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [panelMax]);
+  }, [changesOpen, panelMax, setPref]);
 
   const maxToggle = (
     <Tooltip>
