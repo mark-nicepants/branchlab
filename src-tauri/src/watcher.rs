@@ -227,8 +227,7 @@ impl Inner {
         let diff_stat = git::diff_stat(&path);
         let changes = if is_active { Some(git::changes(&path, "HEAD")) } else { None };
         let branch = git::current_branch(&path).ok();
-        let payload =
-            GitPayload { workspace_id: workspace_id.to_string(), diff_stat, changes, branch: branch.clone() };
+        let payload = GitPayload { workspace_id: workspace_id.to_string(), diff_stat, changes, branch: branch.clone() };
 
         // Keep the registry's branch in sync with reality (the agent may
         // rename or switch branches inside the workspace). Merge/push/PR

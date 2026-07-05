@@ -276,11 +276,8 @@ impl Registry {
     /// at most once; an undelivered prompt survives for the next open.
     pub fn clear_init_prompt(&self, workspace_id: &str) {
         let mut data = self.data.lock().unwrap();
-        let cleared = data
-            .workspaces
-            .iter_mut()
-            .find(|w| w.id == workspace_id)
-            .is_some_and(|w| w.init_prompt.take().is_some());
+        let cleared =
+            data.workspaces.iter_mut().find(|w| w.id == workspace_id).is_some_and(|w| w.init_prompt.take().is_some());
         if cleared {
             self.persist(&data);
         }

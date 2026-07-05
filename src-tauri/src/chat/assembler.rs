@@ -197,8 +197,7 @@ impl TurnAssembler {
     /// clock, the first terminal status stops it.
     fn stamp(&mut self, call_id: &str, status: acp::ToolCallStatus) -> (i64, Option<i64>) {
         let entry = self.tool_times.entry(call_id.to_string()).or_insert_with(|| (now_ms(), None));
-        let terminal =
-            matches!(status, acp::ToolCallStatus::Completed | acp::ToolCallStatus::Failed);
+        let terminal = matches!(status, acp::ToolCallStatus::Completed | acp::ToolCallStatus::Failed);
         if terminal && entry.1.is_none() {
             entry.1 = Some(now_ms());
         }
