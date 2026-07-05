@@ -183,24 +183,19 @@ export function removeProject(projectId: string): Promise<void> {
 
 // ── GitHub accounts + review inbox (browser harness) ──
 
+// A single mock account: an AI-generated face (thispersondoesnotexist.com),
+// inlined as a data URI so the harness needs no network.
+const MOCK_AVATAR =
+  "data:image/jpeg;base64,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";
+
 let mockAccounts: Account[] = [
   {
-    id: "github.com/octocat",
+    id: "github.com/alex-morgan",
     host: "github.com",
-    login: "octocat",
-    name: "The Octocat",
-    avatarUrl: "https://avatars.githubusercontent.com/u/583231?v=4",
-    orgs: ["octocat", "acme"],
-    active: true,
-    status: null,
-  },
-  {
-    id: "github.acme.com/m.mooibroek",
-    host: "github.acme.com",
-    login: "m.mooibroek",
-    name: "Mark Mooibroek",
-    avatarUrl: null,
-    orgs: ["m.mooibroek", "sdbgroep"],
+    login: "alex-morgan",
+    name: "Alex Morgan",
+    avatarUrl: MOCK_AVATAR,
+    orgs: ["alex-morgan", "branchlab"],
     active: true,
     status: null,
   },
@@ -209,7 +204,7 @@ let mockAccounts: Account[] = [
 const mockReviewInbox: ReviewInboxItem[] = [
   {
     id: "acme/web#128",
-    accountId: "github.com/octocat",
+    accountId: "github.com/alex-morgan",
     repo: "acme/web",
     number: 128,
     title: "Add rate limiting to the public API",
@@ -225,7 +220,7 @@ const mockReviewInbox: ReviewInboxItem[] = [
   },
   {
     id: "acme/web#131",
-    accountId: "github.com/octocat",
+    accountId: "github.com/alex-morgan",
     repo: "acme/web",
     number: 131,
     title: "Fix flaky auth integration test",
@@ -241,7 +236,7 @@ const mockReviewInbox: ReviewInboxItem[] = [
   },
   {
     id: "sdbgroep/portal#57",
-    accountId: "github.acme.com/m.mooibroek",
+    accountId: "github.com/alex-morgan",
     repo: "sdbgroep/portal",
     number: 57,
     title: "Migrate settings screen to new design system",

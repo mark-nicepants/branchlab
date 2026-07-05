@@ -18,11 +18,16 @@ const PORT = 5199;
 const URL = `http://localhost:${PORT}/index.browser.html`;
 
 const VIEWPORT = { width: 1440, height: 900 };
-const PANEL_PX = 720; // staged changes-panel width — matches the cutout width
+// Two staged changes-panel widths: a comfortable one for the full-window
+// session shot (the default pref is wider than half the window — too big),
+// and the cutout width for the PR flows, where the panel must exactly fill
+// the 720px clip.
+const SESSION_PANEL_PX = 520;
+const CUTOUT_PANEL_PX = 720;
 const CUTOUT = { width: 720, height: 560 }; // both PR cutouts share this size
 
 const THEMES = [
-  { id: "github-copilot-dark", suffix: "dark" },
+  { id: "nord", suffix: "dark" },
   { id: "light", suffix: "light" },
 ];
 const PROMPT =
@@ -30,6 +35,17 @@ const PROMPT =
 const COMMENT =
   "Only close on Escape when no other overlay is open — the command palette should win if it's on top.";
 const DIFF_LINE = 'if (e.key === "Escape" && settingsOpen) {';
+// The mock streams one scripted "showcase" turn for every send: steps, then a
+// permission-gated `git push`, then the final prose after the gate is allowed.
+const FINAL_PROSE = "Fixed. The config parser";
+
+/** Drive the mock turn to completion: allow the permission gate, then wait
+ *  for the final prose. */
+async function completeTurn(page) {
+  await page.getByRole("button", { name: "Allow once" }).click();
+  await page.getByText(FINAL_PROSE).first().waitFor();
+  await page.waitForTimeout(500); // summary header settles
+}
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
@@ -69,13 +85,14 @@ async function cutout(page, locator, name, anchor = "center") {
 
 // ── flows ────────────────────────────────────────────────────────────────
 
-async function captureTheme(browser, theme) {
+/** A fresh context with the theme + a pinned changes-panel width applied. */
+async function newThemedContext(browser, theme, panelPx) {
   const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
   await context.addInitScript(
-    ({ themeId, panelPx }) => {
+    ({ themeId, px }) => {
       localStorage.setItem("branchlab.theme", themeId);
       localStorage.removeItem("branchlab.layout.v1");
-      localStorage.setItem("branchlab.prefs", JSON.stringify({ changesPanelWidthPx: panelPx }));
+      localStorage.setItem("branchlab.prefs", JSON.stringify({ changesPanelWidthPx: px }));
       // The real app draws macOS traffic lights via the overlay titlebar; the
       // browser harness has none, so fake them where macOS would put them.
       addEventListener("DOMContentLoaded", () => {
@@ -90,27 +107,40 @@ async function captureTheme(browser, theme) {
         document.body.appendChild(d);
       });
     },
-    { themeId: theme.id, panelPx: PANEL_PX },
+    { themeId: theme.id, px: panelPx },
   );
-
   const page = await context.newPage();
   await page.goto(URL);
   await page.getByRole("button", { name: "Home" }).waitFor();
   await page.waitForTimeout(500); // fonts + sidebar snapshot settle
+  return { context, page };
+}
+
+async function captureTheme(browser, theme) {
+  // ── Context 1 (comfortable panel): Home + session-with-changes ──
+  const a = await newThemedContext(browser, theme, SESSION_PANEL_PX);
+  let page = a.page;
   await shot(page, `home-${theme.suffix}`);
 
-  // ── Session: prompt → scripted mock turn ──
+  // Session: prompt → scripted mock turn (permission-gated).
   await page.getByRole("button", { name: /nimble-otter/ }).click();
   const composer = page.getByRole("textbox", { name: "Ask the agent…" });
   await composer.fill(PROMPT);
   await composer.press("Enter");
-  await page.getByText("Done — I updated").first().waitFor();
-  await page.waitForTimeout(700); // turn completes; summary collapses
+  await completeTurn(page);
 
-  await page.getByRole("button", { name: /Edited 1 file/ }).first().click(); // expand work
+  // The work section is open by default — no expand click needed.
   await page.getByRole("button", { name: "2", exact: true }).click(); // changes panel
   await page.waitForTimeout(700); // slide-in animation
   await shot(page, `session-changes-${theme.suffix}`);
+  await a.context.close();
+
+  // ── Context 2 (panel = cutout width): the PR comment/response flow ──
+  const b = await newThemedContext(browser, theme, CUTOUT_PANEL_PX);
+  page = b.page;
+  await page.getByRole("button", { name: /nimble-otter/ }).click();
+  await page.getByRole("button", { name: "2", exact: true }).click(); // changes panel
+  await page.waitForTimeout(700); // slide-in animation
 
   // ── Change details → inline review comment ──
   // The file rows sit inside a sliding panel; plain locator clicks flake on
@@ -135,7 +165,7 @@ async function captureTheme(browser, theme) {
   await commentBox.press("Enter"); // save the comment
   await page.getByRole("button", { name: "Send comment" }).click();
   await page.getByText("Review feedback").first().waitFor();
-  await page.waitForTimeout(1500); // scripted reply streams in below the card
+  await completeTurn(page); // reply is the same permission-gated mock turn
   // Hide the sidebar (⌘B): with the 720px panel still open, the chat column
   // spans exactly x 0–720 — the same width as the cutout. Clip that column,
   // top-aligned just above the feedback card, so the card and the agent's
@@ -157,7 +187,7 @@ async function captureTheme(browser, theme) {
   });
   console.log(`✓ pr-response-${theme.suffix}.png (cutout)`);
 
-  await context.close();
+  await b.context.close();
 }
 
 // ── main ─────────────────────────────────────────────────────────────────
