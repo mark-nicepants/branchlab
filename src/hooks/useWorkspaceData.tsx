@@ -50,6 +50,10 @@ interface WorkspaceDataValue {
    *  server, including background turns you've navigated away from. Drives the
    *  sidebar busy/attention indicators. */
   sessionByWorkspace: Record<string, SessionPayload>;
+  /** Live checked-out branch keyed by workspace id — pushed by the watcher
+   *  when the agent renames/switches branches. Overlays the (possibly stale)
+   *  registry `Workspace.branch` in the UI. */
+  branchByWorkspace: Record<string, string>;
 }
 
 const Ctx = createContext<WorkspaceDataValue>({
@@ -58,6 +62,7 @@ const Ctx = createContext<WorkspaceDataValue>({
   refreshChanges: () => {},
   prByWorkspace: {},
   sessionByWorkspace: {},
+  branchByWorkspace: {},
 });
 
 interface ProviderProps {
@@ -169,6 +174,13 @@ export function WorkspaceDataProvider({
     return out;
   }, [byId]);
 
+  const branchByWorkspace = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const [id, p] of Object.entries(byId))
+      if (p.branch) out[id] = p.branch;
+    return out;
+  }, [byId]);
+
   const changes = activeWorkspaceId
     ? (byId[activeWorkspaceId]?.changes ?? undefined)
     : undefined;
@@ -185,6 +197,7 @@ export function WorkspaceDataProvider({
         refreshChanges,
         prByWorkspace,
         sessionByWorkspace,
+        branchByWorkspace,
       }}
     >
       {children}

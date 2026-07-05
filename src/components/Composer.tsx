@@ -4,11 +4,6 @@ import type { ClipboardImage } from "../hooks/useClipboardImages";
 import type { ContextInfo } from "../lib/types";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { ContextRing } from "./ContextRing";
 
@@ -23,9 +18,8 @@ interface Props {
   controls?: ReactNode;
   attachments?: ClipboardImage[];
   onRemoveAttachment?: (id: string) => void;
-  /** When set, the + button opens an image picker; otherwise it's disabled. */
+  /** When set, the + button opens an image picker; omit to hide it (Home). */
   onAttachFiles?: (files: File[]) => void;
-  attachDisabledHint?: string;
   busy?: boolean;
   canSend: boolean;
   onSend: () => void;
@@ -34,6 +28,10 @@ interface Props {
   context?: ContextInfo | null;
   /** One-line keyboard hint rendered under the frame. */
   hint?: ReactNode;
+  /** Rendered in the right-side group, before the context ring and send. */
+  trailing?: ReactNode;
+  /** Extra classes for the frame (e.g. Home's quick-chat border tint). */
+  frameClassName?: string;
 }
 
 /** A boxed keystroke for the hint line under the composer. */
@@ -69,13 +67,14 @@ export function Composer({
   attachments = [],
   onRemoveAttachment,
   onAttachFiles,
-  attachDisabledHint = "Attach · in session",
   busy = false,
   canSend,
   onSend,
   onStop,
   context,
   hint,
+  trailing,
+  frameClassName,
 }: Props) {
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -85,6 +84,7 @@ export function Composer({
         className={cn(
           "relative rounded-xl border border-border bg-card transition-colors duration-150 focus-within:border-ring",
           busy && "composer-loading",
+          frameClassName,
         )}
       >
         {attachments.length > 0 && (
@@ -130,7 +130,7 @@ export function Composer({
           className="min-h-[64px] resize-none border-0 bg-transparent px-4 pt-3 text-[15px] shadow-none focus-visible:ring-0 dark:bg-transparent"
         />
         <div className="flex flex-wrap items-center gap-1 px-2 pb-2 pt-0.5">
-          {onAttachFiles ? (
+          {onAttachFiles && (
             <>
               <input
                 ref={fileInput}
@@ -154,18 +154,10 @@ export function Composer({
                 <Plus className="size-4" />
               </Button>
             </>
-          ) : (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon-sm" disabled>
-                  <Plus className="size-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{attachDisabledHint}</TooltipContent>
-            </Tooltip>
           )}
           {controls}
           <div className="ml-auto flex items-center gap-1.5">
+            {trailing}
             {context !== undefined && <ContextRing info={context} />}
             {busy && onStop ? (
               <Button

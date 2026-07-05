@@ -3,7 +3,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChatStore } from "../hooks/useChat";
 import { useClipboardImages } from "../hooks/useClipboardImages";
 import { useTodos } from "../hooks/useTodos";
-import { chatGenerateTitle, renameWorkspace } from "../lib/api";
+import { useWorkspaceData } from "../hooks/useWorkspaceData";
+import {
+  chatGenerateTitle,
+  clearInitPrompt,
+  renameWorkspace,
+  renameWorkspaceBranch,
+} from "../lib/api";
 import { filterCommands, isSlashTyping } from "../lib/slash";
 import type { CommandOption, Workspace } from "../lib/types";
 import { ActiveTodoStrip } from "./ActiveTodoStrip";
@@ -84,6 +90,9 @@ export function Chat({
 }: Props) {
   const { prefs, setWorkspacePref } = usePreferences();
   const { todos } = useTodos(workspace.id);
+  // Live checked-out branch (the agent may rename it mid-session).
+  const liveBranch =
+    useWorkspaceData().branchByWorkspace[workspace.id] ?? workspace.branch;
   const {
     attachments,
     handlePaste,
@@ -134,6 +143,68 @@ export function Chat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingAction, chat.busy]);
 
+  // First interaction → title the workspace: ask the engine for an AI title
+  // (throwaway session on the same connection), falling back to a deterministic
+  // one if that fails or is empty.
+  const requestTitle = useCallback(
+    (text: string) => {
+      if (
+        workspace.name ||
+        !text ||
+        text.startsWith("/") ||
+        nameRequested.current
+      )
+        return;
+      nameRequested.current = true;
+      void chatGenerateTitle(workspace.id, text)
+        .then((r) =>
+          r?.title.trim()
+            ? { title: r.title.trim(), branch: r.branch }
+            : { title: deriveTitle(text), branch: null },
+        )
+        .catch(() => ({ title: deriveTitle(text), branch: null }))
+        .then(({ title, branch }) => {
+          if (!title) return;
+          // Also rename the codename branch to the AI-proposed conventional
+          // name, falling back to the sanitized title (backend skips PR
+          // checkouts, pushed branches, and collisions — and a failure here
+          // must not block the name). onRenamed then refreshes, so name and
+          // branch land in one update.
+          return renameWorkspace(workspace.id, title)
+            .then(() =>
+              renameWorkspaceBranch(workspace.id, branch ?? title).catch(
+                () => null,
+              ),
+            )
+            .then(() => onRenamed(workspace.id, title));
+        });
+    },
+    [workspace.id, workspace.name, onRenamed],
+  );
+
+  // Deliver the workspace's pending init prompt (Home composer / New
+  // Workspace modal) once the chat is ready and still empty. The registry
+  // entry is cleared only after a successful send, so a prompt that fails to
+  // deliver survives for the next open; the empty-transcript guard keeps a
+  // stale prop from ever sending it twice.
+  const initPromptHandled = useRef(false);
+  useEffect(() => {
+    // `ready` gates on the delta listeners being attached — sending before
+    // that loses the entry events and the transcript stays blank until the
+    // next reload (listen() registration is async).
+    if (initPromptHandled.current || chat.loading || !chat.ready || chat.busy)
+      return;
+    initPromptHandled.current = true;
+    const text = workspace.init_prompt?.trim();
+    if (!text || chat.entries.length > 0) return;
+    requestTitle(text);
+    atBottom.current = true;
+    void chat
+      .send({ display: text, sent: text, origin: "user" })
+      .then(() => clearInitPrompt(workspace.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chat.loading, chat.ready, chat.busy]);
+
   const saveDraft = useCallback(
     (text: string) => setWorkspacePref(workspace.id, { inputText: text }),
     [workspace.id, setWorkspacePref],
@@ -168,26 +239,7 @@ export function Chat({
     // Sending re-attaches the transcript to the bottom.
     atBottom.current = true;
 
-    // First interaction → title the workspace: ask the engine for an AI title
-    // (throwaway session on the same connection), falling back to a deterministic
-    // one if that fails or is empty.
-    if (
-      !workspace.name &&
-      text &&
-      !text.startsWith("/") &&
-      !nameRequested.current
-    ) {
-      nameRequested.current = true;
-      void chatGenerateTitle(workspace.id, text)
-        .then((t) => t?.trim() || deriveTitle(text))
-        .catch(() => deriveTitle(text))
-        .then((title) => {
-          if (title)
-            return renameWorkspace(workspace.id, title).then(() =>
-              onRenamed(workspace.id, title),
-            );
-        });
-    }
+    requestTitle(text);
 
     const sentAttachments = attachments.map((a) => ({
       mime: a.mime,
@@ -230,14 +282,12 @@ export function Chat({
               <ChevronUp className="size-3.5" /> Load earlier messages
             </button>
           )}
-          {workspace.base_branch && workspace.branch && (
+          {workspace.base_branch && liveBranch && (
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <GitBranch className="size-3.5" />
               <span>
                 Branched{" "}
-                <span className="font-mono text-foreground">
-                  {workspace.branch}
-                </span>{" "}
+                <span className="font-mono text-foreground">{liveBranch}</span>{" "}
                 from{" "}
                 <span className="font-mono text-foreground">
                   {workspace.base_branch}
@@ -375,4 +425,3 @@ export function Chat({
     </div>
   );
 }
-

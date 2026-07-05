@@ -271,6 +271,68 @@ impl Registry {
         Ok(self.view_of(&data, &id))
     }
 
+    /// Clear a workspace's pending init prompt. Called by the frontend after
+    /// the prompt has been successfully delivered to the agent, so it is sent
+    /// at most once; an undelivered prompt survives for the next open.
+    pub fn clear_init_prompt(&self, workspace_id: &str) {
+        let mut data = self.data.lock().unwrap();
+        let cleared = data
+            .workspaces
+            .iter_mut()
+            .find(|w| w.id == workspace_id)
+            .is_some_and(|w| w.init_prompt.take().is_some());
+        if cleared {
+            self.persist(&data);
+        }
+    }
+
+    /// Rename a fresh worktree's codename branch to the AI-proposed name
+    /// (e.g. `bubbly-cheetah` → `feature/dark-mode-toggle`; the proposal is
+    /// sanitized to a git-safe form first). Returns `Ok(None)` when skipped
+    /// as unsafe or pointless: non-worktree workspaces, PR checkouts,
+    /// branches already pushed to origin (renaming would orphan the remote
+    /// ref), name collisions, or an empty/unchanged result.
+    pub fn rename_branch_for_title(&self, workspace_id: &str, proposed: &str) -> Result<Option<String>, String> {
+        let (kind, path, old, pr_number) = {
+            let data = self.data.lock().unwrap();
+            let ws = data.workspaces.iter().find(|w| w.id == workspace_id).ok_or("unknown workspace")?;
+            (ws.kind.clone(), ws.path.clone(), ws.branch.clone(), ws.pr_number)
+        };
+        if kind != WorkspaceKind::Worktree || pr_number.is_some() {
+            return Ok(None);
+        }
+        let Some(old) = old else { return Ok(None) };
+        let new = sanitize_branch(proposed);
+        if new.is_empty() || new == old {
+            return Ok(None);
+        }
+        if git::remote_branch_exists(&path, &old) || git::has_branch(&path, &new) {
+            return Ok(None);
+        }
+        git::rename_branch(&path, &old, &new)?;
+        self.set_workspace_branch(workspace_id, &new);
+        Ok(Some(new))
+    }
+
+    /// Keep a workspace's branch in sync with what's actually checked out —
+    /// the agent may rename or switch branches inside the working tree, and
+    /// merge/push/PR flows read the branch from the registry. Called by the
+    /// git watcher on every recompute; only writes when the value changed.
+    pub fn set_workspace_branch(&self, workspace_id: &str, branch: &str) {
+        let mut data = self.data.lock().unwrap();
+        let changed = data.workspaces.iter_mut().find(|w| w.id == workspace_id).is_some_and(|w| {
+            if w.branch.as_deref() == Some(branch) {
+                false
+            } else {
+                w.branch = Some(branch.to_string());
+                true
+            }
+        });
+        if changed {
+            self.persist(&data);
+        }
+    }
+
     /// Set a workspace's display name (AI-generated once, or manual).
     pub fn rename_workspace(&self, workspace_id: &str, name: &str) {
         let mut data = self.data.lock().unwrap();
@@ -624,6 +686,26 @@ fn generate_codename() -> String {
     format!("{}-{}", ADJ[n % ADJ.len()], ANI[(n / 97) % ANI.len()])
 }
 
+/// Sanitize an AI-proposed branch name (or plain title) into a git-safe one:
+/// each `/`-segment becomes lowercase alphanumeric runs joined by single
+/// dashes, empty segments drop, capped at 60 chars. Keeps conventional
+/// prefixes intact (`feature/Add Dark Mode!` → `feature/add-dark-mode`).
+pub(crate) fn sanitize_branch(proposed: &str) -> String {
+    let slug = |s: &str| -> String {
+        let mut out = String::new();
+        for c in s.to_lowercase().chars() {
+            if c.is_ascii_alphanumeric() {
+                out.push(c);
+            } else if !out.is_empty() && !out.ends_with('-') {
+                out.push('-');
+            }
+        }
+        out.trim_end_matches('-').to_string()
+    };
+    let joined = proposed.split('/').map(slug).filter(|seg| !seg.is_empty()).collect::<Vec<_>>().join("/");
+    joined.chars().take(60).collect::<String>().trim_end_matches(['-', '/']).to_string()
+}
+
 /// A codename that doesn't collide with an existing branch.
 fn unique_codename(existing: &[String]) -> String {
     let mut name = generate_codename();
@@ -724,6 +806,59 @@ mod tests {
         reg2.remove_workspace(&ws.id, false).unwrap();
         assert!(!reg2.all_workspaces().iter().any(|w| w.id == ws.id));
         assert!(!Path::new(&ws.path).exists(), "scratch dir removed");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sanitize_branch_shapes_proposals() {
+        // Conventional prefixes survive; each segment is slugged.
+        assert_eq!(sanitize_branch("feature/Add Dark Mode!"), "feature/add-dark-mode");
+        assert_eq!(sanitize_branch("bugfix/CI pipeline"), "bugfix/ci-pipeline");
+        // Plain titles (the no-AI fallback) still work.
+        assert_eq!(sanitize_branch("Add a dark mode toggle!"), "add-a-dark-mode-toggle");
+        // Garbage collapses cleanly.
+        assert_eq!(sanitize_branch("feature//--/"), "feature");
+        assert_eq!(sanitize_branch("émoji 🎉 title"), "moji-title");
+        assert_eq!(sanitize_branch("!!!"), "");
+        // Capped at 60 chars without trailing separators.
+        let long = sanitize_branch("feature/this is a very long generated title that keeps going and going");
+        assert!(long.len() <= 60 && !long.ends_with('-') && !long.ends_with('/'));
+    }
+
+    #[test]
+    fn rename_branch_for_title_skips_unsafe_workspaces() {
+        let dir = std::env::temp_dir().join(format!("bl-reg-rename-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let reg = Registry::load(dir.join("registry.json"), dir.join("worktrees"), dir.join("quick-chats"));
+
+        // Quick chats have no branch to rename.
+        let quick = reg.create_quick_chat(None).unwrap();
+        assert_eq!(reg.rename_branch_for_title(&quick.id, "Some Title").unwrap(), None);
+
+        // PR checkouts keep their branch (it's shared state).
+        {
+            let mut data = reg.data.lock().unwrap();
+            data.workspaces.push(Workspace {
+                id: "pr-ws".into(),
+                project_id: "p1".into(),
+                kind: WorkspaceKind::Worktree,
+                path: "/tmp/nonexistent".into(),
+                branch: Some("pr-7".into()),
+                name: None,
+                base_branch: None,
+                init_prompt: None,
+                autofix_mode: AutofixMode::default(),
+                session_id: None,
+                model: None,
+                effort: None,
+                pr_number: Some(7),
+                pr_url: None,
+                pr_head_repo: None,
+                pr_is_fork: false,
+                pr: None,
+            });
+        }
+        assert_eq!(reg.rename_branch_for_title("pr-ws", "Some Title").unwrap(), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

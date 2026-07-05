@@ -15,6 +15,7 @@ import type {
   EnvReport,
   FileChange,
   FileContent,
+  GeneratedTitle,
   MergeResult,
   PrResult,
   PrStatus,
@@ -93,6 +94,27 @@ export function createQuickChat(initPrompt?: string): Promise<Workspace> {
   return invoke<Workspace>("create_quick_chat", {
     initPrompt: initPrompt ?? null,
   });
+}
+
+/**
+ * Rename a fresh worktree's codename branch to the AI-proposed name (a plain
+ * title also works — the backend sanitizes either). Resolves to the new
+ * branch name, or null when skipped (quick chat, PR checkout, branch already
+ * pushed to origin, or name collision).
+ */
+export function renameWorkspaceBranch(
+  workspaceId: string,
+  branch: string,
+): Promise<string | null> {
+  return invoke<string | null>("rename_workspace_branch", {
+    workspaceId,
+    branch,
+  });
+}
+
+/** Clear a delivered init prompt so it is never sent twice. */
+export function clearInitPrompt(workspaceId: string): Promise<void> {
+  return invoke<void>("clear_init_prompt", { workspaceId });
 }
 
 /** Update project metadata, prompts, and default model. */
@@ -324,12 +346,16 @@ export function chatSend(args: {
   });
 }
 
-/** Generate an AI title from the first message (throwaway ACP session). */
+/** Generate an AI title + conventional branch name from the first message
+ *  (one prompt on a throwaway ACP session). */
 export function chatGenerateTitle(
   workspaceId: string,
   text: string,
-): Promise<string | null> {
-  return invoke<string | null>("chat_generate_title", { workspaceId, text });
+): Promise<GeneratedTitle | null> {
+  return invoke<GeneratedTitle | null>("chat_generate_title", {
+    workspaceId,
+    text,
+  });
 }
 
 /** Abort the in-flight turn for a workspace. */

@@ -66,6 +66,10 @@ export interface ChatStore {
   permissions: ChatPermissionEvent[];
   hasMore: boolean;
   loading: boolean;
+  /** True once the delta event listeners are attached. A programmatic send
+   *  before this can lose its entry events (listen() is async), leaving the
+   *  transcript blank until the next reload — gate auto-sends on it. */
+  ready: boolean;
   /** True while the newest assistant turn is still running. */
   busy: boolean;
   send: (args: {
@@ -94,6 +98,7 @@ export function useChat(workspaceId: string): ChatStore {
   const [hasMore, setHasMore] = useState(false);
   const [oldestSeq, setOldestSeq] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [subscribed, setSubscribed] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -128,8 +133,12 @@ export function useChat(workspaceId: string): ChatStore {
   useEffect(() => {
     const unsubs: Array<() => void> = [];
     let cancelled = false;
-    const track = (p: Promise<() => void>) =>
+    setSubscribed(false);
+    const registrations: Array<Promise<unknown>> = [];
+    const track = (p: Promise<() => void>) => {
+      registrations.push(p);
       void p.then((fn) => (cancelled ? fn() : unsubs.push(fn)));
+    };
     const mine =
       <T extends { workspaceId: string }>(cb: (p: T) => void) =>
       (p: T) => {
@@ -193,6 +202,12 @@ export function useChat(workspaceId: string): ChatStore {
       ),
     );
     track(onChatReset(mine(() => void reload())));
+
+    // listen() registration is async; signal when every subscription is live
+    // so callers can safely fire programmatic sends (init prompts).
+    void Promise.all(registrations).then(() => {
+      if (!cancelled) setSubscribed(true);
+    });
 
     return () => {
       cancelled = true;
@@ -259,6 +274,7 @@ export function useChat(workspaceId: string): ChatStore {
     permissions,
     hasMore,
     loading,
+    ready: subscribed,
     busy,
     send,
     abort,

@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use notify::{recommended_watcher, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::git::{self, DiffStat, FileChange};
 
@@ -35,6 +35,11 @@ pub struct GitPayload {
     pub workspace_id: String,
     pub diff_stat: DiffStat,
     pub changes: Option<Vec<FileChange>>,
+    /// The branch actually checked out in the working tree. The agent can
+    /// rename/switch branches inside a workspace, so the registry codename
+    /// goes stale; this keeps the UI (and, via persistence, the registry)
+    /// tracking reality. `None` on detached HEAD or transient git failure.
+    pub branch: Option<String>,
 }
 
 struct WatchEntry {
@@ -221,7 +226,16 @@ impl Inner {
 
         let diff_stat = git::diff_stat(&path);
         let changes = if is_active { Some(git::changes(&path, "HEAD")) } else { None };
-        let payload = GitPayload { workspace_id: workspace_id.to_string(), diff_stat, changes };
+        let branch = git::current_branch(&path).ok();
+        let payload =
+            GitPayload { workspace_id: workspace_id.to_string(), diff_stat, changes, branch: branch.clone() };
+
+        // Keep the registry's branch in sync with reality (the agent may
+        // rename or switch branches inside the workspace). Merge/push/PR
+        // read the registry, so persistence matters beyond the UI.
+        if let Some(branch) = branch {
+            self.app.state::<crate::project::Registry>().set_workspace_branch(workspace_id, &branch);
+        }
 
         // Dedupe against the last emit; skip if nothing changed.
         let mut entries = self.entries.lock().unwrap();

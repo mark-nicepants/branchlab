@@ -59,6 +59,17 @@ pub fn has_branch(repo: &str, branch: &str) -> bool {
     })
 }
 
+/// Rename a local branch (works from inside a worktree; the ref is repo-wide).
+pub fn rename_branch(repo: &str, old: &str, new: &str) -> Result<(), String> {
+    git(repo, &["branch", "-m", old, new]).map(|_| ())
+}
+
+/// Whether the branch exists on `origin` as far as the local refs know (no
+/// network) — true once the branch has been pushed from this clone.
+pub fn remote_branch_exists(repo: &str, branch: &str) -> bool {
+    git(repo, &["rev-parse", "--verify", "--quiet", &format!("refs/remotes/origin/{branch}")]).is_ok()
+}
+
 /// Local branches, current branch first.
 pub fn list_branches(repo: &str) -> Result<Vec<String>, String> {
     let out = git(repo, &["branch", "--format=%(refname:short)"])?;

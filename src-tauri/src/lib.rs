@@ -122,6 +122,8 @@ pub fn run() {
             commands::remove_workspace,
             commands::list_workspaces,
             commands::rename_workspace,
+            commands::rename_workspace_branch,
+            commands::clear_init_prompt,
             commands::workspace_diff_stat,
             commands::workspace_changes,
             commands::workspace_file_diff,

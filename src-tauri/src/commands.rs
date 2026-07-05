@@ -170,6 +170,30 @@ pub fn rename_workspace(workspace_id: String, name: String, registry: State<Regi
     registry.rename_workspace(&workspace_id, &name);
 }
 
+/// Rename a fresh worktree's codename branch to the AI-proposed name (a plain
+/// title also works — it gets sanitized). Returns the new branch name, or
+/// null when skipped (quick chat, PR checkout, branch already pushed, or name
+/// collision). Pokes the watcher so the UI picks the rename up immediately.
+#[tauri::command]
+pub fn rename_workspace_branch(
+    workspace_id: String,
+    branch: String,
+    registry: State<Registry>,
+    watcher: State<GitWatcher>,
+) -> Result<Option<String>, String> {
+    let renamed = registry.rename_branch_for_title(&workspace_id, &branch)?;
+    if renamed.is_some() {
+        watcher.refresh(&workspace_id);
+    }
+    Ok(renamed)
+}
+
+/// Clear a delivered init prompt (the chat view calls this after sending it).
+#[tauri::command]
+pub fn clear_init_prompt(workspace_id: String, registry: State<Registry>) {
+    registry.clear_init_prompt(&workspace_id);
+}
+
 #[tauri::command]
 pub fn workspace_diff_stat(workspace_id: String, registry: State<Registry>) -> DiffStat {
     match registry.workspace_path(&workspace_id) {

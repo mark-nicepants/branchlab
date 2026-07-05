@@ -229,33 +229,39 @@ async fn run_loop(
     Ok(())
 }
 
-/// Generate a short title via a throwaway session on the same ACP connection.
-/// The session's streamed text is captured in `title_bufs` by the notification
-/// callback (keyed by the new session id) rather than surfacing as transcript.
+/// Generate a title + branch name via a throwaway session on the same ACP
+/// connection. The session's streamed text is captured in `title_bufs` by the
+/// notification callback (keyed by the new session id) rather than surfacing
+/// as transcript.
 async fn generate_title(
     conn: &ConnectionTo<Agent>,
     cwd: PathBuf,
     title_bufs: &Arc<Mutex<HashMap<String, String>>>,
     text: &str,
-) -> Option<String> {
+) -> Option<crate::engine::GeneratedTitle> {
     let ns = conn.send_request(NewSessionRequest::new(cwd)).block_task().await.ok()?;
     let sid = ns.session_id.0.to_string();
     title_bufs.lock().unwrap().insert(sid.clone(), String::new());
     let prompt = format!(
-        "Write a concise 3-6 word title (Title Case, no surrounding quotes, no trailing punctuation) \
-         for a coding session that starts with this message:\n\n{text}"
+        "For a coding session that starts with the message below, reply with EXACTLY two lines and \
+         nothing else.\n\
+         Line 1: a concise 3-6 word session title (Title Case, no surrounding quotes, no trailing \
+         punctuation).\n\
+         Line 2: a git branch name for the task — kebab-case with a conventional type prefix \
+         (feature/, bugfix/, chore/, tech/, docs/), max 40 characters.\n\n{text}"
     );
     let _ = conn
         .send_request(PromptRequest::new(ns.session_id, vec![ContentBlock::Text(TextContent::new(prompt))]))
         .block_task()
         .await;
     let raw = title_bufs.lock().unwrap().remove(&sid).unwrap_or_default();
-    let title = raw.trim().trim_matches('"').trim().lines().next().unwrap_or("").trim().to_string();
+    let mut lines = raw.lines().map(|l| l.trim().trim_matches('"').trim()).filter(|l| !l.is_empty());
+    let title: String = lines.next().unwrap_or("").chars().take(60).collect();
     if title.is_empty() {
-        None
-    } else {
-        Some(title.chars().take(60).collect())
+        return None;
     }
+    let branch = lines.next().map(crate::project::sanitize_branch).filter(|b| !b.is_empty());
+    Some(crate::engine::GeneratedTitle { title, branch })
 }
 
 /// A concise one-line label for a session update, for the debug log. Returns
@@ -418,17 +424,17 @@ mod tests {
                     break;
                 }
             }
-            let (reply_tx, reply_rx) = oneshot::channel::<Option<String>>();
+            let (reply_tx, reply_rx) = oneshot::channel::<Option<crate::engine::GeneratedTitle>>();
             handle.send(EngineCommand::GenerateTitle {
                 text: "Add a dark mode toggle to the settings page".to_string(),
                 reply: reply_tx,
             });
-            let title =
+            let generated =
                 timeout(Duration::from_secs(90), reply_rx).await.expect("title timed out").expect("reply dropped");
-            eprintln!("TITLE = {title:?}");
-            let title = title.expect("no title generated");
-            assert!(!title.trim().is_empty(), "title should be non-empty");
-            assert!(title.len() <= 60);
+            eprintln!("GENERATED = {generated:?}");
+            let generated = generated.expect("no title generated");
+            assert!(!generated.title.trim().is_empty(), "title should be non-empty");
+            assert!(generated.title.len() <= 60);
         });
         let _ = std::fs::remove_dir_all(&dir);
     }

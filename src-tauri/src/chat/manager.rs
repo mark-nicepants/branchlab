@@ -274,10 +274,15 @@ impl ChatManager {
         Ok(())
     }
 
-    /// Generate an AI title from the first message via a throwaway session on the
-    /// workspace's existing ACP connection. Returns None on failure (caller
-    /// falls back to a deterministic title).
-    pub async fn generate_title(&self, workspace_id: &str, cwd: &Path, text: String) -> Option<String> {
+    /// Generate an AI title + branch name from the first message via a
+    /// throwaway session on the workspace's existing ACP connection. Returns
+    /// None on failure (caller falls back to a deterministic title).
+    pub async fn generate_title(
+        &self,
+        workspace_id: &str,
+        cwd: &Path,
+        text: String,
+    ) -> Option<crate::engine::GeneratedTitle> {
         self.ensure(workspace_id, cwd).ok()?;
         let rx = {
             let convs = self.inner.convs.lock().unwrap();

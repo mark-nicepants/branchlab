@@ -757,6 +757,7 @@ function WorkspaceRow({
     diffStats: stats,
     sessionByWorkspace,
     prByWorkspace,
+    branchByWorkspace,
   } = useWorkspaceData();
   const stat = stats[w.id];
   const session = sessionByWorkspace[w.id];
@@ -765,8 +766,9 @@ function WorkspaceRow({
   const isQuickChat = w.kind === "QuickChat";
 
   const ai = aiState(session, prPayload?.phase);
-  // Row 1 is identity: the branch, else the label for quick chats.
-  const primary = w.branch ?? workspaceLabel(w);
+  // Row 1 is identity: the live checked-out branch (the agent may rename it),
+  // else the registry branch, else the label for quick chats.
+  const primary = branchByWorkspace[w.id] ?? w.branch ?? workspaceLabel(w);
   // Row 2 is status: PR chip + AI activity + the AI-generated name (secondary).
   // Quiet rows (nothing to say) stay single-line. With both a PR chip and an
   // active AI label there's no useful room left — the name yields until the

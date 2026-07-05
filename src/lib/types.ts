@@ -53,6 +53,14 @@ export type PipelinePhase =
   | "awaiting_push"
   | "exhausted";
 
+/** AI-generated session metadata (mirrors engine::GeneratedTitle): a display
+ *  title plus a conventional branch name, from one model call. */
+export interface GeneratedTitle {
+  title: string;
+  /** e.g. `feature/dark-mode-toggle`; null when the model gave no usable one. */
+  branch: string | null;
+}
+
 /** Human label for a workspace: explicit name, else branch, else a fallback.
  *  Quick chats start unnamed (the AI titles them from the first message). */
 export function workspaceLabel(w: Workspace): string {
@@ -160,6 +168,10 @@ export interface GitPayload {
   workspaceId: string;
   diffStat: DiffStat;
   changes: FileChange[] | null;
+  /** The branch actually checked out — the agent may rename/switch branches,
+   *  so this can differ from the registry's `Workspace.branch` until the
+   *  backend persists the change. Absent on detached HEAD / non-git. */
+  branch?: string | null;
 }
 
 /** `workspace:pr` — PR pipeline + autofix state for one workspace. */

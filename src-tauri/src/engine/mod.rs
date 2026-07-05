@@ -39,15 +39,25 @@ pub enum EngineCommand {
         id: String,
         value: String,
     },
-    /// Generate a short title from `text` using a throwaway session on the SAME
-    /// connection (no extra process, no main-transcript pollution). Replies with
-    /// the title, or None on failure.
+    /// Generate session metadata from `text` using a throwaway session on the
+    /// SAME connection (no extra process, no main-transcript pollution).
+    /// Replies with the title + suggested branch, or None on failure.
     GenerateTitle {
         text: String,
-        reply: oneshot::Sender<Option<String>>,
+        reply: oneshot::Sender<Option<GeneratedTitle>>,
     },
     Cancel,
     Shutdown,
+}
+
+/// AI-generated session metadata from the first message: a display title and
+/// a conventional git branch name (e.g. `feature/dark-mode-toggle`), produced
+/// by one prompt so titling costs a single model round-trip.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GeneratedTitle {
+    pub title: String,
+    /// Suggested branch; None when the model didn't produce a usable one.
+    pub branch: Option<String>,
 }
 
 /// Why a prompt turn ended.

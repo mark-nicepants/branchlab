@@ -74,15 +74,16 @@ pub fn chat_send(
     )
 }
 
-/// Generate an AI title for a workspace from the first message (throwaway
-/// session on the same ACP connection). Returns None on failure.
+/// Generate an AI title + conventional branch name for a workspace from the
+/// first message (one prompt on a throwaway session over the same ACP
+/// connection). Returns None on failure.
 #[tauri::command]
 pub async fn chat_generate_title(
     workspace_id: String,
     text: String,
     registry: State<'_, Registry>,
     chat: State<'_, ChatManager>,
-) -> Result<Option<String>, String> {
+) -> Result<Option<crate::engine::GeneratedTitle>, String> {
     let cwd = workspace_cwd(&registry, &workspace_id)?;
     Ok(chat.generate_title(&workspace_id, &cwd, text).await)
 }

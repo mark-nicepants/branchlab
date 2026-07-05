@@ -16,6 +16,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   included) until deleted; deleting one also removes its scratch directory.
   Start one from the sidebar's Quick chats group.
 
+- Redesigned Home composer: the destination now lives inside the message box
+  — a project · branch chip pair, plus an always-visible "Quick chat" toggle
+  (⌘K flips it) that fades the project out and routes the prompt to a fresh
+  quick chat. The prompt typed on Home is delivered to the agent as the
+  session's first message.
+
+- AI branch naming: a new session's codename branch (e.g. `bubbly-cheetah`)
+  is renamed to a conventional name proposed by the model from your first
+  message (e.g. `feature/dark-mode-toggle`) — skipped for PR checkouts,
+  branches already pushed to origin, and name collisions.
+
+- Live branch tracking: when the agent renames or switches the branch inside
+  a workspace, the sidebar and session header update within a second, the
+  registry stays in sync, and merge/push/PR operate on the real branch.
+
 - Update availability now shows everywhere it matters: a badge on the
   settings gear, and an update banner with an "Update & restart" button at
   the top of Settings → General.
@@ -33,6 +48,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - New macOS app icon (rounded-square glyph artwork) across the bundle, dock,
   in-app favicon, and the website.
+
+### Fixed
+
+- The init prompt entered when creating a workspace (New Workspace modal, and
+  now the Home composer) was stored but never sent to the agent; it is now
+  delivered as the first message once the chat is ready, exactly once — an
+  undelivered prompt survives for the next open instead of being lost.
+- Auto-sent first messages could leave the transcript blank until the session
+  was reopened (the send raced the chat event listeners still attaching);
+  programmatic sends now wait for the listeners.
 
 ### Security
 

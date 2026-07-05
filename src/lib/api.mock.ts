@@ -13,6 +13,7 @@ import type {
   EnvReport,
   FileChange,
   FileContent,
+  GeneratedTitle,
   MergeResult,
   PipelinePhase,
   PrResult,
@@ -555,6 +556,43 @@ export function renameWorkspace(
   return Promise.resolve();
 }
 
+export function renameWorkspaceBranch(
+  workspaceId: string,
+  branch: string,
+): Promise<string | null> {
+  // Mirror the backend sanitizer: slug each /-segment, keep the prefix.
+  const sanitized = branch
+    .split("/")
+    .map((seg) =>
+      seg
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, ""),
+    )
+    .filter(Boolean)
+    .join("/")
+    .slice(0, 60);
+  for (const w of projects.flatMap((p) => p.workspaces)) {
+    if (
+      w.id === workspaceId &&
+      w.kind === "Worktree" &&
+      !w.pr_number &&
+      sanitized
+    ) {
+      w.branch = sanitized;
+      return Promise.resolve(sanitized);
+    }
+  }
+  return Promise.resolve(null);
+}
+
+export function clearInitPrompt(workspaceId: string): Promise<void> {
+  for (const w of [...projects.flatMap((p) => p.workspaces), ...quickChats]) {
+    if (w.id === workspaceId) w.init_prompt = null;
+  }
+  return Promise.resolve();
+}
+
 const diffStats: Record<string, DiffStat> = {
   "p1-ws1": { files: 3, insertions: 42, deletions: 7 },
   "p1-ws2": { files: 2, insertions: 21, deletions: 4 },
@@ -903,8 +941,18 @@ export function chatSend(args: {
 export function chatGenerateTitle(
   _workspaceId: string,
   text: string,
-): Promise<string | null> {
-  return Promise.resolve(text.split(/\s+/).slice(0, 5).join(" ") || null);
+): Promise<GeneratedTitle | null> {
+  const title = text.split(/\s+/).slice(0, 5).join(" ");
+  if (!title) return Promise.resolve(null);
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32);
+  return Promise.resolve({
+    title,
+    branch: slug ? `feature/${slug}` : null,
+  });
 }
 export function chatAbort(): Promise<void> {
   return Promise.resolve();

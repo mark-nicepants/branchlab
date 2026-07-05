@@ -1,24 +1,16 @@
 import { useEffect, useState } from "react";
-import {
-  ChevronsUpDown,
-  FolderPlus,
-  GitBranch,
-  Plus,
-  Sparkles,
-} from "lucide-react";
+import { ChevronsUpDown, GitBranch, Plus, Sparkles } from "lucide-react";
 import { listBranches } from "../../lib/api";
 import type { ProjectView } from "../../lib/types";
 import { Button } from "@/components/ui/button";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
@@ -37,11 +29,10 @@ interface Props {
 }
 
 /**
- * The Home prompt composer. Submitting spins up a new worktree session in the
- * selected project (or a quick chat when no project is selected), seeding the
- * agent with the typed prompt. Reuses the shared session Composer intact —
- * Home just passes no live session state, so busy/context/attachments never
- * fire here and the mode/model pills are display-only.
+ * The Home prompt composer. The bottom rail carries the destination — a
+ * project·branch chip pair, or quick chat when the toggle (⌘K) is on — and
+ * Enter sends the prompt to whatever the rail currently shows. With no
+ * projects registered the toggle hides and quick chat is simply the default.
  */
 export function HomeComposer({
   projects,
@@ -55,8 +46,12 @@ export function HomeComposer({
   );
   const [base, setBase] = useState<string>("");
   const [branches, setBranches] = useState<string[]>([]);
+  // Quick-chat send mode. Deliberately component state (not a preference):
+  // it resets when Home unmounts, so a stale toggle can't misroute a prompt.
+  const [quick, setQuick] = useState(false);
 
   const project = projects.find((p) => p.id === projectId) ?? null;
+  const quickMode = quick || !project;
 
   // Default the selected project once projects load.
   useEffect(() => {
@@ -76,13 +71,26 @@ export function HomeComposer({
       .catch(() => setBranches([]));
   }, [project?.id]);
 
+  // ⌘K toggles quick chat from anywhere on Home; the textarea keeps focus.
+  useEffect(() => {
+    if (!projects.length) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setQuick((q) => !q);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [projects.length]);
+
   function submit() {
     const prompt = text.trim();
     if (!prompt) return;
-    if (project) {
-      onCreateSession(project.id, base || undefined, prompt);
-    } else {
+    if (quickMode) {
       onQuickChat(prompt);
+    } else if (project) {
+      onCreateSession(project.id, base || undefined, prompt);
     }
     setText("");
   }
@@ -112,124 +120,139 @@ export function HomeComposer({
             });
           }
         }}
-        placeholder="Ask anything, or describe a task to start a session…"
+        placeholder={
+          quickMode
+            ? "Ask anything…"
+            : `Describe a task to start in ${project?.name}…`
+        }
+        frameClassName={quickMode ? "border-primary/40" : undefined}
         hint={
           <>
-            <Kbd>Enter</Kbd> to send · <Kbd>Shift</Kbd> <Kbd>Enter</Kbd> new
-            line
+            <Kbd>Enter</Kbd> to send
+            {projects.length > 0 && (
+              <>
+                {" · "}
+                <Kbd>⌘</Kbd> <Kbd>K</Kbd>{" "}
+                {quick ? "back to session" : "quick chat"}
+              </>
+            )}
+            {" · "}
+            <Kbd>Shift</Kbd> <Kbd>Enter</Kbd> new line
           </>
         }
         controls={
-          <>
-            <DisplayPill
-              label="Interactive"
-              hint="Autonomy is chosen per session"
-            />
-            <DisplayPill label="Auto" hint="Model is chosen per session" />
-          </>
+          projects.length === 0 ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={onAddProject}
+            >
+              <Plus className="size-3.5 opacity-70" /> Add project
+            </Button>
+          ) : (
+            <span
+              className={cn(
+                "flex items-center gap-1 transition-opacity duration-150",
+                quickMode && "pointer-events-none opacity-30",
+              )}
+            >
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-1.5">
+                    <GitBranch className="size-3.5 opacity-70" />
+                    <span className="max-w-40 truncate">{project?.name}</span>
+                    <ChevronsUpDown className="size-3 opacity-50" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="min-w-[220px]">
+                  <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Start a session in
+                  </DropdownMenuLabel>
+                  <DropdownMenuRadioGroup
+                    value={projectId ?? ""}
+                    onValueChange={setProjectId}
+                  >
+                    {projects.map((p) => (
+                      <DropdownMenuRadioItem key={p.id} value={p.id}>
+                        <span className="truncate">{p.name}</span>
+                        {p.default_branch && (
+                          <span className="ml-auto pl-3 font-mono text-[10px] text-muted-foreground">
+                            {p.default_branch}
+                          </span>
+                        )}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={onAddProject}>
+                    <Plus className="size-4" /> Add project…
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="gap-1.5 text-muted-foreground"
+                    disabled={branches.length === 0}
+                  >
+                    from{" "}
+                    <span className="max-w-32 truncate font-mono text-xs text-foreground">
+                      {base || "branch"}
+                    </span>
+                    <ChevronsUpDown className="size-3 opacity-50" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  align="start"
+                  className="max-h-72 overflow-y-auto"
+                >
+                  <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Fork from branch
+                  </DropdownMenuLabel>
+                  <DropdownMenuRadioGroup value={base} onValueChange={setBase}>
+                    {branches.map((b) => (
+                      <DropdownMenuRadioItem key={b} value={b}>
+                        <span className="font-mono text-xs">{b}</span>
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </span>
+          )
+        }
+        trailing={
+          projects.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              aria-pressed={quick}
+              onClick={() => setQuick((q) => !q)}
+              className={cn(
+                "gap-1.5 text-muted-foreground",
+                quick &&
+                  "border-primary/50 bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary",
+              )}
+            >
+              <Sparkles className="size-3.5" /> Quick chat
+              <Kbd>⌘K</Kbd>
+            </Button>
+          )
         }
         canSend={!!text.trim()}
         onSend={submit}
       />
 
-      {/* Target selectors */}
-      <div className="mt-3 flex flex-wrap items-center gap-1.5 text-sm">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5"
-              disabled={projects.length === 0}
-            >
-              <FolderPlus className="size-3.5 opacity-70" />
-              <span className="max-w-40 truncate">
-                {project?.name ?? "No project"}
-              </span>
-              <ChevronsUpDown className="size-3.5 opacity-50" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="min-w-[200px]">
-            <DropdownMenuRadioGroup
-              value={projectId ?? ""}
-              onValueChange={setProjectId}
-            >
-              {projects.map((p) => (
-                <DropdownMenuRadioItem key={p.id} value={p.id}>
-                  <span className="truncate">{p.name}</span>
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <span className="flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs text-muted-foreground">
-          <GitBranch className="size-3.5" /> New worktree
-        </span>
-
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5"
-              disabled={!project || branches.length === 0}
-            >
-              <span className="max-w-32 truncate font-mono text-xs">
-                {base || "branch"}
-              </span>
-              <ChevronsUpDown className="size-3.5 opacity-50" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="start"
-            className="max-h-72 overflow-y-auto"
-          >
-            <DropdownMenuRadioGroup value={base} onValueChange={setBase}>
-              {branches.map((b) => (
-                <DropdownMenuRadioItem key={b} value={b}>
-                  <span className="font-mono text-xs">{b}</span>
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <Button
-          variant="ghost"
-          size="sm"
-          className="ml-auto gap-1.5 text-muted-foreground"
-          onClick={onAddProject}
-        >
-          <Plus className="size-3.5" /> Add project
-        </Button>
-      </div>
-
       {projects.length === 0 && (
         <p className="mt-3 flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
-          <Sparkles className="size-3.5" /> No project selected — your prompt
-          starts a context-free quick chat.
+          <Sparkles className="size-3.5" /> No projects yet — your prompt starts
+          a context-free quick chat.
         </p>
       )}
     </div>
-  );
-}
-
-/** Non-interactive pill mirroring the session composer's selectors. */
-function DisplayPill({ label, hint }: { label: string; hint: string }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span
-          className={cn(
-            "flex cursor-default items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground",
-          )}
-        >
-          {label}
-          <ChevronsUpDown className="size-3 opacity-40" />
-        </span>
-      </TooltipTrigger>
-      <TooltipContent>{hint}</TooltipContent>
-    </Tooltip>
   );
 }
