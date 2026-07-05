@@ -16,13 +16,13 @@ import { ActiveTodoStrip } from "./ActiveTodoStrip";
 import {
   AssistantTurnView,
   MessageShell,
+  PermissionCard,
   SystemMessageView,
   UserMessageView,
 } from "./ChatMessage";
 import { Composer, Kbd } from "./Composer";
 import { ConfigSelect } from "./ConfigSelect";
 import { ModelSelector } from "./ModelSelector";
-import { PermissionView } from "./PermissionView";
 import { usePreferences } from "./PreferencesProvider";
 import { SlashCommandPalette } from "./SlashCommandPalette";
 
@@ -306,25 +306,31 @@ export function Chat({
             if (entry.type === "assistant")
               return (
                 <MessageShell key={entry.entryId} role="assistant">
-                  <AssistantTurnView entry={entry} />
+                  <AssistantTurnView
+                    entry={entry}
+                    permissions={chat.permissions.filter(
+                      (p) => p.entrySeq === entry.seq,
+                    )}
+                    onAnswerPermission={chat.answerPermission}
+                  />
                 </MessageShell>
               );
             return <SystemMessageView key={entry.entryId} entry={entry} />;
           })}
-          {chat.permissions.map((p) => (
-            <div key={p.requestId} className="flex w-full justify-start">
-              <div className="w-full max-w-[85%]">
-                <PermissionView
-                  title={p.title}
-                  options={p.options}
-                  onSelect={(optionId) =>
-                    chat.answerPermission(p.requestId, optionId)
-                  }
-                  onCancel={() => chat.answerPermission(p.requestId, null)}
-                />
+          {/* Permissions whose entry isn't in the transcript (shouldn't happen,
+              but the turn must never be silently blocked) render detached. */}
+          {chat.permissions
+            .filter((p) => !chat.entries.some((e) => e.seq === p.entrySeq))
+            .map((p) => (
+              <div key={p.requestId} className="flex w-full justify-start">
+                <div className="w-full max-w-[85%]">
+                  <PermissionCard
+                    permission={p}
+                    onAnswer={chat.answerPermission}
+                  />
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
           {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
       </div>

@@ -576,13 +576,18 @@ export type TurnOrigin = "user" | "slash" | "lifecycle" | "init" | "autofix";
 
 export type BlockToolStatus = "pending" | "running" | "completed" | "failed";
 
-/** A file edit surfaced by a tool call (ACP diff → rendered via DiffBody). */
+/** A file edit surfaced by a tool call (ACP diff → rendered via DiffBody).
+ *  The unified diff is synthesized on the frontend from old/new text. */
 export interface DiffBlock {
   path: string;
   oldText: string | null;
   newText: string;
-  /** A ready-made unified diff, when the engine provided one. */
-  unified: string | null;
+}
+
+/** A file location a tool touched (ACP `ToolCallLocation`). */
+export interface ToolLocation {
+  path: string;
+  line: number | null;
 }
 
 /** A tool-call block. When `type: "tool"`, these fields are flattened in. */
@@ -596,7 +601,13 @@ export interface ToolBlock {
   input: unknown;
   output: string | null;
   diff: DiffBlock | null;
-  error: string | null;
+  /** File locations reported by the tool. Optional: absent in old entries. */
+  locations?: ToolLocation[];
+  /** The tool's structured result (ACP raw_output), e.g. exit codes. */
+  rawOutput?: unknown;
+  /** Local receipt timestamps — drive the per-step duration. */
+  startedAt?: number | null;
+  endedAt?: number | null;
 }
 
 /** One rendered unit inside an assistant turn; discriminated by `type`. */
@@ -729,6 +740,8 @@ export interface ChatTurnEvent {
   status: TurnStatus;
   summary: CollapseSummary;
   usage: UsageInfo | null;
+  /** Set when the turn reached a terminal status (live duration footer). */
+  endedAt?: number | null;
 }
 
 export interface ChatPermChoice {

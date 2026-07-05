@@ -144,15 +144,23 @@ pub enum ToolStatus {
     Failed,
 }
 
-/// A file edit rendered by the diff viewer. Carries the raw old/new text (fed to
-/// the frontend `synthesizeDiff`) and/or a ready-made unified diff.
+/// A file edit rendered by the diff viewer. Carries the raw old/new text —
+/// the frontend synthesizes the unified diff.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DiffBlock {
     pub path: String,
     pub old_text: Option<String>,
     pub new_text: String,
-    pub unified: Option<String>,
+}
+
+/// A file location a tool touched (ACP `ToolCallLocation`) — powers
+/// click-through and "L88–140"-style range hints in the step rows.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolLocation {
+    pub path: String,
+    pub line: Option<u32>,
 }
 
 /// A tool-call block within an assistant turn.
@@ -169,7 +177,18 @@ pub struct ToolBlock {
     pub input: serde_json::Value,
     pub output: Option<String>,
     pub diff: Option<DiffBlock>,
-    pub error: Option<String>,
+    /// File locations reported by the tool (ACP `locations`).
+    #[serde(default)]
+    pub locations: Vec<ToolLocation>,
+    /// The tool's structured result (ACP `raw_output`), e.g. exit codes.
+    #[serde(default)]
+    pub raw_output: Option<serde_json::Value>,
+    /// Local receipt timestamps (ACP tool calls carry none): first seen /
+    /// first terminal status. Drives the per-step duration in the UI.
+    #[serde(default)]
+    pub started_at: Option<i64>,
+    #[serde(default)]
+    pub ended_at: Option<i64>,
 }
 
 /// One rendered unit inside an assistant turn. `type` discriminates on the wire.
@@ -416,7 +435,10 @@ mod tests {
             input,
             output: None,
             diff,
-            error: None,
+            locations: vec![],
+            raw_output: None,
+            started_at: None,
+            ended_at: None,
         }))
     }
 
@@ -470,7 +492,7 @@ mod tests {
 
     #[test]
     fn collapse_prefers_diff_path() {
-        let diff = DiffBlock { path: "from/diff.rs".into(), old_text: None, new_text: "x".into(), unified: None };
+        let diff = DiffBlock { path: "from/diff.rs".into(), old_text: None, new_text: "x".into() };
         let blocks = vec![tool("edit", json!({ "file": "from/input.rs" }), Some(diff))];
         let s = compute_collapse(&blocks, true);
         assert_eq!(s.files_edited, vec!["from/diff.rs".to_string()]);

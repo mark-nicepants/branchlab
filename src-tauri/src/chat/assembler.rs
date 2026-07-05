@@ -11,10 +11,15 @@
 //! instead of one-block-per-token.
 
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use agent_client_protocol::schema::v1 as acp;
 
-use crate::chat::model::{Block, ConfigChoice, ConfigOption, DiffBlock, ToolBlock, ToolStatus};
+use crate::chat::model::{Block, ConfigChoice, ConfigOption, DiffBlock, ToolBlock, ToolLocation, ToolStatus};
+
+fn now_ms() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
 
 /// What changed in the block list after applying one update. The manager reads
 /// `blocks[index]` for the current state and emits a `chat:block`.
@@ -39,6 +44,9 @@ pub struct TurnAssembler {
     /// toolCallId -> (block index, raw ACP tool call) for update merging.
     tool_idx: HashMap<String, usize>,
     tool_raw: HashMap<String, acp::ToolCall>,
+    /// toolCallId -> (first seen, first terminal status) — ACP tool calls
+    /// carry no timestamps, so we stamp receipt times locally for durations.
+    tool_times: HashMap<String, (i64, Option<i64>)>,
     counter: usize,
 }
 
@@ -147,7 +155,8 @@ impl TurnAssembler {
     fn apply_tool_call(&mut self, tc: &acp::ToolCall) -> BlockDelta {
         let call_id = tc.tool_call_id.0.to_string();
         self.tool_raw.insert(call_id.clone(), tc.clone());
-        let block = Block::Tool(Box::new(tool_block(tc)));
+        let times = self.stamp(&call_id, tc.status);
+        let block = Block::Tool(Box::new(tool_block(tc, times)));
         if let Some(&idx) = self.tool_idx.get(&call_id) {
             self.blocks[idx] = block;
             BlockDelta { index: idx, text_append: None }
@@ -169,7 +178,10 @@ impl TurnAssembler {
             .entry(call_id.clone())
             .or_insert_with(|| acp::ToolCall::new(u.tool_call_id.clone(), String::new()));
         raw.update(u.fields.clone());
-        let block = Block::Tool(Box::new(tool_block(raw)));
+        let status = raw.status;
+        let raw = raw.clone();
+        let times = self.stamp(&call_id, status);
+        let block = Block::Tool(Box::new(tool_block(&raw, times)));
         if let Some(&idx) = self.tool_idx.get(&call_id) {
             self.blocks[idx] = block;
             Some(BlockDelta { index: idx, text_append: None })
@@ -179,6 +191,18 @@ impl TurnAssembler {
             self.tool_idx.insert(call_id, idx);
             Some(BlockDelta { index: idx, text_append: None })
         }
+    }
+
+    /// Record local receipt times for a tool call: first sight starts the
+    /// clock, the first terminal status stops it.
+    fn stamp(&mut self, call_id: &str, status: acp::ToolCallStatus) -> (i64, Option<i64>) {
+        let entry = self.tool_times.entry(call_id.to_string()).or_insert_with(|| (now_ms(), None));
+        let terminal =
+            matches!(status, acp::ToolCallStatus::Completed | acp::ToolCallStatus::Failed);
+        if terminal && entry.1.is_none() {
+            entry.1 = Some(now_ms());
+        }
+        *entry
     }
 }
 
@@ -217,7 +241,7 @@ fn tool_name(kind: &acp::ToolKind, raw_input: Option<&serde_json::Value>, title:
     title.split_whitespace().next().unwrap_or("tool").to_lowercase()
 }
 
-fn tool_block(tc: &acp::ToolCall) -> ToolBlock {
+fn tool_block(tc: &acp::ToolCall, times: (i64, Option<i64>)) -> ToolBlock {
     let call_id = tc.tool_call_id.0.to_string();
     let mut diff = None;
     let mut output = String::new();
@@ -228,7 +252,6 @@ fn tool_block(tc: &acp::ToolCall) -> ToolBlock {
                     path: d.path.to_string_lossy().into_owned(),
                     old_text: d.old_text.clone(),
                     new_text: d.new_text.clone(),
-                    unified: None,
                 });
             }
             acp::ToolCallContent::Content(cc) => {
@@ -251,7 +274,14 @@ fn tool_block(tc: &acp::ToolCall) -> ToolBlock {
         input: tc.raw_input.clone().unwrap_or(serde_json::Value::Null),
         output: (!output.is_empty()).then_some(output),
         diff,
-        error: None,
+        locations: tc
+            .locations
+            .iter()
+            .map(|l| ToolLocation { path: l.path.to_string_lossy().into_owned(), line: l.line })
+            .collect(),
+        raw_output: tc.raw_output.clone(),
+        started_at: Some(times.0),
+        ended_at: times.1,
     }
 }
 

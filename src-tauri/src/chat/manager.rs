@@ -763,7 +763,7 @@ impl Inner {
         }
         let origin = cur.origin;
         drop(convs);
-        events::emit_turn(&self.app, ws, cur.seq, status, &summary, None);
+        events::emit_turn(&self.app, ws, cur.seq, status, &summary, None, Some(now));
         if let Some(text) = err_text {
             crate::logf!("chat", "turn failed ws={ws} seq={}: {text}", cur.seq);
             self.push_system(ws, &conv_id, SystemKind::Error, format!("Turn failed: {text}"));

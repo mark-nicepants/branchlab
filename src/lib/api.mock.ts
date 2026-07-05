@@ -873,70 +873,215 @@ export function chatSend(args: {
       block,
       textAppend: null,
     });
-  // Stream a reasoning step, a tool call, then the answer.
-  setTimeout(
-    () =>
-      block({
-        type: "reasoning",
-        blockId: "r1",
-        text: "Thinking about the request…",
-      }),
-    150,
+  const turn = (status: string, headline: string) =>
+    mockEmit("chat:turn", {
+      workspaceId: ws,
+      entrySeq: turnSeq,
+      status,
+      summary: {
+        collapsed: true,
+        stepCount: 8,
+        filesEdited: ["src-tauri/src/config.rs"],
+        commandsRun: 3,
+        headline,
+      },
+      usage: null,
+      endedAt: status === "completed" ? Date.now() : null,
+    });
+  const t = (ms: number, fn: () => void) => setTimeout(fn, ms);
+
+  // A showcase turn exercising every step kind the renderer supports:
+  // streamed thought, read, search, failed command, edit+diff, fetch,
+  // subagent, a (filtered) todo update, and a permission-gated command.
+  t(100, () => turn("streaming", ""));
+  t(150, () =>
+    block({
+      type: "reasoning",
+      blockId: "r1",
+      text: "The failure is in config parsing — the test expects a trailing…",
+    }),
   );
-  setTimeout(
-    () =>
-      block({
-        type: "tool",
-        blockId: "t1",
-        callId: "c1",
-        name: "edit",
-        title: "Edit file",
-        status: "completed",
-        input: { file: "src/app.ts" },
-        output: null,
-        diff: {
-          path: "src/app.ts",
-          oldText: "const x = 1;\n",
-          newText: "const x = 2;\n",
-          unified: null,
-        },
-        error: null,
-      }),
-    500,
+  t(450, () =>
+    block({
+      type: "reasoning",
+      blockId: "r1",
+      text: "The failure is in config parsing — the test expects a trailing newline to be preserved.\n\nTwo options: normalize in `read_config` or fix the fixture. **Normalizing is safer** because three call sites depend on the current behavior.",
+    }),
   );
-  setTimeout(
-    () =>
-      block({
-        type: "text",
-        blockId: "m1",
-        text: "Done — I updated `src/app.ts`.",
-      }),
-    900,
+  t(650, () =>
+    block({
+      type: "tool",
+      blockId: "t-read",
+      callId: "c-read",
+      name: "read",
+      title: "Read config.rs",
+      status: "completed",
+      input: { filePath: "src-tauri/src/config.rs", offset: 88, limit: 52 },
+      output: null,
+      diff: null,
+      locations: [{ path: "src-tauri/src/config.rs", line: 88 }],
+      startedAt: now + 400,
+      endedAt: now + 640,
+    }),
   );
-  setTimeout(
-    () =>
-      mockEmit("chat:context", { workspaceId: ws, used: 12000, max: 200000 }),
-    950,
+  t(900, () =>
+    block({
+      type: "tool",
+      blockId: "t-grep",
+      callId: "c-grep",
+      name: "grep",
+      title: "Search read_config(",
+      status: "completed",
+      input: { pattern: "read_config\\(" },
+      output:
+        "src-tauri/src/commands.rs:527\nsrc-tauri/src/chat/manager.rs:214\nsrc-tauri/src/config.rs:96",
+      diff: null,
+    }),
   );
-  setTimeout(
-    () =>
-      mockEmit("chat:turn", {
-        workspaceId: ws,
-        entrySeq: turnSeq,
-        status: "completed",
-        summary: {
-          collapsed: true,
-          stepCount: 2,
-          filesEdited: ["src/app.ts"],
-          commandsRun: 0,
-          headline: "Edited 1 file",
-        },
-        usage: null,
-      }),
-    1100,
+  t(1200, () =>
+    block({
+      type: "tool",
+      blockId: "t-test",
+      callId: "c-test",
+      name: "bash",
+      title: "cargo test config::",
+      status: "failed",
+      input: { command: "cargo test config::" },
+      output:
+        'running 3 tests\ntest config::parses_defaults ... ok\ntest config::merges_project ... ok\ntest config::preserves_trailing_newline ... FAILED\n\nassertion `left == right` failed\n  left:  "model = \\"x\\""\n  right: "model = \\"x\\"\\n"',
+      diff: null,
+      rawOutput: { exitCode: 101 },
+      startedAt: now + 900,
+      endedAt: now + 5100,
+    }),
   );
+  t(1550, () =>
+    block({
+      type: "tool",
+      blockId: "t-edit",
+      callId: "c-edit",
+      name: "edit",
+      title: "Edit config.rs",
+      status: "completed",
+      input: { filePath: "src-tauri/src/config.rs" },
+      output: null,
+      diff: {
+        path: "src-tauri/src/config.rs",
+        oldText:
+          "pub fn read(dir: &Path) -> ConfigFile {\n    let content = fs::read_to_string(&path).unwrap_or_default();\n    ConfigFile { path, content }\n}\n",
+        newText:
+          "pub fn read(dir: &Path) -> ConfigFile {\n    let mut content = fs::read_to_string(&path).unwrap_or_default();\n    if !content.is_empty() && !content.ends_with('\\n') {\n        content.push('\\n');\n    }\n    ConfigFile { path, content }\n}\n",
+      },
+    }),
+  );
+  t(1850, () =>
+    block({
+      type: "tool",
+      blockId: "t-fetch",
+      callId: "c-fetch",
+      name: "fetch",
+      title: "docs.rs",
+      status: "completed",
+      input: { url: "https://docs.rs/toml/latest/toml/" },
+      output: "toml — A serde-compatible TOML decoder and encoder for Rust…",
+      diff: null,
+    }),
+  );
+  t(2150, () =>
+    block({
+      type: "tool",
+      blockId: "t-task",
+      callId: "c-task",
+      name: "task",
+      title: "Verify call sites",
+      status: "completed",
+      input: {
+        description: "Verify the fix doesn't break other config call sites",
+      },
+      output:
+        "Checked all three call sites of `read_config`. The normalization is **additive** — no caller depends on a missing trailing newline. Safe.",
+      diff: null,
+    }),
+  );
+  // Todo update — must NOT appear in the transcript (rendered by the strip).
+  t(2350, () =>
+    block({
+      type: "tool",
+      blockId: "t-todo",
+      callId: "c-todo",
+      name: "todowrite",
+      title: "Update todos",
+      status: "completed",
+      input: {
+        todos: [
+          { content: "Reproduce the failing test", status: "completed" },
+          { content: "Fix newline normalization", status: "completed" },
+          { content: "Push and confirm CI", status: "in_progress" },
+        ],
+      },
+      output: null,
+      diff: null,
+    }),
+  );
+  // Permission-gated push: block stays running until answered.
+  t(2600, () => {
+    block({
+      type: "tool",
+      blockId: "t-push",
+      callId: "c-push",
+      name: "bash",
+      title: "git push",
+      status: "running",
+      input: { command: "git push origin feature/fix-config-parser" },
+      output: null,
+      diff: null,
+    });
+    turn("awaitingPermission", "");
+    mockEmit("chat:permission", {
+      workspaceId: ws,
+      entrySeq: turnSeq,
+      requestId: `perm-${turnSeq}`,
+      toolCallId: "c-push",
+      title: "Allow git push to origin?",
+      options: [
+        { optionId: "allow", name: "Allow once", kind: "allowOnce" },
+        { optionId: "always", name: "Always allow", kind: "allowAlways" },
+        { optionId: "reject", name: "Reject", kind: "rejectOnce" },
+      ],
+    });
+    pendingPermission = {
+      finish(allowed: boolean) {
+        block({
+          type: "tool",
+          blockId: "t-push",
+          callId: "c-push",
+          name: "bash",
+          title: "git push",
+          status: allowed ? "completed" : "failed",
+          input: { command: "git push origin feature/fix-config-parser" },
+          output: allowed
+            ? "To github.com:mark/branchlab.git\n   ee67431..584e8fd  feature/fix-config-parser -> feature/fix-config-parser"
+            : "permission denied by user",
+          diff: null,
+          error: null,
+        });
+        block({
+          type: "text",
+          blockId: "m1",
+          text: allowed
+            ? "Fixed. The config parser was dropping the trailing newline that `preserves_trailing_newline` expects — `read()` now normalizes it, and all three call sites are unaffected. Pushed; CI is re-running."
+            : "Fixed locally, but the push was rejected — the branch is ready whenever you want to push it yourself.",
+        });
+        mockEmit("chat:context", { workspaceId: ws, used: 12400, max: 200000 });
+        turn("completed", "Fixed the failing config test");
+      },
+    };
+  });
   return Promise.resolve();
 }
+
+/** Continuation for the showcase turn's permission gate. */
+let pendingPermission: { finish: (allowed: boolean) => void } | null = null;
 
 export function chatGenerateTitle(
   _workspaceId: string,
@@ -960,9 +1105,18 @@ export function chatAbort(): Promise<void> {
 export function chatSetConfig(): Promise<void> {
   return Promise.resolve();
 }
-export function chatAnswerPermission(): Promise<void> {
+export function chatAnswerPermission(
+  _workspaceId: string,
+  _requestId: string,
+  optionId: string | null,
+): Promise<void> {
+  // Resolve the showcase turn's permission gate.
+  const pending = pendingPermission;
+  pendingPermission = null;
+  pending?.finish(optionId !== null && optionId !== "reject");
   return Promise.resolve();
 }
+
 export function chatNewSession(): Promise<void> {
   return Promise.resolve();
 }

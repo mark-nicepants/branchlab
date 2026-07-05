@@ -31,6 +31,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a workspace, the sidebar and session header update within a second, the
   registry stays in sync, and merge/push/PR operate on the real branch.
 
+- Redesigned AI chat transcript: every agent step collapses to one line with
+  a fixed grammar (status · icon · verb · object · outcome) and expands in
+  place to a custom view per kind — terminal output for commands, diffs for
+  edits, results for searches, markdown for thoughts and subagents — with
+  per-step and per-turn durations. The work section is open by default and
+  carries a summary header (commands run, +added −removed, duration).
+- Permission requests now appear inline under the tool call that asked,
+  as a highlighted card, instead of floating at the bottom of the chat.
+
 - Update availability now shows everywhere it matters: a badge on the
   settings gear, and an update banner with an "Update & restart" button at
   the top of Settings → General.
@@ -42,6 +51,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Quick chat rows in the sidebar now use the same design and menus as
   workspace rows, including right-click actions and "Open in
   terminal/Finder/IDE" (quick chats live in a real directory on disk).
+
+- Uniform message design: user messages sit right, agent turns left (both
+  capped at 80% width), system notices are centered pills, and structured
+  cards (review feedback, the agent's work section) share one base component
+  with matching header/body/footer bands.
+- Thoughts render as markdown, and todo-list updates no longer appear in the
+  transcript (they live in the strip above the composer).
 
 - The update toast is now compact: a one-line notice instead of the full
   release notes (read them anytime in Settings → General or the changelog).

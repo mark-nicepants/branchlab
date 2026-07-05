@@ -183,6 +183,7 @@ export function useChat(workspaceId: string): ChatStore {
                 status: p.status,
                 summary: p.summary,
                 usage: p.usage,
+                endedAt: p.endedAt ?? e.endedAt,
               },
             };
           }),
