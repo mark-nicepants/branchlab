@@ -63,7 +63,13 @@ impl Default for ProjectPrompts {
 pub enum WorkspaceKind {
     Base,
     Worktree,
+    /// A context-free chat in an app-managed scratch directory — no git repo,
+    /// no worktree, no project. Registered under [`QUICK_CHAT_PROJECT_ID`].
+    QuickChat,
 }
+
+/// Reserved `project_id` for quick chats (they have no real project).
+pub const QUICK_CHAT_PROJECT_ID: &str = "__quick__";
 
 /// PR pipeline autofix mode, persisted per workspace so the backend supervisor
 /// can drive autofix for enabled workspaces regardless of what's on screen.
@@ -197,14 +203,17 @@ pub struct Registry {
     file: PathBuf,
     /// App-managed directory under which worktree directories are created.
     worktrees_dir: PathBuf,
+    /// App-managed directory under which quick-chat scratch dirs are created.
+    quick_chats_dir: PathBuf,
 }
 
 impl Registry {
     /// Load the registry from `file`, or start empty if it doesn't exist.
-    /// Worktrees are created under `worktrees_dir`.
-    pub fn load(file: PathBuf, worktrees_dir: PathBuf) -> Self {
+    /// Worktrees are created under `worktrees_dir`, quick-chat scratch dirs
+    /// under `quick_chats_dir`.
+    pub fn load(file: PathBuf, worktrees_dir: PathBuf, quick_chats_dir: PathBuf) -> Self {
         let data = std::fs::read_to_string(&file).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
-        Self { data: Mutex::new(data), file, worktrees_dir }
+        Self { data: Mutex::new(data), file, worktrees_dir, quick_chats_dir }
     }
 
     fn persist(&self, data: &RegistryData) {
@@ -385,12 +394,13 @@ impl Registry {
         data.workspaces.iter().find(|w| w.id == workspace_id).map(|w| w.path.clone())
     }
 
-    /// Resolve a workspace's project root. For base workspaces this is the
-    /// workspace itself; for worktrees it is the parent repo root.
+    /// Resolve a workspace's project root. For base workspaces (and quick
+    /// chats, which have no project) this is the workspace itself; for
+    /// worktrees it is the parent repo root.
     pub fn workspace_project_root(&self, workspace_id: &str) -> Option<String> {
         let data = self.data.lock().unwrap();
         let ws = data.workspaces.iter().find(|w| w.id == workspace_id)?;
-        if ws.kind == WorkspaceKind::Base {
+        if ws.kind != WorkspaceKind::Worktree {
             return Some(ws.path.clone());
         }
         data.projects.iter().find(|p| p.id == ws.project_id).map(|p| p.root_path.clone())
@@ -400,10 +410,10 @@ impl Registry {
     pub fn workspace_with_root(&self, workspace_id: &str) -> Option<(Workspace, String)> {
         let data = self.data.lock().unwrap();
         let ws = data.workspaces.iter().find(|w| w.id == workspace_id)?.clone();
-        let root = if ws.kind == WorkspaceKind::Base {
-            ws.path.clone()
-        } else {
+        let root = if ws.kind == WorkspaceKind::Worktree {
             data.projects.iter().find(|p| p.id == ws.project_id)?.root_path.clone()
+        } else {
+            ws.path.clone()
         };
         Some((ws, root))
     }
@@ -453,6 +463,49 @@ impl Registry {
             branch: Some(branch),
             name: None,
             base_branch: Some(base),
+            init_prompt,
+            autofix_mode: AutofixMode::default(),
+            session_id: None,
+            model: None,
+            effort: None,
+            pr_number: None,
+            pr_url: None,
+            pr_head_repo: None,
+            pr_is_fork: false,
+            pr: None,
+        };
+        let mut data = self.data.lock().unwrap();
+        data.workspaces.push(ws.clone());
+        self.persist(&data);
+        Ok(ws)
+    }
+
+    /// Create a quick chat: an app-managed empty scratch directory (no git
+    /// repo, no worktree) the agent can talk in. Persisted in the registry
+    /// under the reserved `__quick__` project id so it survives restarts.
+    /// `name` stays `None` so the first chat message AI-titles it.
+    pub fn create_quick_chat(&self, init_prompt: Option<String>) -> Result<Workspace, String> {
+        let existing: Vec<String> = {
+            let data = self.data.lock().unwrap();
+            data.workspaces
+                .iter()
+                .filter(|w| w.kind == WorkspaceKind::QuickChat)
+                .filter_map(|w| Path::new(&w.path).file_name().map(|s| s.to_string_lossy().into_owned()))
+                .collect()
+        };
+        let codename = unique_codename(&existing);
+        let dir = self.quick_chats_dir.join(&codename);
+        std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create scratch directory: {e}"))?;
+        let path = dir.to_string_lossy().into_owned();
+
+        let ws = Workspace {
+            id: id_for(&path),
+            project_id: QUICK_CHAT_PROJECT_ID.to_string(),
+            kind: WorkspaceKind::QuickChat,
+            path,
+            branch: None,
+            name: None,
+            base_branch: None,
             init_prompt,
             autofix_mode: AutofixMode::default(),
             session_id: None,
@@ -527,6 +580,11 @@ impl Registry {
         if kind == WorkspaceKind::Worktree {
             let root = self.repo_root(&project_id).ok_or("unknown project")?;
             git::remove_worktree(&root, &path, force)?;
+        }
+        // Quick chats own their scratch dir; delete it (only ever app-managed,
+        // but keep the guard so a corrupt registry entry can't delete elsewhere).
+        if kind == WorkspaceKind::QuickChat && Path::new(&path).starts_with(&self.quick_chats_dir) {
+            let _ = std::fs::remove_dir_all(&path);
         }
 
         let mut data = self.data.lock().unwrap();
@@ -604,7 +662,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("bl-reg-effort-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("registry.json");
-        let reg = Registry::load(file.clone(), dir.join("worktrees"));
+        let reg = Registry::load(file.clone(), dir.join("worktrees"), dir.join("quick-chats"));
         {
             let mut data = reg.data.lock().unwrap();
             data.workspaces.push(Workspace {
@@ -636,9 +694,36 @@ mod tests {
         assert_eq!(reg.workspace_model("ws1").as_deref(), Some("anthropic/claude-opus-4-8"));
         // Survive a reload from disk (and older registries without the fields
         // stay loadable via serde(default)).
-        let reg2 = Registry::load(file, dir.join("worktrees"));
+        let reg2 = Registry::load(file, dir.join("worktrees"), dir.join("quick-chats"));
         assert_eq!(reg2.workspace_effort("ws1").as_deref(), Some("high"));
         assert_eq!(reg2.workspace_model("ws1").as_deref(), Some("anthropic/claude-opus-4-8"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn quick_chat_create_persist_remove() {
+        let dir = std::env::temp_dir().join(format!("bl-reg-quick-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("registry.json");
+        let reg = Registry::load(file.clone(), dir.join("worktrees"), dir.join("quick-chats"));
+
+        let ws = reg.create_quick_chat(Some("hello".into())).unwrap();
+        assert_eq!(ws.kind, WorkspaceKind::QuickChat);
+        assert_eq!(ws.project_id, QUICK_CHAT_PROJECT_ID);
+        assert_eq!(ws.name, None); // AI-titled on first message
+        assert_eq!(ws.init_prompt.as_deref(), Some("hello"));
+        assert!(Path::new(&ws.path).is_dir(), "scratch dir exists");
+        // Its own path doubles as its "root" (no project to resolve).
+        assert_eq!(reg.workspace_project_root(&ws.id).as_deref(), Some(ws.path.as_str()));
+
+        // Survives a reload.
+        let reg2 = Registry::load(file, dir.join("worktrees"), dir.join("quick-chats"));
+        assert!(reg2.all_workspaces().iter().any(|w| w.id == ws.id));
+
+        // Removal deletes the registry entry AND the scratch dir.
+        reg2.remove_workspace(&ws.id, false).unwrap();
+        assert!(!reg2.all_workspaces().iter().any(|w| w.id == ws.id));
+        assert!(!Path::new(&ws.path).exists(), "scratch dir removed");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

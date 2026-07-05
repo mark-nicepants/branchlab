@@ -352,6 +352,9 @@ export function SessionsSidebar({
                     onSelect={() => onSelectWorkspace(w)}
                     onDelete={() => onRemoveQuickChat(w.id)}
                     onRename={() => startRename(w)}
+                    terminalApp={prefs.terminalApp}
+                    editorApp={prefs.editorApp}
+                    onOpenIn={openIn}
                   />
                 ))}
           </SidebarGroup>
@@ -762,8 +765,8 @@ function WorkspaceRow({
   const isQuickChat = w.kind === "QuickChat";
 
   const ai = aiState(session, prPayload?.phase);
-  // Row 1 is identity: the branch (mono), else the label for quick chats.
-  const primary = (!isQuickChat && w.branch) || workspaceLabel(w);
+  // Row 1 is identity: the branch, else the label for quick chats.
+  const primary = w.branch ?? workspaceLabel(w);
   // Row 2 is status: PR chip + AI activity + the AI-generated name (secondary).
   // Quiet rows (nothing to say) stay single-line. With both a PR chip and an
   // active AI label there's no useful room left — the name yields until the
@@ -774,20 +777,16 @@ function WorkspaceRow({
 
   const menuItems = (
     <>
-      {!isQuickChat && (
-        <>
-          <ContextMenuItem onClick={() => onOpenIn?.(w, terminalApp)}>
-            <Terminal className="size-4" /> Open in terminal
-          </ContextMenuItem>
-          <ContextMenuItem onClick={() => onOpenIn?.(w)}>
-            <FolderOpen className="size-4" /> Open in Finder
-          </ContextMenuItem>
-          <ContextMenuItem onClick={() => onOpenIn?.(w, editorApp)}>
-            <Code2 className="size-4" /> Open in IDE
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-        </>
-      )}
+      <ContextMenuItem onClick={() => onOpenIn?.(w, terminalApp)}>
+        <Terminal className="size-4" /> Open in terminal
+      </ContextMenuItem>
+      <ContextMenuItem onClick={() => onOpenIn?.(w)}>
+        <FolderOpen className="size-4" /> Open in Finder
+      </ContextMenuItem>
+      <ContextMenuItem onClick={() => onOpenIn?.(w, editorApp)}>
+        <Code2 className="size-4" /> Open in IDE
+      </ContextMenuItem>
+      <ContextMenuSeparator />
       <ContextMenuItem onClick={onRename}>
         <Pencil className="size-4" /> Rename
       </ContextMenuItem>
@@ -820,12 +819,7 @@ function WorkspaceRow({
             {ai.icon}
           </span>
           <span
-            className={cn(
-              "min-w-0 flex-1 truncate",
-              isQuickChat
-                ? "text-sm"
-                : "font-mono text-xs tracking-tight text-sidebar-accent-foreground",
-            )}
+            className="min-w-0 flex-1 truncate font-mono text-xs tracking-tight text-sidebar-accent-foreground"
             title={!isQuickChat && w.name ? `${primary} — ${w.name}` : primary}
           >
             {primary}
@@ -877,20 +871,16 @@ function WorkspaceRow({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start">
-          {!isQuickChat && (
-            <>
-              <DropdownMenuItem onClick={() => onOpenIn?.(w, terminalApp)}>
-                <Terminal className="size-4" /> Open in terminal
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onOpenIn?.(w)}>
-                <FolderOpen className="size-4" /> Open in Finder
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onOpenIn?.(w, editorApp)}>
-                <Code2 className="size-4" /> Open in IDE
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-            </>
-          )}
+          <DropdownMenuItem onClick={() => onOpenIn?.(w, terminalApp)}>
+            <Terminal className="size-4" /> Open in terminal
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onOpenIn?.(w)}>
+            <FolderOpen className="size-4" /> Open in Finder
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onOpenIn?.(w, editorApp)}>
+            <Code2 className="size-4" /> Open in IDE
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <DropdownMenuItem onClick={onRename}>
             <Pencil className="size-4" /> Rename
           </DropdownMenuItem>
@@ -906,8 +896,6 @@ function WorkspaceRow({
       </DropdownMenu>
     </div>
   );
-
-  if (isQuickChat) return row;
 
   return (
     <ContextMenu>

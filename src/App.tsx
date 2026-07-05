@@ -23,8 +23,10 @@ import {
   createWorkspace,
   createWorkspaceFromPr,
   listProjects,
+  listWorkspaces,
   openDevtools,
   probeEnvironment,
+  removeWorkspace,
   renameWorkspace,
 } from "./lib/api";
 import { type EnvReport, type ProjectView, type Workspace } from "./lib/types";
@@ -67,7 +69,14 @@ function App() {
   }, []);
 
   const refreshProjects = useCallback(async () => {
-    setProjects(await listProjects());
+    // Quick chats live in the same registry but under no project, so they
+    // come from the flat workspace list rather than the project views.
+    const [projs, workspaces] = await Promise.all([
+      listProjects(),
+      listWorkspaces(),
+    ]);
+    setProjects(projs);
+    setQuickChats(workspaces.filter((w) => w.kind === "QuickChat"));
   }, []);
 
   const pickProject = useCallback(async () => {
@@ -119,17 +128,10 @@ function App() {
 
   const onRenamed = useCallback(
     async (workspaceId: string, name: string) => {
-      // Quick chats live only in memory; rename locally. Others persist.
-      if (quickChats.some((q) => q.id === workspaceId)) {
-        setQuickChats((prev) =>
-          prev.map((q) => (q.id === workspaceId ? { ...q, name } : q)),
-        );
-        return;
-      }
       await renameWorkspace(workspaceId, name);
       await refreshProjects();
     },
-    [quickChats, refreshProjects],
+    [refreshProjects],
   );
 
   const createSession = useCallback(
@@ -174,23 +176,28 @@ function App() {
   const newQuickChat = useCallback(
     async (prompt?: string) => {
       try {
-        const ws = await createQuickChat();
-        const seeded = prompt ? { ...ws, init_prompt: prompt } : ws;
-        setQuickChats((prev) => [...prev, seeded]);
-        openSession(seeded);
+        const ws = await createQuickChat(prompt);
+        await refreshProjects();
+        openSession(ws);
       } catch (e) {
         toast.error("Could not start quick chat", { description: String(e) });
       }
     },
-    [openSession],
+    [refreshProjects, openSession],
   );
 
   const removeQuickChat = useCallback(
-    (id: string) => {
-      setQuickChats((prev) => prev.filter((q) => q.id !== id));
-      router.closeSession(id);
+    async (id: string) => {
+      try {
+        // Force: the scratch dir is app-managed and has no git state to lose.
+        await removeWorkspace(id, true);
+        router.closeSession(id);
+        await refreshProjects();
+      } catch (e) {
+        toast.error("Could not delete quick chat", { description: String(e) });
+      }
     },
-    [router],
+    [router, refreshProjects],
   );
 
   useShortcuts({

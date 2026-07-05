@@ -85,14 +85,14 @@ export function createWorkspace(
 
 /**
  * Create a context-free "quick chat" workspace: an app-managed empty scratch
- * directory (no git repo, no worktree) the agent can talk in. Returns a
- * Workspace with `kind: "QuickChat"`.
- *
- * NOTE: the matching Rust command (`create_quick_chat`) is not implemented yet
- * — see docs/redesign-open-ends.md. Fully mocked for the browser harness.
+ * directory (no git repo, no worktree) the agent can talk in. Persisted in
+ * the registry, so it survives restarts until deleted. Returns a Workspace
+ * with `kind: "QuickChat"`. `initPrompt` is sent once the server is ready.
  */
-export function createQuickChat(): Promise<Workspace> {
-  return invoke<Workspace>("create_quick_chat");
+export function createQuickChat(initPrompt?: string): Promise<Workspace> {
+  return invoke<Workspace>("create_quick_chat", {
+    initPrompt: initPrompt ?? null,
+  });
 }
 
 /** Update project metadata, prompts, and default model. */

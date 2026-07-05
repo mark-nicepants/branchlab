@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Quick chats: context-free conversations with the agent — no project, no
+  worktree, no git. Each quick chat gets an app-managed scratch directory
+  with its own OpenCode server, full tool access, and an AI-generated title
+  from the first message. They persist across restarts (chat history
+  included) until deleted; deleting one also removes its scratch directory.
+  Start one from the sidebar's Quick chats group.
+
 - Update availability now shows everywhere it matters: a badge on the
   settings gear, and an update banner with an "Update & restart" button at
   the top of Settings → General.
@@ -16,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   off to stop the app from polling the release feed.
 
 ### Changed
+
+- Quick chat rows in the sidebar now use the same design and menus as
+  workspace rows, including right-click actions and "Open in
+  terminal/Finder/IDE" (quick chats live in a real directory on disk).
 
 - The update toast is now compact: a one-line notice instead of the full
   release notes (read them anytime in Settings → General or the changelog).

@@ -62,6 +62,22 @@ pub fn create_workspace(
     Ok(ws)
 }
 
+/// Create a context-free quick chat: an app-managed scratch directory with its
+/// own opencode server, but no git repo or project. Not registered with the
+/// git watcher — there is nothing to diff.
+#[tauri::command]
+pub fn create_quick_chat(
+    init_prompt: Option<String>,
+    registry: State<Registry>,
+    supervisor: State<Supervisor>,
+    telemetry: State<crate::telemetry::Telemetry>,
+) -> Result<Workspace, String> {
+    let ws = registry.create_quick_chat(init_prompt)?;
+    supervisor.reconcile_now();
+    telemetry.event("session_created", "/session", Some(serde_json::json!({ "source": "quick_chat" })));
+    Ok(ws)
+}
+
 #[tauri::command]
 pub fn update_project(
     project_id: String,

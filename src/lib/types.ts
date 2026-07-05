@@ -53,9 +53,12 @@ export type PipelinePhase =
   | "awaiting_push"
   | "exhausted";
 
-/** Human label for a workspace: explicit name, else branch, else a fallback. */
+/** Human label for a workspace: explicit name, else branch, else a fallback.
+ *  Quick chats start unnamed (the AI titles them from the first message). */
 export function workspaceLabel(w: Workspace): string {
-  return w.name ?? w.branch ?? "workspace";
+  return (
+    w.name ?? w.branch ?? (w.kind === "QuickChat" ? "Quick chat" : "workspace")
+  );
 }
 
 export interface Project {

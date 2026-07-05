@@ -484,20 +484,23 @@ export function createWorkspace(
 }
 
 let quickChatSeq = 0;
+let quickChats: Workspace[] = [];
 
-export function createQuickChat(): Promise<Workspace> {
+export function createQuickChat(initPrompt?: string): Promise<Workspace> {
   quickChatSeq += 1;
   const id = `quick-${quickChatSeq}`;
-  return Promise.resolve({
+  const ws: Workspace = {
     id,
     project_id: "__quick__",
     kind: "QuickChat",
-    path: `/mock/scratch/${id}`,
+    path: `/mock/quick-chats/${id}`,
     branch: null,
-    name: `Quick chat ${quickChatSeq}`,
+    name: null,
     base_branch: null,
-    init_prompt: null,
-  });
+    init_prompt: initPrompt ?? null,
+  };
+  quickChats.push(ws);
+  return Promise.resolve(ws);
 }
 
 export function updateProject(
@@ -531,20 +534,23 @@ export function removeWorkspace(workspaceId: string): Promise<void> {
   for (const p of projects) {
     p.workspaces = p.workspaces.filter((w) => w.id !== workspaceId);
   }
+  quickChats = quickChats.filter((w) => w.id !== workspaceId);
   return Promise.resolve();
 }
 
 export function listWorkspaces(): Promise<Workspace[]> {
-  return Promise.resolve(projects.flatMap((p) => p.workspaces));
+  return Promise.resolve([
+    ...projects.flatMap((p) => p.workspaces),
+    ...quickChats,
+  ]);
 }
 
 export function renameWorkspace(
   workspaceId: string,
   name: string,
 ): Promise<void> {
-  for (const p of projects) {
-    const w = p.workspaces.find((x) => x.id === workspaceId);
-    if (w) w.name = name;
+  for (const w of [...projects.flatMap((p) => p.workspaces), ...quickChats]) {
+    if (w.id === workspaceId) w.name = name;
   }
   return Promise.resolve();
 }
@@ -942,6 +948,8 @@ export function requestGitRefresh(): Promise<void> {
 
 export function setActiveWorkspace(workspaceId: string | null): Promise<void> {
   if (!workspaceId) return Promise.resolve();
+  // Quick chats have no git state — the real watcher never emits for them.
+  if (quickChats.some((w) => w.id === workspaceId)) return Promise.resolve();
   // The active workspace also gets the full changes list…
   void workspaceChanges().then((changes) =>
     mockEmit("workspace:git", {

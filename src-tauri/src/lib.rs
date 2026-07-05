@@ -39,7 +39,7 @@ pub fn run() {
             // Backend debug log — a single tailable file under app data. Init
             // early so every subsystem below logs to it. Truncated per launch.
             logx::init(dir.join("branchlab.log"));
-            let registry = Registry::load(dir.join("registry.json"), dir.join("worktrees"));
+            let registry = Registry::load(dir.join("registry.json"), dir.join("worktrees"), dir.join("quick-chats"));
             app.manage(registry);
 
             // Anonymous usage telemetry (Umami). Opt-out persists as a marker
@@ -66,7 +66,10 @@ pub fn run() {
             let seed_handle = app.handle().clone();
             std::thread::spawn(move || {
                 for w in seed_handle.state::<Registry>().all_workspaces() {
-                    git_watcher.watch(&w.id, &w.path);
+                    // Quick chats have no git state to watch.
+                    if w.kind != project::WorkspaceKind::QuickChat {
+                        git_watcher.watch(&w.id, &w.path);
+                    }
                 }
             });
 
@@ -111,6 +114,7 @@ pub fn run() {
             commands::remove_project,
             commands::list_branches,
             commands::create_workspace,
+            commands::create_quick_chat,
             commands::create_workspace_from_pr,
             commands::list_project_prs,
             commands::update_project,
