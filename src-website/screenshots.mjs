@@ -28,7 +28,7 @@ const CUTOUT = { width: 720, height: 560 }; // both PR cutouts share this size
 
 const THEMES = [
   { id: "nord", suffix: "dark" },
-  { id: "light", suffix: "light" },
+  { id: "github-light", suffix: "light" },
 ];
 const PROMPT =
   "The project settings dialog no longer closes on Escape — fix the regression and add a test";
@@ -40,9 +40,12 @@ const DIFF_LINE = 'if (e.key === "Escape" && settingsOpen) {';
 const FINAL_PROSE = "Fixed. The config parser";
 
 /** Drive the mock turn to completion: allow the permission gate, then wait
- *  for the final prose. */
+ *  for the final prose. The gate appears ~2.6s into the scripted turn; wait
+ *  for it explicitly before clicking (clicking-while-waiting flaked once). */
 async function completeTurn(page) {
-  await page.getByRole("button", { name: "Allow once" }).click();
+  const allow = page.getByRole("button", { name: "Allow once" });
+  await allow.waitFor({ timeout: 45_000 });
+  await allow.click();
   await page.getByText(FINAL_PROSE).first().waitFor();
   await page.waitForTimeout(500); // summary header settles
 }
@@ -110,6 +113,9 @@ async function newThemedContext(browser, theme, panelPx) {
     { themeId: theme.id, px: panelPx },
   );
   const page = await context.newPage();
+  // Surface in-page crashes in the script output — a silent page error
+  // otherwise reads as an inexplicable locator timeout.
+  page.on("pageerror", (err) => console.error(`  [pageerror] ${err.message}`));
   await page.goto(URL);
   await page.getByRole("button", { name: "Home" }).waitFor();
   await page.waitForTimeout(500); // fonts + sidebar snapshot settle
