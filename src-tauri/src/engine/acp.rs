@@ -373,7 +373,6 @@ mod tests {
             // 2) One prompt turn. Assert we stream at least one agent text chunk
             //    and reach TurnEnded.
             handle.send(EngineCommand::Prompt {
-                entry_id: "e1".to_string(),
                 inputs: vec![PromptInput::Text(
                     "Reply with exactly the single word: PONG. No tools, no other text.".to_string(),
                 )],
@@ -659,7 +658,6 @@ mod tests {
 
             // 2) Send a real turn that would surface reasoning.
             handle.send(EngineCommand::Prompt {
-                entry_id: "e1".to_string(),
                 inputs: vec![PromptInput::Text(
                     "Reason step by step, then answer: a bat and ball cost $1.10; the bat costs \
                      $1.00 more than the ball. How much is the ball?"
@@ -785,7 +783,6 @@ mod tests {
         tauri::async_runtime::block_on(async move {
             use tokio::time::{timeout, Duration};
             handle.send(EngineCommand::Prompt {
-                entry_id: "e1".to_string(),
                 inputs: vec![PromptInput::Text(
                     "Make a 2-item plan, then read README.md and tell me its title.".to_string(),
                 )],

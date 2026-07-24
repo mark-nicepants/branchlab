@@ -95,14 +95,13 @@ pub fn parse_remote(url: &str) -> Option<RepoRef> {
         let (authority, path) = rest.split_once('/')?;
         let host = authority.split(':').next()?.to_string();
         (host, path.to_string(), true)
-    } else if let Some(rest) = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://")) {
+    } else {
+        let rest = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))?;
         // https://[user@]host/owner/repo.git
         let rest = rest.split_once('@').map(|(_, r)| r).unwrap_or(rest);
         let (authority, path) = rest.split_once('/')?;
         let host = authority.split(':').next()?.to_string();
         (host, path.to_string(), false)
-    } else {
-        return None;
     };
 
     // path is `owner/repo(.git)`, possibly with a leading slash or extra segments.

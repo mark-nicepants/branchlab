@@ -342,107 +342,6 @@ export interface ConfigFile {
 
 // ── OpenCode HTTP API types (subset we use; from the OpenAPI 3.1 spec) ──
 
-export interface Session {
-  id: string;
-  title: string;
-  directory: string;
-  projectID: string;
-}
-
-export type MessageRole = "user" | "assistant";
-
-export interface MessageInfo {
-  id: string;
-  role: MessageRole;
-  sessionID: string;
-  /** Token usage for this message (assistant messages may include this). */
-  tokens?: {
-    input?: number;
-    output?: number;
-    reasoning?: number;
-    cache?: { read?: number; write?: number };
-  };
-}
-
-/** A part of a message. We render `text`; other kinds get a one-line summary. */
-export interface Part {
-  id: string;
-  messageID: string;
-  sessionID: string;
-  type:
-    | "text"
-    | "reasoning"
-    | "tool"
-    | "file"
-    | "step-start"
-    | "step-finish"
-    | string;
-  text?: string;
-  /** Tool name for tool parts (e.g. "edit", "bash", "read"). */
-  tool?: string;
-  /** Runtime state of a tool call. */
-  state?: ToolState;
-  /** Filename for file parts. */
-  filename?: string;
-  /** URL/path for file parts. */
-  url?: string;
-  /** MIME type for file parts. */
-  mime?: string;
-  /** Description for subtask parts. */
-  description?: string;
-  /** Agent name for subtask parts. */
-  agent?: string;
-}
-
-/** Runtime state of a tool call part. */
-export interface ToolState {
-  status?: "pending" | "running" | "completed" | "error" | string;
-  /** Tool arguments. */
-  input?: Record<string, unknown>;
-  /** Tool result text (when completed). */
-  output?: string;
-  /** Human-readable title while running or after completion. */
-  title?: string;
-  /** Error message when status is error. */
-  error?: string;
-  /** Raw pending representation. */
-  raw?: string;
-  /** Timing metadata. */
-  time?: { start?: number; end?: number };
-  /**
-   * Tool-specific extras. Edit/Write set:
-   *  - `diff`: full unified diff of the change (use over synthesized diffs).
-   *  - `diagnostics`: { [absPath]: LspDiagnostic[] } LSP results post-edit.
-   *  - `filediff`: `{ file, patch }`, `truncated`: boolean.
-   */
-  metadata?: Record<string, unknown>;
-}
-
-/** Subset of an LSP Diagnostic we render. */
-export interface LspDiagnostic {
-  range: {
-    start: { line: number; character: number };
-    end: { line: number; character: number };
-  };
-  /** LSP severity: 1=error, 2=warning, 3=info, 4=hint. */
-  severity?: 1 | 2 | 3 | 4;
-  message: string;
-  source?: string;
-  code?: string | number;
-}
-
-export interface MessageWithParts {
-  info: MessageInfo;
-  parts: Part[];
-}
-
-/** SSE event envelope: { id, type, properties }. */
-export interface BusEvent {
-  id?: string;
-  type: string;
-  properties: Record<string, unknown>;
-}
-
 /** A selectable model, flattened from /config/providers. */
 export interface ModelOption {
   /** Stable identity: `${providerID}/${modelID}`. */
@@ -479,64 +378,6 @@ export interface LspStatus {
   status?: string;
 }
 
-/** One selectable option inside an OpenCode question. */
-export interface QuestionOption {
-  /** Display text (1-5 words, concise). */
-  label: string;
-  /** Explanation of choice. */
-  description: string;
-}
-
-/** One question inside a question request. */
-export interface QuestionInfo {
-  /** Complete question text. */
-  question: string;
-  /** Very short label (max 30 chars). */
-  header: string;
-  /** Available choices. */
-  options: QuestionOption[];
-  /** Allow selecting multiple options. */
-  multiple?: boolean;
-  /** Allow a free-text answer alongside/instead of options. */
-  custom?: boolean;
-}
-
-/** V2 question request emitted via `question.v2.asked` SSE event. */
-export interface QuestionV2Request {
-  /** Request ID used to reply. */
-  id: string;
-  sessionID: string;
-  questions: QuestionInfo[];
-  tool?: { messageID: string; callID: string };
-}
-
-/** V1 question request emitted via `question.asked` SSE event. */
-export interface QuestionRequest {
-  id: string;
-  sessionID: string;
-  questions: QuestionInfo[];
-  tool?: { messageID: string; callID: string };
-}
-
-/** Shape of the reply body for V2 questions. */
-export interface QuestionV2Reply {
-  /** User answers in order of questions (each answer is an array of selected labels). */
-  answers: string[][];
-}
-
-/** Shape of the reply body for V1 questions. */
-export interface QuestionReply {
-  answers: string[][];
-}
-
-export interface AgentOption {
-  /** Agent name passed to `/session/{id}/prompt_async` as `agent`. */
-  name: string;
-  /** Agent classification: "primary" agents are the user-facing modes. */
-  mode?: string;
-  description?: string;
-}
-
 /** Context-window usage for the active session. */
 export interface ContextInfo {
   used: number;
@@ -552,12 +393,8 @@ export interface CommandOption {
   /** Identifier the user types after `/` (e.g. "review"). */
   name: string;
   description?: string;
-  /** Prompt body, may contain `$ARGUMENTS` placeholders. */
-  template: string;
   /** "command" (user-defined) or "skill" (an opencode skill surfaced as one). */
   source?: string;
-  /** Run as a sub-agent (delegated task) instead of in the user's current mode. */
-  subtask?: boolean;
 }
 
 // ── New chat layer (Rust `chat` module) — mirrors src-tauri/src/chat/model.rs.

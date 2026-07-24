@@ -3,6 +3,7 @@
 // card in the transcript, full context for the AI).
 
 import { encodeTypedDisplay } from "./chatDisplay";
+import { plural } from "./utils";
 
 export interface ReviewComment {
   id: string;
@@ -67,7 +68,6 @@ export function buildReviewMessage(comments: ReviewComment[]): {
   sent: string;
 } {
   const n = comments.length;
-  const plural = (k: number, w: string) => `${k} ${w}${k === 1 ? "" : "s"}`;
 
   const display = encodeTypedDisplay({
     $kind: "review",

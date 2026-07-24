@@ -20,6 +20,12 @@ use supervisor::Supervisor;
 use tauri::Manager;
 use watcher::GitWatcher;
 
+/// Current time in epoch milliseconds. Saturates to 0 before the epoch.
+pub(crate) fn now_ms() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Repair PATH first: a Finder/Dock-launched .app gets a minimal PATH that

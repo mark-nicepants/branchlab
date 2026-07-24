@@ -7,9 +7,6 @@
 //! turn state. Everything else the engine pre-digests. A non-ACP engine could be
 //! added by producing the same `EngineEvent` stream.
 
-// TODO(chat-rebuild): drop once the manager/commands are fully wired.
-#![allow(dead_code)]
-
 pub mod acp;
 pub mod opencode_http;
 
@@ -32,7 +29,6 @@ pub enum PromptInput {
 /// A command from the manager to a running engine.
 pub enum EngineCommand {
     Prompt {
-        entry_id: String,
         inputs: Vec<PromptInput>,
     },
     SetConfig {

@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 import { open } from "@tauri-apps/plugin-dialog";
-import { ListTodo, PanelLeft, Search } from "lucide-react";
+import { PanelLeft, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { HomeScreen } from "./components/home/HomeScreen";
@@ -54,7 +54,6 @@ function App() {
   const [settingsProject, setSettingsProject] = useState<ProjectView | null>(
     null,
   );
-  const [reloadNonce, setReloadNonce] = useState(0);
 
   useDesktopBehaviors();
 
@@ -105,11 +104,6 @@ function App() {
   const allWorkspaces = useMemo(
     () => [...projects.flatMap((p) => p.workspaces), ...quickChats],
     [projects, quickChats],
-  );
-  // Only git-backed workspaces have diff stats to poll; quick chats have none.
-  const workspaceIds = useMemo(
-    () => projects.flatMap((p) => p.workspaces).map((w) => w.id),
-    [projects],
   );
   const selected = selectedId
     ? (allWorkspaces.find((w) => w.id === selectedId) ?? null)
@@ -225,7 +219,6 @@ function App() {
   return (
     <GitHubProvider>
       <WorkspaceDataProvider
-        workspaceIds={workspaceIds}
         activeWorkspaceId={view === "session" ? selectedId : null}
       >
         <div className="relative flex h-screen bg-background text-foreground">
@@ -277,7 +270,6 @@ function App() {
                 workspace={selected}
                 project={selectedProject}
                 onRenamed={onRenamed}
-                reloadNonce={reloadNonce}
                 sidebarCollapsed={sidebarCollapsed}
                 onManageModels={() => router.openSettings("models")}
               />
@@ -286,15 +278,6 @@ function App() {
                 projects={projects}
                 quickChats={quickChats}
                 onSelect={openSession}
-              />
-            ) : view === "my-work" || view === "automations" ? (
-              <StubScreen
-                icon={
-                  view === "my-work" ? (
-                    <ListTodo className="size-7 text-muted-foreground/60" />
-                  ) : undefined
-                }
-                label={view === "my-work" ? "My work" : "Automations"}
               />
             ) : (
               <HomeScreen
@@ -368,31 +351,11 @@ function App() {
               workspaceId={
                 selected?.id ?? settingsProject.workspaces[0]?.id ?? ""
               }
-              onConfigRestarted={() => setReloadNonce((n) => n + 1)}
             />
           )}
         </div>
       </WorkspaceDataProvider>
     </GitHubProvider>
-  );
-}
-
-function StubScreen({
-  label,
-  icon,
-}: {
-  label: string;
-  icon?: React.ReactNode;
-}) {
-  return (
-    <div className="flex h-full items-center justify-center">
-      <EmptyState icon={icon}>
-        <span className="text-base font-medium text-foreground">{label}</span>
-        <span className="mt-1 block text-sm">
-          This area isn't available yet.
-        </span>
-      </EmptyState>
-    </div>
   );
 }
 

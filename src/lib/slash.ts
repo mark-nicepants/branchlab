@@ -2,39 +2,6 @@
 
 import type { CommandOption } from "./types";
 
-export interface ParsedSlash {
-  /** Command name (no leading slash). */
-  name: string;
-  /** Everything after the first whitespace; empty if none. */
-  args: string;
-}
-
-/**
- * If `text` begins with a slash, split it into command name + remainder.
- * Returns null when the input isn't a slash command.
- */
-export function parseSlash(text: string): ParsedSlash | null {
-  if (!text.startsWith("/")) return null;
-  const body = text.slice(1);
-  const idx = body.search(/\s/);
-  if (idx === -1) return { name: body, args: "" };
-  return { name: body.slice(0, idx), args: body.slice(idx + 1) };
-}
-
-/**
- * Substitute `$ARGUMENTS` in a command template. When the template has no
- * placeholder, the args are appended after a blank line so trailing input
- * isn't silently dropped.
- */
-export function expandTemplate(template: string, args: string): string {
-  if (template.includes("$ARGUMENTS")) {
-    // Use split/join to substitute every occurrence without engaging regex
-    // metachar handling on `args` (replace + /g would mishandle `$&` etc.).
-    return template.split("$ARGUMENTS").join(args);
-  }
-  return args ? `${template}\n\n${args}` : template;
-}
-
 /**
  * Whether the current composer text is in slash-name-typing state (palette
  * should show). True for `/`, `/rev`, etc.; false once whitespace appears.

@@ -11,19 +11,12 @@ import type {
   ChatAttachment,
   ChatSnapshot,
   ConfigFile,
-  DiffStat,
   EnvReport,
-  FileChange,
   FileContent,
   GeneratedTitle,
-  MergeResult,
   PrResult,
-  PrStatus,
-  ProjectPrompts,
   ProjectUpdate,
   ProjectView,
-  PushResult,
-  RemoteInfo,
   ServerInfo,
   SidebarWorkspace,
   ToolsStatus,
@@ -46,19 +39,6 @@ export function listProjects(): Promise<ProjectView[]> {
 
 export function removeProject(projectId: string): Promise<void> {
   return invoke<void>("remove_project", { projectId });
-}
-
-/** Start (or reuse) the opencode server for a workspace; returns its base URL. */
-export function startServer(workspaceId: string): Promise<ServerInfo> {
-  return invoke<ServerInfo>("start_server", { workspaceId });
-}
-
-export function stopServer(workspaceId: string): Promise<void> {
-  return invoke<void>("stop_server", { workspaceId });
-}
-
-export function serverStatus(workspaceId: string): Promise<ServerInfo | null> {
-  return invoke<ServerInfo | null>("server_status", { workspaceId });
 }
 
 // ── M2: worktrees & fleet ──
@@ -125,11 +105,6 @@ export function updateProject(
   return invoke<ProjectView>("update_project", { projectId, update });
 }
 
-/** Get a project's configured prompts. */
-export function getProjectPrompts(projectId: string): Promise<ProjectPrompts> {
-  return invoke<ProjectPrompts>("get_project_prompts", { projectId });
-}
-
 /** Remove a worktree workspace (stops its server first). */
 export function removeWorkspace(
   workspaceId: string,
@@ -148,21 +123,6 @@ export function renameWorkspace(
   name: string,
 ): Promise<void> {
   return invoke<void>("rename_workspace", { workspaceId, name });
-}
-
-export function workspaceDiffStat(workspaceId: string): Promise<DiffStat> {
-  return invoke<DiffStat>("workspace_diff_stat", { workspaceId });
-}
-
-/** Changed files for the diff panel. `against` defaults to HEAD (local). */
-export function workspaceChanges(
-  workspaceId: string,
-  against?: string,
-): Promise<FileChange[]> {
-  return invoke<FileChange[]>("workspace_changes", {
-    workspaceId,
-    against: against ?? null,
-  });
 }
 
 /** Unified diff text for one file. */
@@ -204,16 +164,6 @@ export function commitWorkspace(
   return invoke<string>("commit_workspace", { workspaceId, message });
 }
 
-/** Merge the workspace branch into its base branch. */
-export function mergeWorkspace(workspaceId: string): Promise<MergeResult> {
-  return invoke<MergeResult>("merge_workspace", { workspaceId });
-}
-
-/** Push the workspace branch to origin. */
-export function pushWorkspace(workspaceId: string): Promise<PushResult> {
-  return invoke<PushResult>("push_workspace", { workspaceId });
-}
-
 /** Push the branch and create a GitHub PR (requires `gh`). */
 export function createWorkspacePr(
   workspaceId: string,
@@ -221,17 +171,6 @@ export function createWorkspacePr(
   body: string,
 ): Promise<PrResult> {
   return invoke<PrResult>("create_workspace_pr", { workspaceId, title, body });
-}
-
-/**
- * Fetch the PR CI status for a workspace's branch (via `gh`). Resolves to
- * `null` when the branch has no PR yet; rejects when `gh` is unavailable or the
- * repo has no GitHub remote.
- */
-export function workspacePrStatus(
-  workspaceId: string,
-): Promise<PrStatus | null> {
-  return invoke<PrStatus | null>("workspace_pr_status", { workspaceId });
 }
 
 // ── GitHub accounts (Rust `github` module; events via src/lib/events.ts) ──
@@ -426,11 +365,6 @@ export function requestGitRefresh(workspaceId: string): Promise<void> {
   return invoke<void>("request_git_refresh", { workspaceId });
 }
 
-/** List git remotes for a workspace's project root. */
-export function listRemotes(workspaceId: string): Promise<RemoteInfo[]> {
-  return invoke<RemoteInfo[]>("list_remotes", { workspaceId });
-}
-
 /** Runtime MCP + LSP status (starts a supplemental `opencode serve` on demand). */
 export function workspaceTools(workspaceId: string): Promise<ToolsStatus> {
   return invoke<ToolsStatus>("workspace_tools", { workspaceId });
@@ -491,16 +425,6 @@ export function restartServer(workspaceId: string): Promise<ServerInfo> {
   return invoke<ServerInfo>("restart_server", { workspaceId });
 }
 
-/** Info for every running opencode server (drives the fleet dashboard). */
-export function listServers(): Promise<ServerInfo[]> {
-  return invoke<ServerInfo[]>("list_servers");
-}
-
-/** Heartbeat to defer idle reaping of the active workspace's server. */
-export function touchServer(workspaceId: string): Promise<void> {
-  return invoke<void>("touch_server", { workspaceId });
-}
-
 /** Open the webview inspector (bound to a shortcut; right-click menu is disabled). */
 export function openDevtools(): Promise<void> {
   return invoke<void>("open_devtools");
@@ -524,15 +448,6 @@ export function logPath(): Promise<string | null> {
 /** Report a screen change, website-style (e.g. "/session", "/settings/general"). */
 export function telemetryPageview(url: string): Promise<void> {
   return invoke<void>("telemetry_pageview", { url });
-}
-
-/** Track a named event. `data` must stay coarse — enum-like values only. */
-export function telemetryEvent(
-  name: string,
-  url: string,
-  data?: Record<string, unknown>,
-): Promise<void> {
-  return invoke<void>("telemetry_event", { name, url, data: data ?? null });
 }
 
 export function telemetryGetEnabled(): Promise<boolean> {

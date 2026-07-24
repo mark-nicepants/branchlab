@@ -7,7 +7,6 @@
 //! the UI (see `events`).
 //!
 //! Built incrementally; submodules are wired in as they land.
-#![allow(dead_code)]
 
 pub mod account;
 pub mod auth;
@@ -32,6 +31,7 @@ use crate::github::account::{
 };
 use crate::github::client::GithubClient;
 use crate::github::model::{AccountView, LoginEvent, ReviewItem};
+use crate::now_ms;
 use crate::project::Registry;
 use tauri::Manager;
 
@@ -232,7 +232,7 @@ impl GithubManager {
         }
         let acct = self.inner.store.get(account_id).ok_or("unknown account")?;
         let token = self.token_for(&acct)?;
-        let client = GithubClient::build(&acct.host, &acct.api_base, &token)?;
+        let client = GithubClient::build(&acct.api_base, &token)?;
         self.inner.clients.lock().unwrap().insert(account_id.to_string(), client.clone());
         Ok(client)
     }
@@ -393,7 +393,7 @@ impl GithubManager {
     async fn finalize_account(&self, host: &str, temp_dir: &Path) -> Result<AccountView, String> {
         let token = auth::fetch_token(temp_dir, host)?;
         let api_base = api_base_for(host);
-        let client = GithubClient::build(host, &api_base, &token)?;
+        let client = GithubClient::build(&api_base, &token)?;
         let identity = client.current_user().await?;
         let orgs = client.orgs().await;
 
@@ -620,9 +620,4 @@ impl GithubManager {
             }
         }
     }
-}
-
-/// Current time in epoch milliseconds (for inbox `refreshedAt`).
-fn now_ms() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }

@@ -1,7 +1,7 @@
 import { parseTypedDisplay, type TypedDisplay } from "@/lib/chatDisplay";
 import { parseDiff, synthesizeDiff } from "@/lib/diff";
 import { fileName } from "@/lib/review";
-import { cn } from "@/lib/utils";
+import { cn, plural } from "@/lib/utils";
 import {
   Bot,
   ChevronRight,
@@ -202,8 +202,6 @@ export function UserMessageView({ entry }: { entry: UserEntry }) {
     </MessageShell>
   );
 }
-
-const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
 /** Batched inline review comments, sent from the Changes panel. Same card as
  *  the work section; each comment mimics a tool-call step row. */

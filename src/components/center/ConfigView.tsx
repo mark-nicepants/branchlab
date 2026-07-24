@@ -1,5 +1,4 @@
 import { Button } from "@/components/ui/button";
-import { SectionLabel } from "@/components/ui/section-label";
 import { Segmented, SegmentedItem } from "@/components/ui/segmented";
 import { Textarea } from "@/components/ui/textarea";
 import { RotateCw, Save } from "lucide-react";
@@ -9,7 +8,6 @@ import { readConfig, restartServer, writeConfig } from "../../lib/api";
 
 interface Props {
   workspaceId: string;
-  onRestarted: () => void;
 }
 
 type Scope = "project" | "global";
@@ -20,17 +18,11 @@ type Scope = "project" | "global";
  * advertised per-session over ACP (see the composer selectors), not fetched
  * over HTTP here.
  */
-export function ConfigView({ workspaceId, onRestarted }: Props) {
+export function ConfigView({ workspaceId }: Props) {
   const [scope, setScope] = useState<Scope>("project");
   const [content, setContent] = useState("");
   const [path, setPath] = useState("");
   const [busy, setBusy] = useState(false);
-
-  const [effective, setEffective] = useState("");
-  const [agents, setAgents] = useState<{ name: string; mode?: string }[]>([]);
-  const [commands, setCommands] = useState<
-    { name: string; description?: string }[]
-  >([]);
 
   useEffect(() => {
     readConfig(scope, scope === "project" ? workspaceId : undefined)
@@ -43,13 +35,6 @@ export function ConfigView({ workspaceId, onRestarted }: Props) {
       );
   }, [scope, workspaceId]);
 
-  useEffect(() => {
-    // Effective config / agents / commands come over ACP now, not HTTP.
-    setEffective("");
-    setAgents([]);
-    setCommands([]);
-  }, [workspaceId]);
-
   async function save(restart: boolean) {
     setBusy(true);
     try {
@@ -60,7 +45,6 @@ export function ConfigView({ workspaceId, onRestarted }: Props) {
       );
       if (restart) {
         await restartServer(workspaceId);
-        onRestarted();
         toast.success("Saved & restarted");
       } else {
         toast.success("Saved");
@@ -124,67 +108,6 @@ export function ConfigView({ workspaceId, onRestarted }: Props) {
           className="h-64 select-text font-mono text-xs"
         />
       </div>
-
-      <Section title="Effective config">
-        {effective ? (
-          <pre className="select-text overflow-x-auto px-4 pb-4 font-mono text-[11px] leading-relaxed text-muted-foreground">
-            {effective}
-          </pre>
-        ) : (
-          <Hint>Start the workspace to see the merged config.</Hint>
-        )}
-      </Section>
-
-      <Section title="Agents">
-        {agents.length ? (
-          <ul className="px-4 pb-4 text-xs">
-            {agents.map((a) => (
-              <li key={a.name} className="flex justify-between py-0.5">
-                <span className="font-mono">{a.name}</span>
-                <span className="text-muted-foreground">{a.mode}</span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <Hint>—</Hint>
-        )}
-      </Section>
-
-      <Section title="Commands">
-        {commands.length ? (
-          <ul className="px-4 pb-4 text-xs">
-            {commands.map((c) => (
-              <li key={c.name} className="flex gap-3 py-0.5">
-                <span className="font-mono">{c.name}</span>
-                <span className="truncate text-muted-foreground">
-                  {c.description}
-                </span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <Hint>—</Hint>
-        )}
-      </Section>
     </div>
   );
-}
-
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="border-t border-border">
-      <SectionLabel className="px-4 py-2">{title}</SectionLabel>
-      {children}
-    </div>
-  );
-}
-
-function Hint({ children }: { children: React.ReactNode }) {
-  return <p className="px-4 pb-4 text-xs text-muted-foreground">{children}</p>;
 }

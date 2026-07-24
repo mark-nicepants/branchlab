@@ -10,16 +10,12 @@
 //! starts a new block, per ACP), so streamed prose accumulates into one block
 //! instead of one-block-per-token.
 
+use crate::now_ms;
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use agent_client_protocol::schema::v1 as acp;
 
 use crate::chat::model::{Block, ConfigChoice, ConfigOption, DiffBlock, ToolBlock, ToolLocation, ToolStatus};
-
-fn now_ms() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
-}
 
 /// What changed in the block list after applying one update. The manager reads
 /// `blocks[index]` for the current state and emits a `chat:block`.

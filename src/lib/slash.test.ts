@@ -1,60 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { CommandOption } from "./types";
-import {
-  expandTemplate,
-  filterCommands,
-  isSlashTyping,
-  parseSlash,
-} from "./slash";
+import { filterCommands, isSlashTyping } from "./slash";
 
 const cmd = (over: Partial<CommandOption> = {}): CommandOption => ({
   name: "review",
-  template: "Review: $ARGUMENTS",
   ...over,
-});
-
-describe("parseSlash", () => {
-  it("returns null when text does not start with a slash", () => {
-    expect(parseSlash("hello /world")).toBeNull();
-    expect(parseSlash("")).toBeNull();
-  });
-
-  it("treats a bare slash as command name = ''", () => {
-    expect(parseSlash("/")).toEqual({ name: "", args: "" });
-  });
-
-  it("splits on the first whitespace", () => {
-    expect(parseSlash("/review pr-123 some text")).toEqual({
-      name: "review",
-      args: "pr-123 some text",
-    });
-  });
-
-  it("returns empty args when there is no space", () => {
-    expect(parseSlash("/init")).toEqual({ name: "init", args: "" });
-  });
-});
-
-describe("expandTemplate", () => {
-  it("substitutes every occurrence of $ARGUMENTS", () => {
-    expect(expandTemplate("a $ARGUMENTS b $ARGUMENTS c", "X")).toBe(
-      "a X b X c",
-    );
-  });
-
-  it("appends args after a blank line when the template has no placeholder", () => {
-    expect(expandTemplate("Do the thing.", "with these inputs")).toBe(
-      "Do the thing.\n\nwith these inputs",
-    );
-  });
-
-  it("leaves the template untouched when both placeholder and args are absent", () => {
-    expect(expandTemplate("Just a prompt.", "")).toBe("Just a prompt.");
-  });
-
-  it("does not interpret regex metacharacters in the args value", () => {
-    expect(expandTemplate("X=$ARGUMENTS", "$& and $1")).toBe("X=$& and $1");
-  });
 });
 
 describe("isSlashTyping", () => {

@@ -122,13 +122,6 @@ impl ChatDb {
             .map_err(|e| e.to_string())
     }
 
-    pub fn set_conversation_title(&self, conversation_id: &str, title: &str) -> Result<(), String> {
-        self.conn
-            .execute("UPDATE conversations SET title = ?2 WHERE id = ?1", params![conversation_id, title])
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-    }
-
     // ── Engine sessions ────────────────────────────────────────────────────
 
     /// Open a new engine session under a conversation, mark it active (and the

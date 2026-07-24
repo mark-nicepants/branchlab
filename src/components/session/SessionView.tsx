@@ -40,8 +40,6 @@ interface Props {
   workspace: Workspace;
   project: ProjectView | null;
   onRenamed: (workspaceId: string, name: string) => void;
-  /** Bumped to force a server reconnect (e.g. after editing config). */
-  reloadNonce?: number;
   /** When the sidebar is collapsed, pad the header to clear traffic lights. */
   sidebarCollapsed?: boolean;
   /** Open Settings → Models (from the model picker's "Manage models"). */

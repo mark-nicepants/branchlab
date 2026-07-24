@@ -12,21 +12,17 @@ import { Switch } from "@/components/ui/switch";
 import { THEMES } from "@/lib/themes";
 import { cn } from "@/lib/utils";
 import {
-  Accessibility,
   ArrowUpCircle,
   Boxes,
   Check,
   ChevronDown,
   ChevronRight,
   CircleUser,
-  FlaskConical,
   FolderCog,
   FolderPlus,
-  MessagesSquare,
   Palette,
   Search,
   Settings as SettingsIcon,
-  Sparkles,
   Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -53,11 +49,7 @@ export type SettingsTab =
   | "general"
   | "accounts"
   | "models"
-  | "sessions"
   | "themes"
-  | "accessibility"
-  | "skills"
-  | "experimental"
   | "projects";
 
 interface Props {
@@ -83,21 +75,7 @@ const NAV: NavItem[] = [
   { id: "general", label: "General", icon: SettingsIcon, group: "top" },
   { id: "accounts", label: "Accounts", icon: CircleUser, group: "top" },
   { id: "models", label: "Models", icon: Boxes, group: "top" },
-  { id: "sessions", label: "Sessions", icon: MessagesSquare, group: "top" },
   { id: "themes", label: "Themes", icon: Palette, group: "top" },
-  {
-    id: "accessibility",
-    label: "Accessibility",
-    icon: Accessibility,
-    group: "top",
-  },
-  { id: "skills", label: "Skills", icon: Sparkles, group: "tools" },
-  {
-    id: "experimental",
-    label: "Experimental",
-    icon: FlaskConical,
-    group: "tools",
-  },
   { id: "projects", label: "Projects", icon: FolderCog, group: "tools" },
 ];
 
@@ -176,16 +154,6 @@ export function SettingsScreen({
             )}
             {tab === "accounts" && <AccountsTab />}
             {tab === "models" && <ModelsTab />}
-            {tab === "sessions" && (
-              <ComingSoon label="Session defaults and retention" />
-            )}
-            {tab === "accessibility" && (
-              <ComingSoon label="Accessibility options" />
-            )}
-            {tab === "skills" && <ComingSoon label="Agent skills management" />}
-            {tab === "experimental" && (
-              <ComingSoon label="Experimental features" />
-            )}
           </div>
         </div>
       </DialogContent>
@@ -682,13 +650,3 @@ function Row({
   );
 }
 
-function ComingSoon({ label }: { label: string }) {
-  return (
-    <EmptyState
-      className="py-16"
-      icon={<Sparkles className="size-6 text-muted-foreground/60" />}
-    >
-      {label} is coming soon.
-    </EmptyState>
-  );
-}

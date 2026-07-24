@@ -39,9 +39,7 @@ import { cn } from "@/lib/utils";
 import {
   BotMessageSquare,
   ArrowUp,
-  CalendarClock,
   ChevronDown,
-  ChevronLeft,
   ChevronRight,
   CircleX,
   Cloud,
@@ -56,7 +54,6 @@ import {
   House,
   Link2,
   ListFilter,
-  ListTodo,
   Loader2,
   MessageCircleQuestion,
   MessagesSquare,
@@ -84,25 +81,17 @@ import {
 } from "../../lib/types";
 import { usePreferences } from "../PreferencesProvider";
 
-export type NavView = "home" | "my-work" | "automations" | "search";
+export type NavView = "home" | "search";
 
 interface NavItemDef {
   id: NavView;
   label: string;
   icon: typeof House;
-  enabled: boolean;
 }
 
 const NAV: NavItemDef[] = [
-  { id: "home", label: "Home", icon: House, enabled: true },
-  { id: "my-work", label: "My work", icon: ListTodo, enabled: false },
-  {
-    id: "automations",
-    label: "Automations",
-    icon: CalendarClock,
-    enabled: false,
-  },
-  { id: "search", label: "Search", icon: Search, enabled: true },
+  { id: "home", label: "Home", icon: House },
+  { id: "search", label: "Search", icon: Search },
 ];
 
 interface Props {
@@ -241,22 +230,6 @@ export function SessionsSidebar({
           </TooltipTrigger>
           <TooltipContent>Toggle sidebar ⌘B</TooltipContent>
         </Tooltip>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="text-muted-foreground/50"
-          disabled
-        >
-          <ChevronLeft className="size-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="text-muted-foreground/50"
-          disabled
-        >
-          <ChevronRight className="size-4" />
-        </Button>
       </div>
 
       {/* Primary navigation */}
@@ -266,7 +239,7 @@ export function SessionsSidebar({
             key={item.id}
             item={item}
             active={view === item.id}
-            onClick={() => item.enabled && onNavigate(item.id)}
+            onClick={() => onNavigate(item.id)}
           />
         ))}
       </nav>
@@ -522,29 +495,19 @@ function NavRow({
   active: boolean;
   onClick: () => void;
 }) {
-  const row = (
+  return (
     <button
       onClick={onClick}
-      disabled={!item.enabled}
       className={cn(
         "flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors",
         active
           ? "bg-sidebar-accent text-sidebar-accent-foreground"
           : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
-        !item.enabled &&
-          "opacity-40 hover:bg-transparent hover:text-muted-foreground",
       )}
     >
       <item.icon className="size-4 shrink-0" />
       {item.label}
     </button>
-  );
-  if (item.enabled) return row;
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>{row}</TooltipTrigger>
-      <TooltipContent side="right">Coming soon</TooltipContent>
-    </Tooltip>
   );
 }
 

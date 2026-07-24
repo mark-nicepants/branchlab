@@ -6,10 +6,10 @@
 //! also broadcasts a coarse [`TurnEvent`] the supervisor consumes for
 //! `workspace:session` / autofix (so there is no second SSE connection).
 
+use crate::now_ms;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use agent_client_protocol::schema::v1 as acp;
 use serde::Serialize;
@@ -113,10 +113,6 @@ struct Inner {
 #[derive(Clone)]
 pub struct ChatManager {
     inner: Arc<Inner>,
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
 fn new_id() -> String {
@@ -264,7 +260,7 @@ impl ChatManager {
         let inputs = build_inputs(&sent, &attachments);
         crate::logf!("chat", "send ws={workspace_id} origin={origin:?} ready={} sent_len={}", conv.ready, sent.len());
         if let Some(engine) = &conv.engine {
-            engine.send(EngineCommand::Prompt { entry_id: assistant_id, inputs });
+            engine.send(EngineCommand::Prompt { inputs });
         }
         let _ = self.inner.turn_tx.send(TurnEvent {
             workspace_id: workspace_id.to_string(),

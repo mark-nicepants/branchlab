@@ -14,16 +14,12 @@ import type {
   FileChange,
   FileContent,
   GeneratedTitle,
-  MergeResult,
   PipelinePhase,
   PrResult,
   PrStatus,
   PrSummary,
-  ProjectPrompts,
   ProjectUpdate,
   ProjectView,
-  PushResult,
-  RemoteInfo,
   ReviewInboxItem,
   ServerInfo,
   SessionPayload,
@@ -436,20 +432,13 @@ export function addAccountWithToken(
   return Promise.resolve(acct);
 }
 
-export function startServer(workspaceId: string): Promise<ServerInfo> {
+// Used internally by restartServer; the app drives server lifecycle via events.
+function startServer(workspaceId: string): Promise<ServerInfo> {
   return Promise.resolve({
     workspace_id: workspaceId,
     base_url: "http://127.0.0.1:9999",
     port: 9999,
   });
-}
-
-export function stopServer(): Promise<void> {
-  return Promise.resolve();
-}
-
-export function serverStatus(): Promise<ServerInfo | null> {
-  return Promise.resolve(null);
 }
 
 export function listBranches(): Promise<string[]> {
@@ -511,19 +500,6 @@ export function updateProject(
     p.default_model_key = update.default_model_key;
   if (update.prompts) p.prompts = update.prompts;
   return Promise.resolve(p);
-}
-
-export function getProjectPrompts(projectId: string): Promise<ProjectPrompts> {
-  const p = projects.find((x) => x.id === projectId);
-  return Promise.resolve(
-    p?.prompts ?? {
-      init_workspace: null,
-      commit: null,
-      merge: null,
-      push: null,
-      create_pr: null,
-    },
-  );
 }
 
 export function removeWorkspace(workspaceId: string): Promise<void> {
@@ -595,13 +571,8 @@ const diffStats: Record<string, DiffStat> = {
   "p2-base": { files: 12, insertions: 120, deletions: 45 },
 };
 
-export function workspaceDiffStat(workspaceId: string): Promise<DiffStat> {
-  return Promise.resolve(
-    diffStats[workspaceId] ?? { files: 0, insertions: 0, deletions: 0 },
-  );
-}
-
-export function workspaceChanges(): Promise<FileChange[]> {
+// Used internally by setActiveWorkspace's event simulation.
+function workspaceChanges(): Promise<FileChange[]> {
   return Promise.resolve([
     { path: "src/App.tsx", status: "modified", insertions: 10, deletions: 2 },
     {
@@ -689,30 +660,12 @@ export function commitWorkspace(): Promise<string> {
   return Promise.resolve("abc1234");
 }
 
-export function mergeWorkspace(): Promise<MergeResult> {
-  return Promise.resolve({
-    branch: "feature",
-    base: "main",
-    summary: "merged",
-  });
-}
-
-export function pushWorkspace(): Promise<PushResult> {
-  return Promise.resolve({ branch: "feature", remote: "origin", output: "ok" });
-}
-
 export function createWorkspacePr(): Promise<PrResult> {
   return Promise.resolve({
     branch: "feature",
     base: "main",
     url: "https://github.com/test/pr/1",
   });
-}
-
-export function listRemotes(): Promise<RemoteInfo[]> {
-  return Promise.resolve([
-    { name: "origin", url: "git@github.com:test/repo.git" },
-  ]);
 }
 
 // ── Backend orchestration mocks: drive the event bus so the browser harness
@@ -1289,7 +1242,8 @@ function mockPr(
   };
 }
 
-export function workspacePrStatus(): Promise<PrStatus | null> {
+// Used internally by setActiveWorkspace's event simulation.
+function workspacePrStatus(): Promise<PrStatus | null> {
   // A failing pipeline so the pipeline bar and Off/Auto/Super control are
   // visible in the browser harness. Stable head_sha so the autofix loop only
   // triggers once (the mocked opencode server doesn't actually push).
@@ -1353,14 +1307,6 @@ export function restartServer(workspaceId: string): Promise<ServerInfo> {
   return startServer(workspaceId);
 }
 
-export function listServers(): Promise<ServerInfo[]> {
-  return Promise.resolve([]);
-}
-
-export function touchServer(): Promise<void> {
-  return Promise.resolve();
-}
-
 export function openDevtools(): Promise<void> {
   // eslint-disable-next-line no-console
   console.log("open devtools");
@@ -1382,16 +1328,6 @@ export function logPath(): Promise<string | null> {
 export function telemetryPageview(url: string): Promise<void> {
   // eslint-disable-next-line no-console
   console.log("telemetry pageview", url);
-  return Promise.resolve();
-}
-
-export function telemetryEvent(
-  name: string,
-  url: string,
-  data?: Record<string, unknown>,
-): Promise<void> {
-  // eslint-disable-next-line no-console
-  console.log("telemetry event", name, url, data);
   return Promise.resolve();
 }
 
