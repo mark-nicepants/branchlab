@@ -5,7 +5,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { ArrowLeft, Columns2, Maximize2, Minimize2 } from "lucide-react";
+import { ArrowLeft, Columns2, Maximize2, Minimize2, Play } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -35,6 +35,7 @@ import { CommitButton } from "../CommitButton";
 import { ChangesPanel } from "../layout/ChangesPanel";
 import { usePreferences } from "../PreferencesProvider";
 import { PrPipeline } from "./PrPipeline";
+import { RunPanel } from "./RunPanel";
 
 interface Props {
   workspace: Workspace;
@@ -116,6 +117,10 @@ export function SessionView({
   const changesOpen = prefs.changesPanelOpen;
   const [panelMode, setPanelMode] = useState<PanelMode>({ kind: "list" });
   const [panelMax, setPanelMax] = useState(false);
+  // Run & preview panel — shares the right-panel slot with changes.
+  const [runOpen, setRunOpen] = useState(false);
+  const hasRunScript = !!project?.run.run_script?.trim();
+  const panelOpen = changesOpen || runOpen;
   const [viewed, setViewed] = useState<Set<string>>(new Set());
 
   const toggleViewed = useCallback((path: string) => {
@@ -267,29 +272,35 @@ export function SessionView({
 
   // ── Focus mode: the panel maximizes over the whole session body ──
   useEffect(() => {
-    if (!changesOpen) setPanelMax(false);
-  }, [changesOpen]);
+    if (!panelOpen) setPanelMax(false);
+  }, [panelOpen]);
+
+  // The run panel is per-workspace UI state; don't carry it across switches.
+  useEffect(() => setRunOpen(false), [workspace.id]);
 
   // Esc peels back one layer at a time: popups first (dialogs, menus — they
   // handle Esc themselves, we stay out of the way), then focus mode, then the
   // panel itself. Typing contexts keep Esc for their own cancel semantics.
   useEffect(() => {
-    if (!changesOpen) return;
+    if (!panelOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented) return;
       const t = e.target as HTMLElement | null;
       if (
         t &&
-        (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.isContentEditable)
       )
         return;
       if (hasOpenOverlay()) return;
       if (panelMax) setPanelMax(false);
+      else if (runOpen) setRunOpen(false);
       else setPref("changesPanelOpen", false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [changesOpen, panelMax, setPref]);
+  }, [panelOpen, panelMax, runOpen, setPref]);
 
   const maxToggle = (
     <Tooltip>
@@ -362,6 +373,21 @@ export function SessionView({
               onAction={setPendingAction}
             />
           )}
+          {!isQuickChat && hasRunScript && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className={cn(runOpen && "bg-accent text-accent-foreground")}
+                  onClick={() => setRunOpen((v) => !v)}
+                >
+                  <Play className="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Run & preview</TooltipContent>
+            </Tooltip>
+          )}
           {!isQuickChat && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -370,9 +396,14 @@ export function SessionView({
                   size="icon-sm"
                   className={cn(
                     "relative",
-                    changesOpen && "bg-accent text-accent-foreground",
+                    changesOpen &&
+                      !runOpen &&
+                      "bg-accent text-accent-foreground",
                   )}
-                  onClick={() => setPref("changesPanelOpen", !changesOpen)}
+                  onClick={() => {
+                    setRunOpen(false);
+                    setPref("changesPanelOpen", runOpen ? true : !changesOpen);
+                  }}
                 >
                   <Columns2 className="size-4" />
                   {changedCount > 0 && (
@@ -411,7 +442,7 @@ export function SessionView({
           />
         </div>
 
-        {!isQuickChat && changesOpen && !panelMax && (
+        {!isQuickChat && panelOpen && !panelMax && (
           <div
             onMouseDown={startResize}
             className={cn(
@@ -422,13 +453,13 @@ export function SessionView({
         )}
         {!isQuickChat && (
           <div
-            style={{ width: changesOpen ? effectivePx : 0 }}
+            style={{ width: panelOpen ? effectivePx : 0 }}
             className={cn(
               "shrink-0 overflow-hidden",
               dragging || !animate
                 ? "transition-none"
                 : "transition-[width,opacity] duration-100 ease-out",
-              changesOpen ? "opacity-100" : "opacity-0",
+              panelOpen ? "opacity-100" : "opacity-0",
             )}
           >
             {/* In focus mode this escapes the width-clipped wrapper and covers
@@ -440,7 +471,12 @@ export function SessionView({
               )}
               style={panelMax ? undefined : { width: effectivePx }}
             >
-              {panelMode.kind === "list" ? (
+              {runOpen ? (
+                <RunPanel
+                  workspaceId={workspace.id}
+                  projectType={project?.run.project_type ?? null}
+                />
+              ) : panelMode.kind === "list" ? (
                 <ChangesPanel
                   workspace={workspace}
                   viewed={viewed}

@@ -21,6 +21,8 @@ import type {
   ProjectUpdate,
   ProjectView,
   ReviewInboxItem,
+  RunSnapshot,
+  RunState,
   ServerInfo,
   SessionPayload,
   SidebarWorkspace,
@@ -41,6 +43,12 @@ let projects: ProjectView[] = [
       merge: "Merge branch.",
       push: "Push branch.",
       create_pr: "Create PR.",
+    },
+    run: {
+      project_type: "web",
+      run_script: "npm run dev -- --port $BL_PORT",
+      setup_script: "npm install",
+      teardown_script: null,
     },
     workspaces: [
       {
@@ -109,6 +117,12 @@ let projects: ProjectView[] = [
       push: null,
       create_pr: null,
     },
+    run: {
+      project_type: null,
+      run_script: null,
+      setup_script: null,
+      teardown_script: null,
+    },
     workspaces: [
       {
         id: "p2-base",
@@ -150,6 +164,12 @@ export function addProject(path: string): Promise<ProjectView> {
       merge: null,
       push: null,
       create_pr: null,
+    },
+    run: {
+      project_type: null,
+      run_script: null,
+      setup_script: null,
+      teardown_script: null,
     },
     workspaces: [
       {
@@ -666,6 +686,60 @@ export function createWorkspacePr(): Promise<PrResult> {
     base: "main",
     url: "https://github.com/test/pr/1",
   });
+}
+
+// ── Run & preview mocks: a scripted dev-server start so the RunPanel renders
+//    logs, port discovery, and the iframe preview in the browser harness. ──
+
+const mockRuns = new Map<string, { state: RunState; log: string[] }>();
+
+function emitRunLog(workspaceId: string, chunk: string) {
+  const r = mockRuns.get(workspaceId);
+  if (r) r.log.push(chunk);
+  mockEmit("workspace:run_log", { workspaceId, chunk });
+}
+
+export function runStart(workspaceId: string): Promise<RunState> {
+  const existing = mockRuns.get(workspaceId);
+  if (existing?.state.status === "running")
+    return Promise.resolve(existing.state);
+  const state: RunState = {
+    workspaceId,
+    status: "running",
+    blPort: 4100,
+    ports: [],
+    exitCode: null,
+  };
+  mockRuns.set(workspaceId, { state, log: [] });
+  emitRunLog(workspaceId, "$ npm run dev -- --port $BL_PORT");
+  mockEmit("workspace:run", state);
+  setTimeout(() => emitRunLog(workspaceId, "> vite dev"), 300);
+  setTimeout(() => {
+    const r = mockRuns.get(workspaceId);
+    if (!r || r.state.status !== "running") return;
+    emitRunLog(workspaceId, "  VITE ready in 213 ms");
+    emitRunLog(workspaceId, "  ➜  Local:   http://localhost:5173/");
+    r.state = { ...r.state, ports: [5173] };
+    mockEmit("workspace:run", r.state);
+  }, 900);
+  return Promise.resolve(state);
+}
+
+export function runStop(workspaceId: string): Promise<void> {
+  const r = mockRuns.get(workspaceId);
+  if (r && r.state.status === "running") {
+    r.state = { ...r.state, status: "exited", ports: [], exitCode: 0 };
+    emitRunLog(workspaceId, "stopped");
+    mockEmit("workspace:run", r.state);
+  }
+  return Promise.resolve();
+}
+
+export function runState(workspaceId: string): Promise<RunSnapshot> {
+  const r = mockRuns.get(workspaceId);
+  return Promise.resolve(
+    r ? { state: r.state, log: [...r.log] } : { state: null, log: [] },
+  );
 }
 
 // ── Backend orchestration mocks: drive the event bus so the browser harness

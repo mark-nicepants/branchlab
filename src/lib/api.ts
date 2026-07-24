@@ -17,6 +17,8 @@ import type {
   PrResult,
   ProjectUpdate,
   ProjectView,
+  RunSnapshot,
+  RunState,
   ServerInfo,
   SidebarWorkspace,
   ToolsStatus,
@@ -332,6 +334,23 @@ export function chatNewSession(
   reason: "compacted" | "cleared",
 ): Promise<void> {
   return invoke<void>("chat_new_session", { workspaceId, reason });
+}
+
+// ── Run & preview (docs/design/run-preview.md; deltas via events.ts) ──
+
+/** Start the project's run script in this workspace's worktree. */
+export function runStart(workspaceId: string): Promise<RunState> {
+  return invoke<RunState>("run_start", { workspaceId });
+}
+
+/** Stop this workspace's run (kills the whole process tree). */
+export function runStop(workspaceId: string): Promise<void> {
+  return invoke<void>("run_stop", { workspaceId });
+}
+
+/** Current run state + recent output, for view remounts. */
+export function runState(workspaceId: string): Promise<RunSnapshot> {
+  return invoke<RunSnapshot>("run_state", { workspaceId });
 }
 
 // ── Backend orchestration (events pushed back via src/lib/events.ts) ──

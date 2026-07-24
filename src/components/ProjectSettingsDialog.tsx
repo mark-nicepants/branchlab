@@ -4,6 +4,7 @@ import {
   FileText,
   FolderOpen,
   MessageSquare,
+  Play,
   Terminal,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -11,7 +12,9 @@ import type {
   Account,
   ProjectView,
   ProjectPrompts,
+  ProjectType,
   ProjectUpdate,
+  RunSettings,
 } from "../lib/types";
 import { githubDetectAccount, openExternal, updateProject } from "../lib/api";
 import { useGitHub } from "../hooks/useGitHub";
@@ -23,7 +26,14 @@ import { Field } from "@/components/ui/field";
 import { ConfigView } from "./center/ConfigView";
 import { cn } from "@/lib/utils";
 
-type Tab = "general" | "opencode" | "prompts";
+type Tab = "general" | "opencode" | "prompts" | "run";
+
+const EMPTY_RUN: RunSettings = {
+  project_type: null,
+  run_script: null,
+  setup_script: null,
+  teardown_script: null,
+};
 
 interface Props {
   project: ProjectView;
@@ -61,6 +71,7 @@ export function ProjectSettingsDialog({
       create_pr: "",
     },
   );
+  const [run, setRun] = useState<RunSettings>(project.run ?? EMPTY_RUN);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -68,6 +79,7 @@ export function ProjectSettingsDialog({
     setDefaultBranch(project.default_branch ?? "");
     setAccountId(project.account_id ?? "");
     setPrompts(project.prompts);
+    setRun(project.run ?? EMPTY_RUN);
   }, [project]);
 
   async function save(updates: ProjectUpdate) {
@@ -91,6 +103,7 @@ export function ProjectSettingsDialog({
     icon: React.ComponentType<{ className?: string }>;
   }[] = [
     { id: "general", label: "General", icon: FileText },
+    { id: "run", label: "Run & preview", icon: Play },
     { id: "prompts", label: "Prompts", icon: MessageSquare },
     { id: "opencode", label: "OpenCode config", icon: Braces },
   ];
@@ -165,6 +178,14 @@ export function ProjectSettingsDialog({
                   setPrompts={setPrompts}
                   saving={saving}
                   onSave={() => save({ prompts })}
+                />
+              )}
+              {tab === "run" && (
+                <RunTab
+                  run={run}
+                  setRun={setRun}
+                  saving={saving}
+                  onSave={() => save({ run: normalizeRun(run) })}
                 />
               )}
             </div>
@@ -325,6 +346,99 @@ function PromptsTab({
       <div className="flex justify-end">
         <Button onClick={onSave} disabled={saving}>
           {saving ? "Saving…" : "Save prompts"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** Blank scripts save as null so the backend treats them as unconfigured. */
+function normalizeRun(run: RunSettings): RunSettings {
+  const clean = (s: string | null) => (s && s.trim() ? s : null);
+  return {
+    project_type: run.project_type,
+    run_script: clean(run.run_script),
+    setup_script: clean(run.setup_script),
+    teardown_script: clean(run.teardown_script),
+  };
+}
+
+function RunTab({
+  run,
+  setRun,
+  saving,
+  onSave,
+}: {
+  run: RunSettings;
+  setRun: (r: RunSettings) => void;
+  saving: boolean;
+  onSave: () => void;
+}) {
+  const scripts: {
+    key: "run_script" | "setup_script" | "teardown_script";
+    label: string;
+    placeholder: string;
+    hint: string;
+  }[] = [
+    {
+      key: "run_script",
+      label: "Run",
+      placeholder: "npm run dev -- --port $BL_PORT",
+      hint: "Dev-server command, started manually from the session view.",
+    },
+    {
+      key: "setup_script",
+      label: "Setup",
+      placeholder: "npm install && ln -sf $BL_PROJECT_ROOT/.env .env",
+      hint: "Runs once in every fresh worktree, right after creation.",
+    },
+    {
+      key: "teardown_script",
+      label: "Teardown",
+      placeholder: "docker compose down",
+      hint: "Best-effort (30s cap) before a worktree is removed.",
+    },
+  ];
+
+  return (
+    <div className="space-y-5">
+      <Field label="Project type">
+        <select
+          value={run.project_type ?? ""}
+          onChange={(e) =>
+            setRun({
+              ...run,
+              project_type: (e.target.value || null) as ProjectType | null,
+            })
+          }
+          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+        >
+          <option value="">Not set</option>
+          <option value="web">Web — preview in an embedded browser</option>
+          <option value="flutter">Flutter — runs on a local device</option>
+        </select>
+      </Field>
+
+      {scripts.map(({ key, label, placeholder, hint }) => (
+        <Field key={key} label={label}>
+          <Textarea
+            value={run[key] ?? ""}
+            onChange={(e) => setRun({ ...run, [key]: e.target.value })}
+            placeholder={placeholder}
+            spellCheck={false}
+            className="min-h-[56px] font-mono text-xs"
+          />
+          <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
+        </Field>
+      ))}
+      <p className="text-xs text-muted-foreground">
+        Commands run with <code>sh -lc</code> in the worktree, with{" "}
+        <code>$BL_PORT</code> (a free port), <code>$BL_PROJECT_ROOT</code> and{" "}
+        <code>$BL_WORKTREE_PATH</code> in the environment.
+      </p>
+      <div className="flex justify-end">
+        <Button onClick={onSave} disabled={saving}>
+          {saving ? "Saving…" : "Save run settings"}
         </Button>
       </div>
     </div>

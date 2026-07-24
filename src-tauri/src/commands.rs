@@ -8,6 +8,7 @@ use crate::config::{self, ConfigFile};
 use crate::engine::opencode_http::{self, ToolsStatus};
 use crate::git::{self, DiffStat, FileChange, FileContent, PrStatus, RemoteInfo};
 use crate::project::{AutofixMode, ProjectView, Registry, Workspace};
+use crate::run::{RunManager, RunSnapshot, RunState};
 use crate::server::{ServerInfo, ServerManager};
 use crate::supervisor::Supervisor;
 use crate::watcher::GitWatcher;
@@ -46,6 +47,7 @@ pub fn list_branches(project_id: String, registry: State<Registry>) -> Result<Ve
 /// Create a workspace (worktree on a generated branch codename). `base` is
 /// optional — omit to fork from the repo's current branch.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn create_workspace(
     project_id: String,
     base: Option<String>,
@@ -53,13 +55,23 @@ pub fn create_workspace(
     registry: State<Registry>,
     watcher: State<GitWatcher>,
     supervisor: State<Supervisor>,
+    runs: State<RunManager>,
     telemetry: State<crate::telemetry::Telemetry>,
 ) -> Result<Workspace, String> {
     let ws = registry.create_workspace(&project_id, base, init_prompt)?;
     watcher.watch(&ws.id, &ws.path);
     supervisor.reconcile_now();
+    run_setup_if_configured(&registry, &runs, &ws.id);
     telemetry.event("session_created", "/session", Some(serde_json::json!({ "source": "branch" })));
     Ok(ws)
+}
+
+/// Kick off the project's setup script in a fresh worktree (non-blocking).
+fn run_setup_if_configured(registry: &Registry, runs: &RunManager, workspace_id: &str) {
+    let Some((ws, settings, root)) = registry.run_context(workspace_id) else { return };
+    if let Some(script) = settings.setup_script.filter(|s| !s.trim().is_empty()) {
+        runs.run_setup(&ws.id, &script, &ws.path, &root);
+    }
 }
 
 /// Create a context-free quick chat: an app-managed scratch directory with its
@@ -104,6 +116,7 @@ pub async fn list_project_prs(
 
 /// Check a PR out into a fresh worktree and register it as a workspace.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn create_workspace_from_pr(
     project_id: String,
     pr_number: i64,
@@ -111,6 +124,7 @@ pub async fn create_workspace_from_pr(
     github: State<'_, crate::github::GithubManager>,
     watcher: State<'_, GitWatcher>,
     supervisor: State<'_, Supervisor>,
+    runs: State<'_, RunManager>,
     telemetry: State<'_, crate::telemetry::Telemetry>,
 ) -> Result<Workspace, String> {
     let root = registry.project_root(&project_id).ok_or("unknown project")?;
@@ -132,6 +146,7 @@ pub async fn create_workspace_from_pr(
     let ws = registry.create_workspace_from_pr(&project_id, meta)?;
     watcher.watch(&ws.id, &ws.path);
     supervisor.reconcile_now();
+    run_setup_if_configured(&registry, &runs, &ws.id);
     telemetry.event("session_created", "/session", Some(serde_json::json!({ "source": "pr" })));
     Ok(ws)
 }
@@ -154,10 +169,42 @@ pub fn remove_workspace(
     registry: State<Registry>,
     servers: State<ServerManager>,
     watcher: State<GitWatcher>,
+    runs: State<RunManager>,
 ) -> Result<(), String> {
+    // Kill the dev server first, then give the teardown script its bounded
+    // best-effort shot while the worktree still exists.
+    runs.stop(&workspace_id);
+    if let Some((ws, settings, root)) = registry.run_context(&workspace_id) {
+        if let Some(script) = settings.teardown_script.filter(|s| !s.trim().is_empty()) {
+            runs.run_teardown(&ws.id, &script, &ws.path, &root);
+        }
+    }
     servers.stop(&workspace_id);
     watcher.unwatch(&workspace_id);
     registry.remove_workspace(&workspace_id, force)
+}
+
+// ── Run & preview (see docs/design/run-preview.md) ──
+
+/// Start the project's run script in this workspace's worktree.
+#[tauri::command]
+pub fn run_start(workspace_id: String, registry: State<Registry>, runs: State<RunManager>) -> Result<RunState, String> {
+    let (ws, settings, root) = registry.run_context(&workspace_id).ok_or("unknown workspace")?;
+    let script = settings.run_script.filter(|s| !s.trim().is_empty()).ok_or("no run script configured")?;
+    runs.start(&ws.id, &script, &ws.path, &root)
+}
+
+/// Stop this workspace's run (kills the whole process tree).
+#[tauri::command]
+pub fn run_stop(workspace_id: String, runs: State<RunManager>) {
+    runs.stop(&workspace_id);
+}
+
+/// Current run state + recent output, for view remounts. Live updates arrive
+/// via `workspace:run` / `workspace:run_log` events.
+#[tauri::command]
+pub fn run_state(workspace_id: String, runs: State<RunManager>) -> RunSnapshot {
+    runs.snapshot(&workspace_id)
 }
 
 #[tauri::command]

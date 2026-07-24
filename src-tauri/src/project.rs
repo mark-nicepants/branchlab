@@ -36,6 +36,36 @@ pub struct Project {
     /// the account from this repo's `origin` remote (host + owner/org).
     #[serde(default)]
     pub account_id: Option<String>,
+    /// Run & preview settings. `#[serde(default)]` keeps older registries loadable.
+    #[serde(default)]
+    pub run: RunSettings,
+}
+
+/// What kind of app this project is — decides the preview surface (iframe for
+/// web dev servers, device status for Flutter) and, later, the remote preview
+/// strategy. See docs/design/run-preview.md.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectType {
+    Web,
+    Flutter,
+}
+
+/// Per-project run & preview settings. All commands are user-authored shell
+/// snippets (no framework detection — see docs/design/run-preview.md), run
+/// with `sh -lc` in the worktree with `BL_PORT` / `BL_PROJECT_ROOT` /
+/// `BL_WORKTREE_PATH` in the environment.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RunSettings {
+    pub project_type: Option<ProjectType>,
+    /// Dev-server command (e.g. `npm run dev -- --port $BL_PORT`). Started
+    /// manually from the session view.
+    pub run_script: Option<String>,
+    /// Runs once in a fresh worktree right after creation (installs, `.env`
+    /// symlinks from `$BL_PROJECT_ROOT`).
+    pub setup_script: Option<String>,
+    /// Best-effort, with a timeout, before worktree removal.
+    pub teardown_script: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -147,6 +177,8 @@ pub struct ProjectUpdate {
     /// GitHub account override. `Some("")` clears it (back to auto-detect),
     /// `Some(id)` sets it, `None` leaves it unchanged.
     pub account_id: Option<String>,
+    /// Run & preview settings — replaced as a whole block, like `prompts`.
+    pub run: Option<RunSettings>,
 }
 
 /// A project together with its workspaces — the shape the UI consumes.
@@ -246,6 +278,7 @@ impl Registry {
                 default_model_key: None,
                 prompts: ProjectPrompts::default(),
                 account_id: None,
+                run: RunSettings::default(),
             });
             data.workspaces.push(Workspace {
                 id: format!("{id}-base"),
@@ -426,8 +459,20 @@ impl Registry {
         if let Some(account_id) = update.account_id {
             project.account_id = if account_id.is_empty() { None } else { Some(account_id) };
         }
+        if let Some(run) = update.run {
+            project.run = run;
+        }
         self.persist(&data);
         Ok(self.view_of(&data, project_id))
+    }
+
+    /// A workspace's run settings + project root, for the run/preview feature.
+    /// `None` for unknown workspaces and quick chats (no project, nothing to run).
+    pub fn run_context(&self, workspace_id: &str) -> Option<(Workspace, RunSettings, String)> {
+        let data = self.data.lock().unwrap();
+        let ws = data.workspaces.iter().find(|w| w.id == workspace_id)?.clone();
+        let project = data.projects.iter().find(|p| p.id == ws.project_id)?;
+        Some((ws, project.run.clone(), project.root_path.clone()))
     }
 
     pub fn prompts(&self, project_id: &str) -> Result<ProjectPrompts, String> {

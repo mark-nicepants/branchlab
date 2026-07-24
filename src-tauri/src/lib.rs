@@ -8,6 +8,7 @@ mod github;
 mod logx;
 mod path;
 mod project;
+mod run;
 mod server;
 mod supervisor;
 mod telemetry;
@@ -57,6 +58,10 @@ pub fn run() {
             let servers = ServerManager::new();
             servers.spawn_reaper();
             app.manage(servers.clone());
+
+            // Run/preview: user-defined dev-server scripts per workspace
+            // (see docs/design/run-preview.md).
+            app.manage(run::RunManager::new(app.handle().clone()));
 
             // Backend orchestration: a filesystem watcher pushes git state, and
             // a supervisor consumes each server's SSE + drives the PR autofix
@@ -151,6 +156,9 @@ pub fn run() {
             commands::workspace_tools,
             commands::mcp_connect,
             commands::mcp_disconnect,
+            commands::run_start,
+            commands::run_stop,
+            commands::run_state,
             commands::start_server,
             commands::stop_server,
             commands::server_status,
@@ -184,9 +192,10 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
-            // Kill all opencode servers when the app exits.
+            // Kill all opencode servers and run processes when the app exits.
             if let tauri::RunEvent::Exit = event {
                 app.state::<ServerManager>().shutdown_all();
+                app.state::<run::RunManager>().shutdown_all();
             }
         });
 }

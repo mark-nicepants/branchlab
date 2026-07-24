@@ -21,6 +21,8 @@ import type {
   NotifyPayload,
   PrPayload,
   ReviewInboxPayload,
+  RunLogPayload,
+  RunState,
   SessionPayload,
   TodosPayload,
 } from "./types";
@@ -53,6 +55,16 @@ export function onWorkspaceTodos(cb: (p: TodosPayload) => void) {
 /** Discrete notification signals (turn done, awaiting input, pipeline status). */
 export function onWorkspaceNotify(cb: (p: NotifyPayload) => void) {
   return on<NotifyPayload>("workspace:notify", cb);
+}
+
+/** Run state for a workspace (status + discovered dev-server ports). */
+export function onWorkspaceRun(cb: (p: RunState) => void) {
+  return on<RunState>("workspace:run", cb);
+}
+
+/** One line of run/setup/teardown output. */
+export function onWorkspaceRunLog(cb: (p: RunLogPayload) => void) {
+  return on<RunLogPayload>("workspace:run_log", cb);
 }
 
 // ── GitHub subsystem (Rust `github` module) ──

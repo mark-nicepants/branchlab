@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Run & preview (phase 1, local): run your app inside a workspace's worktree
+  and see it without leaving BranchLab. Projects get a type (**web** or
+  **flutter**) plus user-defined **run / setup / teardown** scripts
+  (Project Settings → Run & preview) — setup fires once per fresh worktree,
+  teardown runs (30s cap) before a worktree is removed. A new panel in the
+  session view starts/stops the dev server, streams its output, discovers
+  the ports it binds (`lsof` + process-tree attribution — works even when
+  the script ignores `$BL_PORT`), and for web projects embeds a live
+  preview of the running app with reload / open-in-browser. Flutter
+  projects run on the local device/emulator. Run processes are killed as a
+  process group with the workspace and on app exit. Architecture and the
+  VPS/remote + headless-Android roadmap: docs/design/run-preview.md.
+
 ## [0.2.0] - 2026-07-05
 
 ### Added

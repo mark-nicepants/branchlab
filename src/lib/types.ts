@@ -78,6 +78,24 @@ export interface Project {
   prompts: ProjectPrompts;
   /** GitHub account override (`"{host}/{login}"`); null = use auto-detected. */
   account_id: string | null;
+  /** Run & preview settings (docs/design/run-preview.md). */
+  run: RunSettings;
+}
+
+/** What kind of app a project is — decides the preview surface. */
+export type ProjectType = "web" | "flutter";
+
+/** Per-project run & preview settings. Commands are user-authored shell
+ *  snippets run with `sh -lc` in the worktree, with `$BL_PORT`,
+ *  `$BL_PROJECT_ROOT`, `$BL_WORKTREE_PATH` in the environment. */
+export interface RunSettings {
+  project_type: ProjectType | null;
+  /** Dev-server command (e.g. `npm run dev -- --port $BL_PORT`). */
+  run_script: string | null;
+  /** Runs once in a fresh worktree right after creation. */
+  setup_script: string | null;
+  /** Best-effort (30s cap) before worktree removal. */
+  teardown_script: string | null;
 }
 
 export interface ProjectPrompts {
@@ -96,6 +114,31 @@ export interface ProjectUpdate {
   /** GitHub account override: "" clears it (auto-detect), an id sets it,
    *  undefined leaves it unchanged. */
   account_id?: string;
+  /** Run & preview settings — replaced as a whole block, like `prompts`. */
+  run?: RunSettings;
+}
+
+/** `workspace:run` — one workspace's run state (status + discovered ports). */
+export interface RunState {
+  workspaceId: string;
+  status: "running" | "exited";
+  /** The free-port hint exported as `$BL_PORT`. */
+  blPort: number;
+  /** Listening TCP ports attributed to the run's process tree (sorted). */
+  ports: number[];
+  exitCode: number | null;
+}
+
+/** Mount-time snapshot from `run_state`: state + recent output lines. */
+export interface RunSnapshot {
+  state: RunState | null;
+  log: string[];
+}
+
+/** `workspace:run_log` — one line of run/setup/teardown output. */
+export interface RunLogPayload {
+  workspaceId: string;
+  chunk: string;
 }
 
 // `ProjectView` flattens Project fields + a workspaces array.

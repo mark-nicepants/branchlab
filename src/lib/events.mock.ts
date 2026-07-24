@@ -20,6 +20,8 @@ import type {
   NotifyPayload,
   PrPayload,
   ReviewInboxPayload,
+  RunLogPayload,
+  RunState,
   SessionPayload,
   TodosPayload,
 } from "./types";
@@ -53,6 +55,12 @@ export function onWorkspaceTodos(cb: (p: TodosPayload) => void) {
 }
 export function onWorkspaceNotify(cb: (p: NotifyPayload) => void) {
   return on<NotifyPayload>("workspace:notify", cb);
+}
+export function onWorkspaceRun(cb: (p: RunState) => void) {
+  return on<RunState>("workspace:run", cb);
+}
+export function onWorkspaceRunLog(cb: (p: RunLogPayload) => void) {
+  return on<RunLogPayload>("workspace:run_log", cb);
 }
 
 export function onGitHubAccounts(cb: (p: AccountsPayload) => void) {
