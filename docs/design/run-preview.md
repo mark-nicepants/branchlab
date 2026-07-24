@@ -170,3 +170,42 @@ so the day #1737 is fixed a binder-enabled kernel makes this work as-is.
 Error signatures: missing binder → boot loop (`Binder driver '/dev/binder'
 could not be opened`) → our boot timeout; apple/container today → immediate
 `configureDns` bootstrap failure in the streamed `run` output.
+
+## Circle back: apple/container#1737 (redroid on Apple `container`)
+
+**Tracking:** <https://github.com/apple/container/issues/1737> — "unable to
+run redroid: bootstrap fails at configureDns/configureHosts". Open as of
+July 2026; fix PR [#1822](https://github.com/apple/container/pull/1822) was
+closed unmerged; not in v1.1.0. Root causes (confirmed by a maintainer, in
+the `containerization` lib): vminitd always writes `/etc/hostname`, and
+`configureHosts` always runs — both fail on redroid's rootfs, which has no
+writable standard `/etc`. `--no-dns` does not help (it fails at
+`configureHosts` next).
+
+**How to check if it's fixed:** on a new `container` release, run
+`container run --rm --cap-add ALL docker.io/redroid/redroid:15.0.0_64only-latest`
+— if it gets past bootstrap (fails later, or boots with a binder kernel),
+the blocker is gone.
+
+**When fixed, to make flutter-redroid work on this Mac:**
+
+1. Build a binder-enabled kernel per
+   [apple/containerization `kernel/`](https://github.com/apple/containerization/tree/main/kernel):
+   take `config-arm64`, add
+   `CONFIG_ANDROID_BINDER_IPC=y`, `CONFIG_ANDROID_BINDERFS=y`,
+   `CONFIG_ANDROID_BINDER_DEVICES="binder,hwbinder,vndbinder"`, then `make`
+   (builds in a container; output is an uncompressed arm64 `Image`,
+   conventionally named `vmlinux-arm64`). Verified working in #1737's thread —
+   binder mounts fine under `--cap-add ALL`; no other BranchLab change needed.
+2. Launch BranchLab with `BRANCHLAB_REDROID_KERNEL=/path/to/vmlinux-arm64`
+   (or set it system-wide via `container system kernel set` — note it rejects
+   `.zst` archives and relative paths, apple/container #767/#573).
+3. Press Run on a flutter-redroid workspace; the boot log streams into the
+   run panel.
+
+**Until then on macOS:** Docker in an Ubuntu VM (UTM/Parallels) +
+`modprobe binder_linux devices="binder,hwbinder,vndbinder"` is the
+maintainer-endorsed path, or point a docker context at a Linux box — the
+docker code path is exactly what the VPS will run. Interesting alternative
+seen in #1737: `cuttlefish/cuttlefish-orchestration` boots cleanly under
+apple/container today (heavier than redroid; would need adb wiring changes).
