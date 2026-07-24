@@ -40,6 +40,8 @@ notify-debouncer-full = "0.3"
 rusqlite = { version = "0.32", features = ["bundled"] }
 # Stable, sortable ids for conversations/entries/blocks (monotonic ULIDs).
 ulid = "1"
+# Screencap frames for the redroid preview are pushed as data-URL events.
+base64 = "0.22"
 # ACP (Agent Client Protocol) client — the engine transport. Pinned exactly:
 # the crate's high-level API is still evolving, and all its types are isolated
 # behind `crate::engine::acp` so an upgrade touches only that module.

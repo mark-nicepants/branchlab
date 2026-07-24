@@ -8,6 +8,8 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AccountsPayload,
+  AndroidFramePayload,
+  AndroidState,
   ChatBlockEvent,
   ChatCommandsEvent,
   ChatConfigEvent,
@@ -65,6 +67,16 @@ export function onWorkspaceRun(cb: (p: RunState) => void) {
 /** One line of run/setup/teardown output. */
 export function onWorkspaceRunLog(cb: (p: RunLogPayload) => void) {
   return on<RunLogPayload>("workspace:run_log", cb);
+}
+
+/** A flutter-redroid workspace's Android (container) state. */
+export function onWorkspaceAndroid(cb: (p: AndroidState) => void) {
+  return on<AndroidState>("workspace:android", cb);
+}
+
+/** A screencap frame for the in-app Android preview. */
+export function onAndroidFrame(cb: (p: AndroidFramePayload) => void) {
+  return on<AndroidFramePayload>("workspace:android_frame", cb);
 }
 
 // ── GitHub subsystem (Rust `github` module) ──

@@ -7,6 +7,8 @@
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AccountsPayload,
+  AndroidFramePayload,
+  AndroidState,
   ChatBlockEvent,
   ChatCommandsEvent,
   ChatConfigEvent,
@@ -61,6 +63,12 @@ export function onWorkspaceRun(cb: (p: RunState) => void) {
 }
 export function onWorkspaceRunLog(cb: (p: RunLogPayload) => void) {
   return on<RunLogPayload>("workspace:run_log", cb);
+}
+export function onWorkspaceAndroid(cb: (p: AndroidState) => void) {
+  return on<AndroidState>("workspace:android", cb);
+}
+export function onAndroidFrame(cb: (p: AndroidFramePayload) => void) {
+  return on<AndroidFramePayload>("workspace:android_frame", cb);
 }
 
 export function onGitHubAccounts(cb: (p: AccountsPayload) => void) {

@@ -381,6 +381,7 @@ name = "branchlab"
 version = "0.2.0"
 dependencies = [
  "agent-client-protocol",
+ "base64 0.22.1",
  "notify",
  "notify-debouncer-full",
  "octocrab",

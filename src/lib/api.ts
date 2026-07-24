@@ -5,6 +5,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   Account,
+  AndroidState,
   AutofixMode,
   PrSummary,
   ReviewInboxItem,
@@ -18,7 +19,6 @@ import type {
   ProjectUpdate,
   ProjectView,
   RunSnapshot,
-  RunState,
   ServerInfo,
   SidebarWorkspace,
   ToolsStatus,
@@ -338,9 +338,11 @@ export function chatNewSession(
 
 // ── Run & preview (docs/design/run-preview.md; deltas via events.ts) ──
 
-/** Start the project's run script in this workspace's worktree. */
-export function runStart(workspaceId: string): Promise<RunState> {
-  return invoke<RunState>("run_start", { workspaceId });
+/** Start the project's run script in this workspace's worktree. For
+ *  flutter-redroid projects this first brings the Android container up;
+ *  progress arrives via `workspace:android` + run-log events. */
+export function runStart(workspaceId: string): Promise<void> {
+  return invoke<void>("run_start", { workspaceId });
 }
 
 /** Stop this workspace's run (kills the whole process tree). */
@@ -351,6 +353,31 @@ export function runStop(workspaceId: string): Promise<void> {
 /** Current run state + recent output, for view remounts. */
 export function runState(workspaceId: string): Promise<RunSnapshot> {
   return invoke<RunSnapshot>("run_state", { workspaceId });
+}
+
+/** Current Android (redroid) state, for view remounts. */
+export function androidState(
+  workspaceId: string,
+): Promise<AndroidState | null> {
+  return invoke<AndroidState | null>("android_state", { workspaceId });
+}
+
+/** Tell the backend a preview panel is (un)watching — it pushes
+ *  `workspace:android_frame` screencaps while any panel watches. */
+export function androidPreview(
+  workspaceId: string,
+  enabled: boolean,
+): Promise<void> {
+  return invoke<void>("android_preview", { workspaceId, enabled });
+}
+
+/** Inject a tap at normalized (0..1) preview coordinates. */
+export function androidTap(
+  workspaceId: string,
+  x: number,
+  y: number,
+): Promise<void> {
+  return invoke<void>("android_tap", { workspaceId, x, y });
 }
 
 // ── Backend orchestration (events pushed back via src/lib/events.ts) ──

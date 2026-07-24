@@ -82,8 +82,11 @@ export interface Project {
   run: RunSettings;
 }
 
-/** What kind of app a project is — decides the preview surface. */
-export type ProjectType = "web" | "flutter";
+/** What kind of app a project is — decides the preview surface.
+ *  `flutter-redroid` runs on a BranchLab-managed Android-in-container
+ *  (redroid) instance previewed in-app — the same stack as the future VPS
+ *  preview. */
+export type ProjectType = "web" | "flutter" | "flutter-redroid";
 
 /** Per-project run & preview settings. Commands are user-authored shell
  *  snippets run with `sh -lc` in the worktree, with `$BL_PORT`,
@@ -139,6 +142,22 @@ export interface RunSnapshot {
 export interface RunLogPayload {
   workspaceId: string;
   chunk: string;
+}
+
+/** `workspace:android` — a flutter-redroid workspace's Android state. */
+export interface AndroidState {
+  workspaceId: string;
+  status: "starting" | "booting" | "ready" | "stopped" | "error";
+  /** adb serial (`127.0.0.1:<port>`) once connected. */
+  serial: string | null;
+  /** Human-readable detail for `error`. */
+  message: string | null;
+}
+
+/** `workspace:android_frame` — a PNG data-URL screencap while previewing. */
+export interface AndroidFramePayload {
+  workspaceId: string;
+  dataUrl: string;
 }
 
 // `ProjectView` flattens Project fields + a workspaces array.

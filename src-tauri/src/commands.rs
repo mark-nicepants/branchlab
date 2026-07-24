@@ -4,11 +4,12 @@ use std::path::PathBuf;
 
 use tauri::State;
 
+use crate::android::{AndroidManager, AndroidState};
 use crate::config::{self, ConfigFile};
 use crate::engine::opencode_http::{self, ToolsStatus};
 use crate::git::{self, DiffStat, FileChange, FileContent, PrStatus, RemoteInfo};
-use crate::project::{AutofixMode, ProjectView, Registry, Workspace};
-use crate::run::{RunManager, RunSnapshot, RunState};
+use crate::project::{AutofixMode, ProjectType, ProjectView, Registry, Workspace};
+use crate::run::{RunManager, RunSnapshot};
 use crate::server::{ServerInfo, ServerManager};
 use crate::supervisor::Supervisor;
 use crate::watcher::GitWatcher;
@@ -170,6 +171,7 @@ pub fn remove_workspace(
     servers: State<ServerManager>,
     watcher: State<GitWatcher>,
     runs: State<RunManager>,
+    android: State<AndroidManager>,
 ) -> Result<(), String> {
     // Kill the dev server first, then give the teardown script its bounded
     // best-effort shot while the worktree still exists.
@@ -177,6 +179,9 @@ pub fn remove_workspace(
     if let Some((ws, settings, root)) = registry.run_context(&workspace_id) {
         if let Some(script) = settings.teardown_script.filter(|s| !s.trim().is_empty()) {
             runs.run_teardown(&ws.id, &script, &ws.path, &root);
+        }
+        if settings.project_type == Some(ProjectType::FlutterRedroid) {
+            android.remove(&ws.id);
         }
     }
     servers.stop(&workspace_id);
@@ -186,12 +191,34 @@ pub fn remove_workspace(
 
 // ── Run & preview (see docs/design/run-preview.md) ──
 
-/// Start the project's run script in this workspace's worktree.
+/// Start the project's run script in this workspace's worktree. For
+/// flutter-redroid projects the redroid container is brought up first (off
+/// this thread — progress streams via `workspace:android` + run-log events),
+/// then the script runs with `ANDROID_SERIAL` pointed at it.
 #[tauri::command]
-pub fn run_start(workspace_id: String, registry: State<Registry>, runs: State<RunManager>) -> Result<RunState, String> {
+pub fn run_start(
+    workspace_id: String,
+    registry: State<Registry>,
+    runs: State<RunManager>,
+    android: State<AndroidManager>,
+) -> Result<(), String> {
     let (ws, settings, root) = registry.run_context(&workspace_id).ok_or("unknown workspace")?;
     let script = settings.run_script.filter(|s| !s.trim().is_empty()).ok_or("no run script configured")?;
-    runs.start(&ws.id, &script, &ws.path, &root)
+
+    if settings.project_type == Some(ProjectType::FlutterRedroid) {
+        let (android, runs) = (android.inner().clone(), runs.inner().clone());
+        std::thread::spawn(move || {
+            // ensure_ready logs + emits its own error state on failure.
+            if let Ok(serial) = android.ensure_ready(&ws.id) {
+                let env = [("ANDROID_SERIAL".to_string(), serial.clone()), ("BL_ANDROID_SERIAL".to_string(), serial)];
+                let _ = runs.start(&ws.id, &script, &ws.path, &root, &env);
+            }
+        });
+        return Ok(());
+    }
+
+    runs.start(&ws.id, &script, &ws.path, &root, &[])?;
+    Ok(())
 }
 
 /// Stop this workspace's run (kills the whole process tree).
@@ -205,6 +232,26 @@ pub fn run_stop(workspace_id: String, runs: State<RunManager>) {
 #[tauri::command]
 pub fn run_state(workspace_id: String, runs: State<RunManager>) -> RunSnapshot {
     runs.snapshot(&workspace_id)
+}
+
+/// Current Android (redroid) state, for view remounts.
+#[tauri::command]
+pub fn android_state(workspace_id: String, android: State<AndroidManager>) -> Option<AndroidState> {
+    android.state(&workspace_id)
+}
+
+/// Preview refcount from open run panels — the backend pushes
+/// `workspace:android_frame` screencaps while any panel is watching
+/// (the frontend never polls; see AGENTS.md boundaries).
+#[tauri::command]
+pub fn android_preview(workspace_id: String, enabled: bool, android: State<AndroidManager>) {
+    android.set_preview(&workspace_id, enabled);
+}
+
+/// Inject a tap at normalized (0..1) preview coordinates.
+#[tauri::command]
+pub fn android_tap(workspace_id: String, x: f32, y: f32, android: State<AndroidManager>) -> Result<(), String> {
+    android.tap(&workspace_id, x, y)
 }
 
 #[tauri::command]

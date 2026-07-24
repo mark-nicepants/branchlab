@@ -416,7 +416,18 @@ function RunTab({
           <option value="">Not set</option>
           <option value="web">Web — preview in an embedded browser</option>
           <option value="flutter">Flutter — runs on a local device</option>
+          <option value="flutter-redroid">
+            Flutter · redroid — Android in a container, previewed in-app
+          </option>
         </select>
+        {run.project_type === "flutter-redroid" && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Needs Docker or Apple's <code>container</code> plus <code>adb</code>
+            . The run script gets <code>$ANDROID_SERIAL</code> pointed at the
+            container — e.g.{" "}
+            <code>flutter run -d $ANDROID_SERIAL --no-resident</code>.
+          </p>
+        )}
       </Field>
 
       {scripts.map(({ key, label, placeholder, hint }) => (

@@ -4,33 +4,54 @@ import { ExternalLink, Play, RotateCw, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
+  androidPreview,
+  androidState as fetchAndroidState,
+  androidTap,
   openExternal,
   runStart,
   runState as fetchRunState,
   runStop,
 } from "../../lib/api";
-import { onWorkspaceRun, onWorkspaceRunLog } from "../../lib/events";
-import type { ProjectType, RunState } from "../../lib/types";
+import {
+  onAndroidFrame,
+  onWorkspaceAndroid,
+  onWorkspaceRun,
+  onWorkspaceRunLog,
+} from "../../lib/events";
+import type { AndroidState, ProjectType, RunState } from "../../lib/types";
 
 interface Props {
   workspaceId: string;
-  /** Decides the preview surface: web → iframe, flutter → device status. */
+  /** Decides the preview surface: web → iframe, flutter → local device,
+   *  flutter-redroid → in-app Android screen. */
   projectType: ProjectType | null;
 }
 
+const ANDROID_LABEL: Record<AndroidState["status"], string> = {
+  starting: "Starting Android container…",
+  booting: "Booting Android…",
+  ready: "Android ready",
+  stopped: "Android stopped",
+  error: "Android error",
+};
+
 /**
  * Run & preview panel: start/stop the project's run script in this workspace,
- * stream its output, and — for web projects — preview the discovered dev
- * server in an embedded iframe. State is pushed by the backend via
- * `workspace:run` / `workspace:run_log`; a snapshot seeds remounts.
+ * stream its output, and preview the app — an iframe for web dev servers, a
+ * tappable screencap stream for flutter-redroid. State is pushed by the
+ * backend via `workspace:run*` / `workspace:android*`; snapshots seed
+ * remounts.
  */
 export function RunPanel({ workspaceId, projectType }: Props) {
   const [state, setState] = useState<RunState | null>(null);
   const [log, setLog] = useState<string[]>([]);
+  const [android, setAndroid] = useState<AndroidState | null>(null);
+  const [frame, setFrame] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // Bumped to force an iframe reload.
   const [frameNonce, setFrameNonce] = useState(0);
   const logRef = useRef<HTMLPreElement>(null);
+  const isRedroid = projectType === "flutter-redroid";
 
   // Seed from the snapshot, then apply event deltas.
   useEffect(() => {
@@ -59,6 +80,34 @@ export function RunPanel({ workspaceId, projectType }: Props) {
     };
   }, [workspaceId]);
 
+  // Android state + screencap stream (flutter-redroid only). The preview
+  // refcount tells the backend to push frames while this panel is open.
+  useEffect(() => {
+    if (!isRedroid) return;
+    let cancelled = false;
+    setAndroid(null);
+    setFrame(null);
+    void fetchAndroidState(workspaceId).then((s) => {
+      if (!cancelled) setAndroid(s);
+    });
+    void androidPreview(workspaceId, true);
+
+    const unsubs: (() => void)[] = [];
+    let dead = false;
+    void onWorkspaceAndroid((p) => {
+      if (p.workspaceId === workspaceId) setAndroid(p);
+    }).then((fn) => (dead ? fn() : unsubs.push(fn)));
+    void onAndroidFrame((p) => {
+      if (p.workspaceId === workspaceId) setFrame(p.dataUrl);
+    }).then((fn) => (dead ? fn() : unsubs.push(fn)));
+    return () => {
+      cancelled = true;
+      dead = true;
+      unsubs.forEach((fn) => fn());
+      void androidPreview(workspaceId, false);
+    };
+  }, [workspaceId, isRedroid]);
+
   // Keep the log pinned to the bottom as output streams in.
   useEffect(() => {
     const el = logRef.current;
@@ -68,7 +117,23 @@ export function RunPanel({ workspaceId, projectType }: Props) {
   const running = state?.status === "running";
   const port = running ? state.ports[0] : undefined;
   const previewUrl = port ? `http://localhost:${port}` : null;
-  const showPreview = projectType === "web" && previewUrl;
+  const showWebPreview = projectType === "web" && previewUrl;
+  const showAndroidPreview = isRedroid && frame !== null;
+  const androidBusy =
+    android?.status === "starting" || android?.status === "booting";
+
+  const statusText = isRedroid
+    ? android
+      ? (android.message ?? ANDROID_LABEL[android.status]) +
+        (android.status === "ready" && android.serial
+          ? ` · ${android.serial}`
+          : "")
+      : "Not running"
+    : running
+      ? (previewUrl ?? "Running — waiting for a port…")
+      : state
+        ? `Exited${state.exitCode != null ? ` (${state.exitCode})` : ""}`
+        : "Not running";
 
   async function toggle() {
     setBusy(true);
@@ -81,6 +146,13 @@ export function RunPanel({ workspaceId, projectType }: Props) {
     setBusy(false);
   }
 
+  function tap(e: React.MouseEvent<HTMLImageElement>) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width;
+    const y = (e.clientY - rect.top) / rect.height;
+    void androidTap(workspaceId, x, y).catch((err) => toast.error(String(err)));
+  }
+
   return (
     <div className="flex h-full flex-col">
       {/* Header: status + controls */}
@@ -88,19 +160,22 @@ export function RunPanel({ workspaceId, projectType }: Props) {
         <span
           className={cn(
             "size-2 shrink-0 rounded-full",
-            running ? "bg-emerald-500" : "bg-muted-foreground/40",
+            running || android?.status === "ready"
+              ? "bg-emerald-500"
+              : androidBusy
+                ? "animate-pulse bg-warning"
+                : android?.status === "error"
+                  ? "bg-destructive"
+                  : "bg-muted-foreground/40",
           )}
         />
-        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-          {running
-            ? previewUrl
-              ? previewUrl
-              : "Running — waiting for a port…"
-            : state
-              ? `Exited${state.exitCode != null ? ` (${state.exitCode})` : ""}`
-              : "Not running"}
+        <span
+          className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
+          title={statusText}
+        >
+          {statusText}
         </span>
-        {showPreview && (
+        {showWebPreview && (
           <>
             <Button
               variant="ghost"
@@ -126,7 +201,7 @@ export function RunPanel({ workspaceId, projectType }: Props) {
           variant={running ? "outline" : "default"}
           size="sm"
           className="h-7 text-xs"
-          disabled={busy}
+          disabled={busy || androidBusy}
           onClick={() => void toggle()}
         >
           {running ? (
@@ -141,14 +216,24 @@ export function RunPanel({ workspaceId, projectType }: Props) {
         </Button>
       </div>
 
-      {/* Preview (web) / device note (flutter) */}
-      {showPreview ? (
+      {/* Preview: web iframe / android screen / flutter device note */}
+      {showWebPreview ? (
         <iframe
           key={`${previewUrl}-${frameNonce}`}
           src={previewUrl}
           title="App preview"
           className="min-h-0 flex-1 border-0 bg-white"
         />
+      ) : showAndroidPreview ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-black/90 p-2">
+          {/* Screencap stream; clicks are forwarded as taps. */}
+          <img
+            src={frame}
+            alt="Android screen"
+            onClick={tap}
+            className="max-h-full max-w-full cursor-pointer rounded-md object-contain"
+          />
+        </div>
       ) : (
         running &&
         projectType === "flutter" && (
@@ -163,7 +248,7 @@ export function RunPanel({ workspaceId, projectType }: Props) {
         ref={logRef}
         className={cn(
           "m-0 select-text overflow-y-auto whitespace-pre-wrap break-all px-3 py-2 font-mono text-[11px] leading-relaxed text-muted-foreground",
-          showPreview
+          showWebPreview || showAndroidPreview
             ? "h-36 shrink-0 border-t border-border"
             : "min-h-0 flex-1",
         )}

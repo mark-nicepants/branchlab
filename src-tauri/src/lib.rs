@@ -1,3 +1,4 @@
+mod android;
 mod chat;
 mod commands;
 mod config;
@@ -61,7 +62,10 @@ pub fn run() {
 
             // Run/preview: user-defined dev-server scripts per workspace
             // (see docs/design/run-preview.md).
-            app.manage(run::RunManager::new(app.handle().clone()));
+            let runs = run::RunManager::new(app.handle().clone());
+            app.manage(runs.clone());
+            // Android (redroid) containers for flutter-redroid workspaces.
+            app.manage(android::AndroidManager::new(app.handle().clone(), runs));
 
             // Backend orchestration: a filesystem watcher pushes git state, and
             // a supervisor consumes each server's SSE + drives the PR autofix
@@ -159,6 +163,9 @@ pub fn run() {
             commands::run_start,
             commands::run_stop,
             commands::run_state,
+            commands::android_state,
+            commands::android_preview,
+            commands::android_tap,
             commands::start_server,
             commands::stop_server,
             commands::server_status,
@@ -192,10 +199,13 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
-            // Kill all opencode servers and run processes when the app exits.
+            // Kill all opencode servers, run processes, and redroid containers
+            // when the app exits (containers are stopped, not removed, so the
+            // next session boots warm).
             if let tauri::RunEvent::Exit = event {
                 app.state::<ServerManager>().shutdown_all();
                 app.state::<run::RunManager>().shutdown_all();
+                app.state::<android::AndroidManager>().shutdown_all();
             }
         });
 }

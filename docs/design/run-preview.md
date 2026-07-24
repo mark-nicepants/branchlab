@@ -1,6 +1,6 @@
 # Run & Preview — design
 
-Status: Phase 1 in progress · Research date: July 2026
+Status: Phase 1 shipped (incl. local redroid) · Research date: July 2026
 
 Goal: run the app inside a workspace's worktree and _see it_ from BranchLab —
 like t3code's run/preview — locally first, later on a VPS, including Flutter
@@ -133,3 +133,40 @@ Sibling of `ServerManager`, same shape:
   `setup_script` runs automatically).
 - No idle reaping of run processes, no port _reservation_ across restarts.
 - No remote/proxy anything.
+
+## Phase 1.5 — local redroid (`flutter-redroid` project type)
+
+The local half of the phase-3 VPS stack, so the container → adb →
+`flutter run` wiring can be exercised before any server exists.
+
+- **AndroidManager** (`src-tauri/src/android.rs`): one redroid container per
+  workspace (`bl-redroid-<ws>`, deterministic adb port from the workspace id).
+  Runtime abstraction: **Docker preferred, Apple `container` fallback**
+  (`--privileged` vs `--cap-add ALL`; `pull` vs `image pull` — everything else
+  is flag-compatible). No inspect/schema parsing: `run`, fall back to `start`,
+  and let the adb `sys.boot_completed` wait be the readiness gate.
+- Run flow: `run_start` boots the container off-thread (progress streams into
+  the run log + `workspace:android` events), then starts the run script with
+  `ANDROID_SERIAL`/`BL_ANDROID_SERIAL` pointing at it — so the script is just
+  `flutter run -d $ANDROID_SERIAL`.
+- **Preview (interim)**: backend-pushed `screencap -p` frames
+  (`workspace:android_frame`, ~1.4 fps) + `input tap` at normalized
+  coordinates. Deliberately version-proof; the scrcpy→WebSocket→WebCodecs
+  stream planned for the VPS phase replaces this transport wholesale.
+- Lifecycle: container is kept warm across run stop/start; **stopped** on app
+  exit; **removed** on workspace deletion.
+
+### Runtime feasibility (researched July 2026, verified sources)
+
+| Host                                                  | redroid works?                                                                                                                                                                                                                                                                                                                                                          |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Linux (VPS/desktop), Docker + `modprobe binder_linux` | **Yes** — the target path                                                                                                                                                                                                                                                                                                                                               |
+| macOS, Docker Desktop / OrbStack                      | **No** — LinuxKit/custom kernels ship `CONFIG_ANDROID_BINDER_IPC` disabled, no module loading                                                                                                                                                                                                                                                                           |
+| macOS, Apple `container`                              | **Blocked upstream** — a custom binder-enabled kernel verifiably works (`-k vmlinux-arm64 --cap-add ALL`, kata config + `CONFIG_ANDROID_BINDER_IPC=y` etc.), but redroid's rootfs trips apple/container's `configureDns`/`configureHosts` bootstrap ([apple/container#1737](https://github.com/apple/container/issues/1737), open; fix PR closed unmerged as of v1.1.0) |
+| macOS, Ubuntu VM (UTM/Parallels) + docker inside      | Yes — maintainer-endorsed recipe                                                                                                                                                                                                                                                                                                                                        |
+
+`BRANCHLAB_REDROID_KERNEL=<path>` passes `--kernel` to Apple `container` runs,
+so the day #1737 is fixed a binder-enabled kernel makes this work as-is.
+Error signatures: missing binder → boot loop (`Binder driver '/dev/binder'
+could not be opened`) → our boot timeout; apple/container today → immediate
+`configureDns` bootstrap failure in the streamed `run` output.

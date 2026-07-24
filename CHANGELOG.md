@@ -22,6 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   process group with the workspace and on app exit. Architecture and the
   VPS/remote + headless-Android roadmap: docs/design/run-preview.md.
 
+- Flutter on redroid (**flutter-redroid** project type): BranchLab boots an
+  Android-in-container (redroid) instance per workspace — Docker preferred,
+  Apple's `container` CLI as fallback — waits for boot over adb, hands the
+  run script `$ANDROID_SERIAL`, and previews the Android screen in-app
+  (screencap stream, click-to-tap). Containers stay warm across run
+  stop/start, stop on app exit, and are removed with the workspace. This is
+  the local half of the planned VPS preview stack. Note: on macOS this
+  currently requires Docker in a Linux VM — Docker Desktop kernels lack
+  binder, and Apple `container` is blocked by an upstream bug
+  (apple/container#1737); details in docs/design/run-preview.md.
+
 ## [0.2.0] - 2026-07-05
 
 ### Added

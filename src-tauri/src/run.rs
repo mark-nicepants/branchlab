@@ -104,8 +104,16 @@ impl RunManager {
     }
 
     /// Start the run script for a workspace (no-op returning the live state if
-    /// already running). Fresh start clears the workspace's log.
-    pub fn start(&self, workspace_id: &str, script: &str, cwd: &str, project_root: &str) -> Result<RunState, String> {
+    /// already running). Fresh start clears the workspace's log. `extra_env`
+    /// adds to the standard `BL_*` variables (e.g. `ANDROID_SERIAL`).
+    pub fn start(
+        &self,
+        workspace_id: &str,
+        script: &str,
+        cwd: &str,
+        project_root: &str,
+        extra_env: &[(String, String)],
+    ) -> Result<RunState, String> {
         let mut runs = self.inner.runs.lock().unwrap();
         if let Some(rp) = runs.get_mut(workspace_id) {
             if matches!(rp.child.try_wait(), Ok(None)) {
@@ -115,7 +123,7 @@ impl RunManager {
         }
 
         let bl_port = free_port_hint();
-        let mut child = spawn_script(script, cwd, project_root, bl_port)?;
+        let mut child = spawn_script(script, cwd, project_root, bl_port, extra_env)?;
         self.inner.logs.lock().unwrap().insert(workspace_id.to_string(), VecDeque::new());
         self.pipe_output(workspace_id, &mut child);
         crate::logf!("run", "start ws={workspace_id} pid={} bl_port={bl_port}", child.id());
@@ -224,7 +232,7 @@ impl RunManager {
         timeout: Duration,
     ) {
         self.append_log(workspace_id, &format!("[{label}] $ {script}"));
-        let mut child = match spawn_script(script, cwd, project_root, 0) {
+        let mut child = match spawn_script(script, cwd, project_root, 0, &[]) {
             Ok(c) => c,
             Err(e) => {
                 self.append_log(workspace_id, &format!("[{label}] failed to start: {e}"));
@@ -267,7 +275,9 @@ impl RunManager {
         }
     }
 
-    fn append_log(&self, workspace_id: &str, line: &str) {
+    /// Also used by the AndroidManager so container/boot progress lands in
+    /// the same per-workspace log the run panel shows.
+    pub(crate) fn append_log(&self, workspace_id: &str, line: &str) {
         {
             let mut logs = self.inner.logs.lock().unwrap();
             let buf = logs.entry(workspace_id.to_string()).or_default();
@@ -362,7 +372,13 @@ impl RunManager {
 
 /// `sh -lc <script>` in its own process group, cwd = worktree. `bl_port` 0
 /// means "no hint" (hooks).
-fn spawn_script(script: &str, cwd: &str, project_root: &str, bl_port: u16) -> Result<Child, String> {
+fn spawn_script(
+    script: &str,
+    cwd: &str,
+    project_root: &str,
+    bl_port: u16,
+    extra_env: &[(String, String)],
+) -> Result<Child, String> {
     let mut cmd = Command::new("sh");
     cmd.arg("-lc")
         .arg(script)
@@ -374,6 +390,9 @@ fn spawn_script(script: &str, cwd: &str, project_root: &str, bl_port: u16) -> Re
         .stderr(Stdio::piped());
     if bl_port > 0 {
         cmd.env("BL_PORT", bl_port.to_string());
+    }
+    for (k, v) in extra_env {
+        cmd.env(k, v);
     }
     #[cfg(unix)]
     {

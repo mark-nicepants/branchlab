@@ -48,7 +48,12 @@ pub struct Project {
 #[serde(rename_all = "lowercase")]
 pub enum ProjectType {
     Web,
+    /// Flutter on a locally visible device/emulator.
     Flutter,
+    /// Flutter on a redroid (Android-in-container) instance managed by
+    /// BranchLab, previewed in-app. Same stack as the future VPS preview.
+    #[serde(rename = "flutter-redroid")]
+    FlutterRedroid,
 }
 
 /// Per-project run & preview settings. All commands are user-authored shell

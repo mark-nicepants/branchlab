@@ -5,6 +5,7 @@
 import { mockEmit } from "./events.mock";
 import type {
   Account,
+  AndroidState,
   ChatAttachment,
   ChatSnapshot,
   ConfigFile,
@@ -118,8 +119,8 @@ let projects: ProjectView[] = [
       create_pr: null,
     },
     run: {
-      project_type: null,
-      run_script: null,
+      project_type: "flutter-redroid",
+      run_script: "flutter run -d $ANDROID_SERIAL",
       setup_script: null,
       teardown_script: null,
     },
@@ -699,10 +700,9 @@ function emitRunLog(workspaceId: string, chunk: string) {
   mockEmit("workspace:run_log", { workspaceId, chunk });
 }
 
-export function runStart(workspaceId: string): Promise<RunState> {
+export function runStart(workspaceId: string): Promise<void> {
   const existing = mockRuns.get(workspaceId);
-  if (existing?.state.status === "running")
-    return Promise.resolve(existing.state);
+  if (existing?.state.status === "running") return Promise.resolve();
   const state: RunState = {
     workspaceId,
     status: "running",
@@ -722,7 +722,7 @@ export function runStart(workspaceId: string): Promise<RunState> {
     r.state = { ...r.state, ports: [5173] };
     mockEmit("workspace:run", r.state);
   }, 900);
-  return Promise.resolve(state);
+  return Promise.resolve();
 }
 
 export function runStop(workspaceId: string): Promise<void> {
@@ -740,6 +740,84 @@ export function runState(workspaceId: string): Promise<RunSnapshot> {
   return Promise.resolve(
     r ? { state: r.state, log: [...r.log] } : { state: null, log: [] },
   );
+}
+
+// ── Android (redroid) mocks: a scripted boot + a static "screen" frame so
+//    the flutter-redroid preview renders in the browser harness. ──
+
+const mockAndroid = new Map<string, AndroidState>();
+let mockFrameTimer: ReturnType<typeof setInterval> | null = null;
+
+/** A phone-shaped SVG standing in for a screencap frame. */
+const MOCK_FRAME =
+  "data:image/svg+xml;utf8," +
+  encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="720" height="1560">
+      <rect width="720" height="1560" fill="#1c2128"/>
+      <rect x="0" y="0" width="720" height="90" fill="#22272e"/>
+      <text x="36" y="58" font-family="sans-serif" font-size="34" fill="#adbac7">Mock Flutter app</text>
+      <circle cx="360" cy="700" r="120" fill="#347d39"/>
+      <text x="360" y="712" font-family="sans-serif" font-size="40" fill="#fff" text-anchor="middle">Tap</text>
+    </svg>`,
+  );
+
+export function androidState(
+  workspaceId: string,
+): Promise<AndroidState | null> {
+  return Promise.resolve(mockAndroid.get(workspaceId) ?? null);
+}
+
+export function androidPreview(
+  workspaceId: string,
+  enabled: boolean,
+): Promise<void> {
+  if (!enabled) {
+    if (mockFrameTimer) clearInterval(mockFrameTimer);
+    mockFrameTimer = null;
+    return Promise.resolve();
+  }
+  const set = (s: AndroidState) => {
+    mockAndroid.set(workspaceId, s);
+    mockEmit("workspace:android", s);
+  };
+  set({ workspaceId, status: "starting", serial: null, message: null });
+  setTimeout(
+    () =>
+      set({
+        workspaceId,
+        status: "booting",
+        serial: "127.0.0.1:5601",
+        message: null,
+      }),
+    600,
+  );
+  setTimeout(() => {
+    set({
+      workspaceId,
+      status: "ready",
+      serial: "127.0.0.1:5601",
+      message: null,
+    });
+    mockFrameTimer = setInterval(
+      () =>
+        mockEmit("workspace:android_frame", {
+          workspaceId,
+          dataUrl: MOCK_FRAME,
+        }),
+      700,
+    );
+  }, 1500);
+  return Promise.resolve();
+}
+
+export function androidTap(
+  workspaceId: string,
+  x: number,
+  y: number,
+): Promise<void> {
+  // eslint-disable-next-line no-console
+  console.log("android tap", workspaceId, x.toFixed(3), y.toFixed(3));
+  return Promise.resolve();
 }
 
 // ── Backend orchestration mocks: drive the event bus so the browser harness
