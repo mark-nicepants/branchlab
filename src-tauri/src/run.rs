@@ -123,7 +123,7 @@ impl RunManager {
         }
 
         let bl_port = free_port_hint();
-        let mut child = spawn_script(script, cwd, project_root, bl_port, extra_env)?;
+        let mut child = spawn_script(workspace_id, script, cwd, project_root, bl_port, extra_env)?;
         self.inner.logs.lock().unwrap().insert(workspace_id.to_string(), VecDeque::new());
         self.pipe_output(workspace_id, &mut child);
         crate::logf!("run", "start ws={workspace_id} pid={} bl_port={bl_port}", child.id());
@@ -232,7 +232,7 @@ impl RunManager {
         timeout: Duration,
     ) {
         self.append_log(workspace_id, &format!("[{label}] $ {script}"));
-        let mut child = match spawn_script(script, cwd, project_root, 0, &[]) {
+        let mut child = match spawn_script(workspace_id, script, cwd, project_root, 0, &[]) {
             Ok(c) => c,
             Err(e) => {
                 self.append_log(workspace_id, &format!("[{label}] failed to start: {e}"));
@@ -373,6 +373,7 @@ impl RunManager {
 /// `sh -lc <script>` in its own process group, cwd = worktree. `bl_port` 0
 /// means "no hint" (hooks).
 fn spawn_script(
+    workspace_id: &str,
     script: &str,
     cwd: &str,
     project_root: &str,
@@ -385,6 +386,9 @@ fn spawn_script(
         .current_dir(cwd)
         .env("BL_WORKTREE_PATH", cwd)
         .env("BL_PROJECT_ROOT", project_root)
+        // Stable unique key for this workspace — for per-worktree resources
+        // (database names, cache prefixes) in setup/run/teardown scripts.
+        .env("BL_WORKSPACE_ID", workspace_id)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

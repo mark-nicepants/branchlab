@@ -444,8 +444,9 @@ function RunTab({
       ))}
       <p className="text-xs text-muted-foreground">
         Commands run with <code>sh -lc</code> in the worktree, with{" "}
-        <code>$BL_PORT</code> (a free port), <code>$BL_PROJECT_ROOT</code> and{" "}
-        <code>$BL_WORKTREE_PATH</code> in the environment.
+        <code>$BL_PORT</code> (a free port), <code>$BL_PROJECT_ROOT</code>,{" "}
+        <code>$BL_WORKTREE_PATH</code> and <code>$BL_WORKSPACE_ID</code> (a
+        stable key for per-worktree databases etc.) in the environment.
       </p>
       <div className="flex justify-end">
         <Button onClick={onSave} disabled={saving}>

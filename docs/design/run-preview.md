@@ -98,7 +98,12 @@ Projects gain a `run` settings block, editable in Project Settings → Run:
 - `teardown_script`: best-effort, with timeout, before worktree removal.
 
 All commands run as `sh -lc` (login shell → user PATH), cwd = worktree, with
-env: `BL_PORT` (allocated free port), `BL_PROJECT_ROOT`, `BL_WORKTREE_PATH`.
+env: `BL_PORT` (allocated free port), `BL_PROJECT_ROOT`, `BL_WORKTREE_PATH`,
+and `BL_WORKSPACE_ID` — a stable unique key for per-worktree resources
+(database names, cache prefixes). Per-worktree data isolation is deliberately
+a _project concern_ solved in setup/teardown scripts: SQLite projects get it
+for free (the DB file lives in the worktree); MySQL/Postgres projects create
+`app_${BL_WORKSPACE_ID}`-style databases in setup and drop them in teardown.
 
 ### RunManager (`src-tauri/src/run.rs`)
 
