@@ -26,7 +26,7 @@ overflow bugs are easy to spot.
 To inspect or validate the rendered UI, use the **Playwright MCP**
 (`playwright-mcp`) pointed at `http://localhost:5173`. Take screenshots,
 measure element boxes, and verify text-overflow behavior without launching
-the desktop app.
+the desktop app. Place screenshots in the gitignored .playwright-mcp folder and clean them up when your done.
 
 How the harness works:
 
