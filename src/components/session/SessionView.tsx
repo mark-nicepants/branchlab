@@ -475,6 +475,7 @@ export function SessionView({
                 <RunPanel
                   workspaceId={workspace.id}
                   projectType={project?.run.project_type ?? null}
+                  previewPath={project?.run.preview_path ?? null}
                 />
               ) : panelMode.kind === "list" ? (
                 <ChangesPanel

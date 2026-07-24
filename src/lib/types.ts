@@ -95,6 +95,8 @@ export interface RunSettings {
   project_type: ProjectType | null;
   /** Dev-server command (e.g. `npm run dev -- --port $BL_PORT`). */
   run_script: string | null;
+  /** Initial preview path (e.g. `/admin`) — for redirecting homepages. */
+  preview_path?: string | null;
   /** Runs once in a fresh worktree right after creation. */
   setup_script: string | null;
   /** Best-effort (30s cap) before worktree removal. */

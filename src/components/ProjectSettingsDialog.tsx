@@ -31,6 +31,7 @@ type Tab = "general" | "opencode" | "prompts" | "run";
 const EMPTY_RUN: RunSettings = {
   project_type: null,
   run_script: null,
+  preview_path: null,
   setup_script: null,
   teardown_script: null,
 };
@@ -354,10 +355,11 @@ function PromptsTab({
 
 /** Blank scripts save as null so the backend treats them as unconfigured. */
 function normalizeRun(run: RunSettings): RunSettings {
-  const clean = (s: string | null) => (s && s.trim() ? s : null);
+  const clean = (s: string | null | undefined) => (s && s.trim() ? s : null);
   return {
     project_type: run.project_type,
     run_script: clean(run.run_script),
+    preview_path: clean(run.preview_path),
     setup_script: clean(run.setup_script),
     teardown_script: clean(run.teardown_script),
   };
@@ -429,6 +431,22 @@ function RunTab({
           </p>
         )}
       </Field>
+
+      {run.project_type === "web" && (
+        <Field label="Preview path">
+          <Input
+            value={run.preview_path ?? ""}
+            onChange={(e) => setRun({ ...run, preview_path: e.target.value })}
+            placeholder="/admin"
+            spellCheck={false}
+            className="font-mono text-xs"
+          />
+          <p className="mt-1 text-xs text-muted-foreground">
+            Opened on the discovered port when the preview starts — for apps
+            whose homepage redirects. Empty = <code>/</code>.
+          </p>
+        </Field>
+      )}
 
       {scripts.map(({ key, label, placeholder, hint }) => (
         <Field key={key} label={label}>

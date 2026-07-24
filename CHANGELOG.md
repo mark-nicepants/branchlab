@@ -17,7 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   session view starts/stops the dev server, streams its output, discovers
   the ports it binds (`lsof` + process-tree attribution — works even when
   the script ignores `$BL_PORT`), and for web projects embeds a live
-  preview of the running app with reload / open-in-browser. Flutter
+  preview of the running app with an address bar (Enter navigates; paths
+  stay on the discovered port, full URLs pass through), a configurable
+  start path for apps whose homepage redirects, and reload /
+  open-in-browser. Scripts also receive `$BL_WORKSPACE_ID`, a stable key
+  for per-worktree resources such as database names. Flutter
   projects run on the local device/emulator. Run processes are killed as a
   process group with the workspace and on app exit. Architecture and the
   VPS/remote + headless-Android roadmap: docs/design/run-preview.md.

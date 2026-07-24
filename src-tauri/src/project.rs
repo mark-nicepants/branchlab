@@ -66,6 +66,11 @@ pub struct RunSettings {
     /// Dev-server command (e.g. `npm run dev -- --port $BL_PORT`). Started
     /// manually from the session view.
     pub run_script: Option<String>,
+    /// Initial preview path (e.g. `/admin`) opened on the discovered port —
+    /// for apps whose homepage redirects. `#[serde(default)]` keeps
+    /// pre-existing registries loadable.
+    #[serde(default)]
+    pub preview_path: Option<String>,
     /// Runs once in a fresh worktree right after creation (installs, `.env`
     /// symlinks from `$BL_PROJECT_ROOT`).
     pub setup_script: Option<String>,

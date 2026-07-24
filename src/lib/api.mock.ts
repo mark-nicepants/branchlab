@@ -48,6 +48,7 @@ let projects: ProjectView[] = [
     run: {
       project_type: "web",
       run_script: "npm run dev -- --port $BL_PORT",
+      preview_path: "/index.browser.html",
       setup_script: "npm install",
       teardown_script: null,
     },

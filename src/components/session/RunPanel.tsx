@@ -25,6 +25,20 @@ interface Props {
   /** Decides the preview surface: web → iframe, flutter → local device,
    *  flutter-redroid → in-app Android screen. */
   projectType: ProjectType | null;
+  /** Initial preview path (project setting) — for redirecting homepages. */
+  previewPath: string | null;
+}
+
+/** Resolve the address-bar value against the discovered port: full URLs pass
+ *  through, anything else is a path on `localhost:<port>`. */
+function resolvePreviewUrl(
+  port: number | undefined,
+  target: string,
+): string | null {
+  const t = target.trim();
+  if (/^https?:\/\//.test(t)) return t;
+  if (!port) return null;
+  return `http://localhost:${port}${t.startsWith("/") ? t : `/${t}`}`;
 }
 
 const ANDROID_LABEL: Record<AndroidState["status"], string> = {
@@ -42,7 +56,7 @@ const ANDROID_LABEL: Record<AndroidState["status"], string> = {
  * backend via `workspace:run*` / `workspace:android*`; snapshots seed
  * remounts.
  */
-export function RunPanel({ workspaceId, projectType }: Props) {
+export function RunPanel({ workspaceId, projectType, previewPath }: Props) {
   const [state, setState] = useState<RunState | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const [android, setAndroid] = useState<AndroidState | null>(null);
@@ -50,8 +64,18 @@ export function RunPanel({ workspaceId, projectType }: Props) {
   const [busy, setBusy] = useState(false);
   // Bumped to force an iframe reload.
   const [frameNonce, setFrameNonce] = useState(0);
+  // Address bar: `target` is committed (drives the iframe), `draft` is what's
+  // being typed. Cross-origin iframes can't report in-page navigation back,
+  // so the bar only navigates — it doesn't track clicks inside the preview.
+  const [target, setTarget] = useState(previewPath ?? "/");
+  const [draft, setDraft] = useState(previewPath ?? "/");
   const logRef = useRef<HTMLPreElement>(null);
   const isRedroid = projectType === "flutter-redroid";
+
+  useEffect(() => {
+    setTarget(previewPath ?? "/");
+    setDraft(previewPath ?? "/");
+  }, [workspaceId, previewPath]);
 
   // Seed from the snapshot, then apply event deltas.
   useEffect(() => {
@@ -116,7 +140,7 @@ export function RunPanel({ workspaceId, projectType }: Props) {
 
   const running = state?.status === "running";
   const port = running ? state.ports[0] : undefined;
-  const previewUrl = port ? `http://localhost:${port}` : null;
+  const previewUrl = running ? resolvePreviewUrl(port, target) : null;
   const showWebPreview = projectType === "web" && previewUrl;
   const showAndroidPreview = isRedroid && frame !== null;
   const androidBusy =
@@ -169,12 +193,33 @@ export function RunPanel({ workspaceId, projectType }: Props) {
                   : "bg-muted-foreground/40",
           )}
         />
-        <span
-          className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
-          title={statusText}
-        >
-          {statusText}
-        </span>
+        {showWebPreview ? (
+          // Address bar: Enter navigates. A path stays on the discovered
+          // port; a full http(s) URL is used as-is.
+          <input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                setTarget(draft.trim() || "/");
+                setFrameNonce((n) => n + 1);
+              } else if (e.key === "Escape") {
+                setDraft(target);
+              }
+            }}
+            spellCheck={false}
+            placeholder="/path or http://…"
+            title={previewUrl ?? undefined}
+            className="h-6 min-w-0 flex-1 rounded border border-input bg-background px-2 font-mono text-[11px] text-foreground outline-none focus:border-ring"
+          />
+        ) : (
+          <span
+            className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
+            title={statusText}
+          >
+            {statusText}
+          </span>
+        )}
         {showWebPreview && (
           <>
             <Button
