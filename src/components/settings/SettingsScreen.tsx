@@ -197,7 +197,14 @@ export function SettingsScreen({
 
 function GeneralTab() {
   const { prefs, setPref } = usePreferences();
-  const { availableVersion, installing, installUpdate } = useAppUpdate();
+  const {
+    availableVersion,
+    installing,
+    installUpdate,
+    lastCheckedAt,
+    checking,
+    checkNow,
+  } = useAppUpdate();
   // Anonymous usage telemetry opt-out; the flag lives in the backend so it
   // also gates events the supervisor sends when this screen isn't open.
   const [telemetry, setTelemetry] = useState<boolean | null>(null);
@@ -232,6 +239,23 @@ function GeneralTab() {
           checked={prefs.autoCheckUpdates}
           onCheckedChange={(on) => setPref("autoCheckUpdates", on)}
         />
+      </Row>
+      <Row
+        title="Check for updates"
+        desc={
+          lastCheckedAt
+            ? `Last checked at ${new Date(lastCheckedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+            : "Not checked yet this session."
+        }
+      >
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void checkNow()}
+          disabled={checking || installing}
+        >
+          {checking ? "Checking…" : "Check now"}
+        </Button>
       </Row>
       <Row
         title="Share anonymous usage data"
