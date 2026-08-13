@@ -106,11 +106,6 @@ function App() {
     () => [...projects.flatMap((p) => p.workspaces), ...quickChats],
     [projects, quickChats],
   );
-  // Only git-backed workspaces have diff stats to poll; quick chats have none.
-  const workspaceIds = useMemo(
-    () => projects.flatMap((p) => p.workspaces).map((w) => w.id),
-    [projects],
-  );
   const selected = selectedId
     ? (allWorkspaces.find((w) => w.id === selectedId) ?? null)
     : null;
@@ -225,7 +220,6 @@ function App() {
   return (
     <GitHubProvider>
       <WorkspaceDataProvider
-        workspaceIds={workspaceIds}
         activeWorkspaceId={view === "session" ? selectedId : null}
       >
         <div className="relative flex h-screen bg-background text-foreground">

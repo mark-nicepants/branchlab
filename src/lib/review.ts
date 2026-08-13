@@ -28,7 +28,7 @@ export function fileName(path: string): string {
 /** Whether a changed file was edited in the given turn's file list. The turn
  *  summary may carry absolute paths while git changes are repo-relative, so
  *  match exact or by suffix. */
-export function editedInTurn(path: string, turnFiles: string[]): boolean {
+function editedInTurn(path: string, turnFiles: string[]): boolean {
   return turnFiles.some((f) => f === path || f.endsWith(`/${path}`));
 }
 

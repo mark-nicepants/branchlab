@@ -30,7 +30,6 @@ pub struct Project {
     pub name: String,
     pub root_path: String,
     pub default_branch: Option<String>,
-    pub default_model_key: Option<String>,
     pub prompts: ProjectPrompts,
     /// Manual GitHub account override (`"{host}/{login}"`). `None` = auto-detect
     /// the account from this repo's `origin` remote (host + owner/org).
@@ -105,11 +104,6 @@ pub struct Workspace {
     /// autofix survives restarts and doesn't depend on the frontend.
     #[serde(default)]
     pub autofix_mode: AutofixMode,
-    /// The OpenCode session id the backend uses to drive this workspace
-    /// (autofix prompts). Registered by the frontend when it creates/loads a
-    /// session; the supervisor falls back to creating one for background work.
-    #[serde(default)]
-    pub session_id: Option<String>,
     /// Last selected model (`provider/model`) for this workspace. Re-applied to
     /// every new engine session so a restart doesn't fall back to opencode's
     /// built-in default. `None` = global default model (or opencode's default).
@@ -124,11 +118,6 @@ pub struct Workspace {
     /// (the PR→workspace flow). `None` for workspaces that predate a PR.
     #[serde(default)]
     pub pr_number: Option<i64>,
-    #[serde(default)]
-    pub pr_url: Option<String>,
-    /// Head repo `"owner/repo"` — differs from the base repo for fork PRs.
-    #[serde(default)]
-    pub pr_head_repo: Option<String>,
     /// A fork PR: read-only here (no push/autofix back to the fork).
     #[serde(default)]
     pub pr_is_fork: bool,
@@ -142,7 +131,6 @@ pub struct Workspace {
 pub struct ProjectUpdate {
     pub name: Option<String>,
     pub default_branch: Option<String>,
-    pub default_model_key: Option<String>,
     pub prompts: Option<ProjectPrompts>,
     /// GitHub account override. `Some("")` clears it (back to auto-detect),
     /// `Some(id)` sets it, `None` leaves it unchanged.
@@ -168,9 +156,6 @@ pub struct PrWorkspaceMeta {
     pub number: i64,
     pub title: String,
     pub base_ref: String,
-    pub url: String,
-    /// Head repo `"owner/repo"` (differs from base for fork PRs).
-    pub head_repo: Option<String>,
     pub is_fork: bool,
 }
 
@@ -243,7 +228,6 @@ impl Registry {
                 name,
                 root_path: root.clone(),
                 default_branch: default_branch_for(&canonical),
-                default_model_key: None,
                 prompts: ProjectPrompts::default(),
                 account_id: None,
             });
@@ -257,12 +241,9 @@ impl Registry {
                 base_branch: None,
                 init_prompt: None,
                 autofix_mode: AutofixMode::default(),
-                session_id: None,
                 model: None,
                 effort: None,
                 pr_number: None,
-                pr_url: None,
-                pr_head_repo: None,
                 pr_is_fork: false,
                 pr: None,
             });
@@ -397,11 +378,6 @@ impl Registry {
         data.workspaces.iter().find(|w| w.id == workspace_id).and_then(|w| w.effort.clone())
     }
 
-    /// A project's repo root path.
-    pub fn project_root(&self, project_id: &str) -> Option<String> {
-        self.repo_root(project_id)
-    }
-
     /// The GitHub account override configured for a project (`None` = auto-detect).
     pub fn project_account_id(&self, project_id: &str) -> Option<String> {
         self.data.lock().unwrap().projects.iter().find(|p| p.id == project_id).and_then(|p| p.account_id.clone())
@@ -417,9 +393,6 @@ impl Registry {
         if let Some(default_branch) = update.default_branch {
             project.default_branch = Some(default_branch);
         }
-        if let Some(default_model_key) = update.default_model_key {
-            project.default_model_key = Some(default_model_key);
-        }
         if let Some(prompts) = update.prompts {
             project.prompts = prompts;
         }
@@ -428,12 +401,6 @@ impl Registry {
         }
         self.persist(&data);
         Ok(self.view_of(&data, project_id))
-    }
-
-    pub fn prompts(&self, project_id: &str) -> Result<ProjectPrompts, String> {
-        let data = self.data.lock().unwrap();
-        let project = data.projects.iter().find(|p| p.id == project_id).ok_or("unknown project")?;
-        Ok(project.prompts.clone())
     }
 
     pub fn remove_project(&self, project_id: &str) {
@@ -451,18 +418,6 @@ impl Registry {
     pub fn workspace_path(&self, workspace_id: &str) -> Option<String> {
         let data = self.data.lock().unwrap();
         data.workspaces.iter().find(|w| w.id == workspace_id).map(|w| w.path.clone())
-    }
-
-    /// Resolve a workspace's project root. For base workspaces (and quick
-    /// chats, which have no project) this is the workspace itself; for
-    /// worktrees it is the parent repo root.
-    pub fn workspace_project_root(&self, workspace_id: &str) -> Option<String> {
-        let data = self.data.lock().unwrap();
-        let ws = data.workspaces.iter().find(|w| w.id == workspace_id)?;
-        if ws.kind != WorkspaceKind::Worktree {
-            return Some(ws.path.clone());
-        }
-        data.projects.iter().find(|p| p.id == ws.project_id).map(|p| p.root_path.clone())
     }
 
     /// Get the workspace and its project root together (used by merge/push).
@@ -488,7 +443,8 @@ impl Registry {
         git::list_branches(&root)
     }
 
-    fn repo_root(&self, project_id: &str) -> Option<String> {
+    /// A project's repo root path.
+    pub fn repo_root(&self, project_id: &str) -> Option<String> {
         self.data.lock().unwrap().projects.iter().find(|p| p.id == project_id).map(|p| p.root_path.clone())
     }
 
@@ -524,12 +480,9 @@ impl Registry {
             base_branch: Some(base),
             init_prompt,
             autofix_mode: AutofixMode::default(),
-            session_id: None,
             model: None,
             effort: None,
             pr_number: None,
-            pr_url: None,
-            pr_head_repo: None,
             pr_is_fork: false,
             pr: None,
         };
@@ -567,12 +520,9 @@ impl Registry {
             base_branch: None,
             init_prompt,
             autofix_mode: AutofixMode::default(),
-            session_id: None,
             model: None,
             effort: None,
             pr_number: None,
-            pr_url: None,
-            pr_head_repo: None,
             pr_is_fork: false,
             pr: None,
         };
@@ -609,12 +559,9 @@ impl Registry {
             base_branch: Some(meta.base_ref),
             init_prompt: None,
             autofix_mode: AutofixMode::default(),
-            session_id: None,
             model: None,
             effort: None,
             pr_number: Some(meta.number),
-            pr_url: Some(meta.url),
-            pr_head_repo: meta.head_repo,
             pr_is_fork: meta.is_fork,
             pr: None,
         };
@@ -754,12 +701,9 @@ mod tests {
                 base_branch: None,
                 init_prompt: None,
                 autofix_mode: AutofixMode::default(),
-                session_id: None,
                 model: None,
                 effort: None,
                 pr_number: None,
-                pr_url: None,
-                pr_head_repo: None,
                 pr_is_fork: false,
                 pr: None,
             });
@@ -792,8 +736,7 @@ mod tests {
         assert_eq!(ws.name, None); // AI-titled on first message
         assert_eq!(ws.init_prompt.as_deref(), Some("hello"));
         assert!(Path::new(&ws.path).is_dir(), "scratch dir exists");
-        // Its own path doubles as its "root" (no project to resolve).
-        assert_eq!(reg.workspace_project_root(&ws.id).as_deref(), Some(ws.path.as_str()));
+        assert_eq!(reg.workspace_path(&ws.id).as_deref(), Some(ws.path.as_str()));
 
         // Survives a reload.
         let reg2 = Registry::load(file, dir.join("worktrees"), dir.join("quick-chats"));
@@ -845,12 +788,9 @@ mod tests {
                 base_branch: None,
                 init_prompt: None,
                 autofix_mode: AutofixMode::default(),
-                session_id: None,
                 model: None,
                 effort: None,
                 pr_number: Some(7),
-                pr_url: None,
-                pr_head_repo: None,
                 pr_is_fork: false,
                 pr: None,
             });

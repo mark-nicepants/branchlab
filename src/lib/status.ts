@@ -2,7 +2,7 @@
 // Use these instead of hardcoding colors per component.
 
 /** File change status (from git): letter + Tailwind text color class. */
-export const FILE_STATUS: Record<
+const FILE_STATUS: Record<
   string,
   { letter: string; className: string }
 > = {

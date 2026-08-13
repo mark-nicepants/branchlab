@@ -21,7 +21,6 @@ pub struct Conversation {
     /// Stable ULID (never the engine's session id).
     pub id: String,
     pub workspace_id: String,
-    pub title: Option<String>,
     pub created_at: i64,
     /// The engine (ACP) session id currently driving new turns, if any.
     pub active_engine_session: Option<String>,
@@ -40,19 +39,6 @@ pub enum SessionReason {
     Cleared,
     /// Reconnected after a restart / engine reap.
     Reloaded,
-}
-
-/// One engine session under a conversation.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct EngineSession {
-    pub id: i64,
-    pub conversation_id: String,
-    pub acp_session_id: String,
-    pub engine: String,
-    pub reason: SessionReason,
-    pub started_at: i64,
-    pub active: bool,
 }
 
 /// Who caused a turn. The supervisor keys its autofix hand-off on this so a
@@ -86,33 +72,6 @@ pub enum TurnStatus {
     Failed,
 }
 
-impl TurnStatus {
-    pub fn is_terminal(self) -> bool {
-        matches!(self, TurnStatus::Completed | TurnStatus::Cancelled | TurnStatus::Failed)
-    }
-
-    pub fn is_active(self) -> bool {
-        !self.is_terminal()
-    }
-
-    /// Whether a transition is legal. The manager relies on this to ignore
-    /// stray/late engine events after a turn has already finished (R-order).
-    pub fn can_transition_to(self, next: TurnStatus) -> bool {
-        use TurnStatus::*;
-        if self.is_terminal() {
-            return false; // terminal is final
-        }
-        match (self, next) {
-            (Queued, Streaming | AwaitingPermission) => true,
-            (Streaming, AwaitingPermission) => true,
-            (AwaitingPermission, Streaming) => true,
-            // Any active state may go straight to any terminal state.
-            (_, Completed | Cancelled | Failed) => true,
-            _ => false,
-        }
-    }
-}
-
 /// A pasted/attached file on a user message.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -121,17 +80,6 @@ pub struct Attachment {
     /// Data URL or file URL, as sent to the engine.
     pub url: String,
     pub filename: Option<String>,
-}
-
-/// Context-window / cost usage reported by the engine for an assistant turn.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct Usage {
-    pub input: Option<u64>,
-    pub output: Option<u64>,
-    pub reasoning: Option<u64>,
-    pub cache_read: Option<u64>,
-    pub cache_write: Option<u64>,
 }
 
 /// A tool call's runtime status, mapped from ACP tool-call statuses.
@@ -204,18 +152,6 @@ pub enum Block {
     File { block_id: String, name: Option<String>, mime: Option<String>, url: String },
 }
 
-impl Block {
-    /// The stable id used to upsert this block during streaming.
-    pub fn block_id(&self) -> &str {
-        match self {
-            Block::Text { block_id, .. } => block_id,
-            Block::Reasoning { block_id, .. } => block_id,
-            Block::Tool(t) => &t.block_id,
-            Block::File { block_id, .. } => block_id,
-        }
-    }
-}
-
 /// Deterministic, zero-token "what the AI did" summary for a finished turn.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -266,12 +202,10 @@ pub struct UserEntry {
 pub struct AssistantEntry {
     pub seq: Seq,
     pub entry_id: String,
-    pub engine_session_id: Option<i64>,
     pub status: TurnStatus,
     pub origin: TurnOrigin,
     pub blocks: Vec<Block>,
     pub summary: CollapseSummary,
-    pub usage: Option<Usage>,
     pub started_at: i64,
     pub ended_at: Option<i64>,
 }
@@ -443,31 +377,6 @@ mod tests {
     }
 
     #[test]
-    fn turn_status_terminal_and_active() {
-        assert!(TurnStatus::Completed.is_terminal());
-        assert!(TurnStatus::Cancelled.is_terminal());
-        assert!(TurnStatus::Failed.is_terminal());
-        assert!(TurnStatus::Queued.is_active());
-        assert!(TurnStatus::Streaming.is_active());
-        assert!(TurnStatus::AwaitingPermission.is_active());
-    }
-
-    #[test]
-    fn turn_transitions_follow_the_machine() {
-        use TurnStatus::*;
-        assert!(Queued.can_transition_to(Streaming));
-        assert!(Streaming.can_transition_to(AwaitingPermission));
-        assert!(AwaitingPermission.can_transition_to(Streaming));
-        assert!(Streaming.can_transition_to(Completed));
-        assert!(AwaitingPermission.can_transition_to(Cancelled));
-        // Terminal is final — no resurrection from a late engine event.
-        assert!(!Completed.can_transition_to(Streaming));
-        assert!(!Failed.can_transition_to(Completed));
-        // Illegal skips.
-        assert!(!Queued.can_transition_to(Queued));
-    }
-
-    #[test]
     fn collapse_counts_files_commands_and_steps() {
         let blocks = vec![
             Block::Reasoning { block_id: "r1".into(), text: "thinking".into() },
@@ -534,6 +443,5 @@ mod tests {
         assert_eq!(v["status"], "completed");
         let back: Block = serde_json::from_value(v).unwrap();
         assert_eq!(back, b);
-        assert_eq!(back.block_id(), "b-edit");
     }
 }

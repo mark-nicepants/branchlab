@@ -9,7 +9,7 @@
 //!
 //! To make the packaged app behave like the terminal launch, we resolve the
 //! user's login-shell `PATH` at startup and merge in the common install dirs,
-//! then set it on the process. `which::which` (the env probe) and `Command`
+//! then set it on the process. The env probe's PATH lookup and `Command`
 //! (the opencode server spawn) both read this, so fixing it once covers both —
 //! and the spawned server inherits it too, so it can find its own deps.
 

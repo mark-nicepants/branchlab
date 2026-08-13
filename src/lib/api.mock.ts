@@ -11,19 +11,14 @@ import type {
   ConfigOption,
   DiffStat,
   EnvReport,
-  FileChange,
   FileContent,
   GeneratedTitle,
-  MergeResult,
   PipelinePhase,
   PrResult,
   PrStatus,
   PrSummary,
-  ProjectPrompts,
   ProjectUpdate,
   ProjectView,
-  PushResult,
-  RemoteInfo,
   ReviewInboxItem,
   ServerInfo,
   SessionPayload,
@@ -37,7 +32,6 @@ let projects: ProjectView[] = [
     name: "branchlab",
     root_path: "/Users/me/code/branchlab",
     default_branch: "main",
-    default_model_key: "anthropic/claude-sonnet-4",
     account_id: null,
     prompts: {
       init_workspace: "Set up the workspace.",
@@ -104,7 +98,6 @@ let projects: ProjectView[] = [
     name: "super-long-project-name-that-should-definitely-be-truncated-in-the-sidebar",
     root_path: "/Users/me/code/super-long-project-name",
     default_branch: "main",
-    default_model_key: null,
     account_id: null,
     prompts: {
       init_workspace: null,
@@ -146,7 +139,6 @@ export function addProject(path: string): Promise<ProjectView> {
     name: path.split("/").pop() ?? path,
     root_path: path,
     default_branch: "main",
-    default_model_key: null,
     account_id: null,
     prompts: {
       init_workspace: null,
@@ -298,7 +290,6 @@ export function createWorkspaceFromPr(
     base_branch: project?.default_branch ?? "main",
     init_prompt: null,
     pr_number: prNumber,
-    pr_url: `https://github.com/acme/web/pull/${prNumber}`,
   };
   if (project) project.workspaces.push(ws);
   return Promise.resolve(ws);
@@ -444,14 +435,6 @@ export function startServer(workspaceId: string): Promise<ServerInfo> {
   });
 }
 
-export function stopServer(): Promise<void> {
-  return Promise.resolve();
-}
-
-export function serverStatus(): Promise<ServerInfo | null> {
-  return Promise.resolve(null);
-}
-
 export function listBranches(): Promise<string[]> {
   return Promise.resolve(["main", "develop", "feature/xyz"]);
 }
@@ -507,23 +490,8 @@ export function updateProject(
   if (!p) return Promise.reject(new Error("unknown project"));
   if (update.name) p.name = update.name;
   if (update.default_branch) p.default_branch = update.default_branch;
-  if (update.default_model_key !== undefined)
-    p.default_model_key = update.default_model_key;
   if (update.prompts) p.prompts = update.prompts;
   return Promise.resolve(p);
-}
-
-export function getProjectPrompts(projectId: string): Promise<ProjectPrompts> {
-  const p = projects.find((x) => x.id === projectId);
-  return Promise.resolve(
-    p?.prompts ?? {
-      init_workspace: null,
-      commit: null,
-      merge: null,
-      push: null,
-      create_pr: null,
-    },
-  );
 }
 
 export function removeWorkspace(workspaceId: string): Promise<void> {
@@ -594,24 +562,6 @@ const diffStats: Record<string, DiffStat> = {
   "p1-ws4": { files: 1, insertions: 3, deletions: 1 },
   "p2-base": { files: 12, insertions: 120, deletions: 45 },
 };
-
-export function workspaceDiffStat(workspaceId: string): Promise<DiffStat> {
-  return Promise.resolve(
-    diffStats[workspaceId] ?? { files: 0, insertions: 0, deletions: 0 },
-  );
-}
-
-export function workspaceChanges(): Promise<FileChange[]> {
-  return Promise.resolve([
-    { path: "src/App.tsx", status: "modified", insertions: 10, deletions: 2 },
-    {
-      path: "src/components/Sidebar.tsx",
-      status: "modified",
-      insertions: 20,
-      deletions: 5,
-    },
-  ]);
-}
 
 // Realistic unified diffs so the changes panel renders hunks, line numbers,
 // and the inline review-comment flow in the browser harness.
@@ -689,30 +639,12 @@ export function commitWorkspace(): Promise<string> {
   return Promise.resolve("abc1234");
 }
 
-export function mergeWorkspace(): Promise<MergeResult> {
-  return Promise.resolve({
-    branch: "feature",
-    base: "main",
-    summary: "merged",
-  });
-}
-
-export function pushWorkspace(): Promise<PushResult> {
-  return Promise.resolve({ branch: "feature", remote: "origin", output: "ok" });
-}
-
 export function createWorkspacePr(): Promise<PrResult> {
   return Promise.resolve({
     branch: "feature",
     base: "main",
     url: "https://github.com/test/pr/1",
   });
-}
-
-export function listRemotes(): Promise<RemoteInfo[]> {
-  return Promise.resolve([
-    { name: "origin", url: "git@github.com:test/repo.git" },
-  ]);
 }
 
 // ── Backend orchestration mocks: drive the event bus so the browser harness
@@ -1148,32 +1080,36 @@ export function setActiveWorkspace(workspaceId: string | null): Promise<void> {
   // Quick chats have no git state — the real watcher never emits for them.
   if (quickChats.some((w) => w.id === workspaceId)) return Promise.resolve();
   // The active workspace also gets the full changes list…
-  void workspaceChanges().then((changes) =>
-    mockEmit("workspace:git", {
-      workspaceId,
-      diffStat: diffStats[workspaceId] ?? {
-        files: 2,
-        insertions: 30,
-        deletions: 7,
+  mockEmit("workspace:git", {
+    workspaceId,
+    diffStat: diffStats[workspaceId] ?? {
+      files: 2,
+      insertions: 30,
+      deletions: 7,
+    },
+    changes: [
+      { path: "src/App.tsx", status: "modified", insertions: 10, deletions: 2 },
+      {
+        path: "src/components/Sidebar.tsx",
+        status: "modified",
+        insertions: 20,
+        deletions: 5,
       },
-      changes,
-    }),
-  );
+    ],
+  });
   // …and, for a worktree, its PR pipeline (so the bar renders on open).
   const ws = projects
     .flatMap((p) => p.workspaces)
     .find((w) => w.id === workspaceId);
   if (ws?.kind === "Worktree") {
-    void workspacePrStatus().then((status) =>
-      mockEmit("workspace:pr", {
-        workspaceId,
-        status,
-        phase: "failing",
-        attempts: 0,
-        mode: ws.autofix_mode ?? "off",
-        error: null,
-      }),
-    );
+    mockEmit("workspace:pr", {
+      workspaceId,
+      status: mockFailingPr(),
+      phase: "failing",
+      attempts: 0,
+      mode: ws.autofix_mode ?? "off",
+      error: null,
+    });
   }
   return Promise.resolve();
 }
@@ -1289,43 +1225,6 @@ function mockPr(
   };
 }
 
-export function workspacePrStatus(): Promise<PrStatus | null> {
-  // A failing pipeline so the pipeline bar and Off/Auto/Super control are
-  // visible in the browser harness. Stable head_sha so the autofix loop only
-  // triggers once (the mocked opencode server doesn't actually push).
-  return Promise.resolve({
-    number: 42,
-    url: "https://github.com/test/repo/pull/42",
-    state: "OPEN",
-    head_branch: "feature",
-    head_sha: "abc1234",
-    rollup: "failure",
-    checks: [
-      {
-        name: "lint",
-        bucket: "success",
-        state: "SUCCESS",
-        url: "https://github.com/test/repo/actions/1",
-        workflow: "CI",
-      },
-      {
-        name: "test",
-        bucket: "failure",
-        state: "FAILURE",
-        url: "https://github.com/test/repo/actions/2",
-        workflow: "CI",
-      },
-      {
-        name: "build",
-        bucket: "success",
-        state: "SUCCESS",
-        url: "https://github.com/test/repo/actions/3",
-        workflow: "CI",
-      },
-    ],
-  });
-}
-
 export function readConfig(): Promise<ConfigFile> {
   return Promise.resolve({
     path: "/mock/opencode.json",
@@ -1353,14 +1252,6 @@ export function restartServer(workspaceId: string): Promise<ServerInfo> {
   return startServer(workspaceId);
 }
 
-export function listServers(): Promise<ServerInfo[]> {
-  return Promise.resolve([]);
-}
-
-export function touchServer(): Promise<void> {
-  return Promise.resolve();
-}
-
 export function openDevtools(): Promise<void> {
   // eslint-disable-next-line no-console
   console.log("open devtools");
@@ -1382,16 +1273,6 @@ export function logPath(): Promise<string | null> {
 export function telemetryPageview(url: string): Promise<void> {
   // eslint-disable-next-line no-console
   console.log("telemetry pageview", url);
-  return Promise.resolve();
-}
-
-export function telemetryEvent(
-  name: string,
-  url: string,
-  data?: Record<string, unknown>,
-): Promise<void> {
-  // eslint-disable-next-line no-console
-  console.log("telemetry event", name, url, data);
   return Promise.resolve();
 }
 

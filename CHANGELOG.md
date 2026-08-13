@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- The "Default model" field in project settings — it was never applied to new
+  sessions. Model choice is remembered per workspace and via the global
+  default, as before.
+
 ## [0.2.0] - 2026-07-05
 
 ### Added

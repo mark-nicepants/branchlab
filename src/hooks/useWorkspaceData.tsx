@@ -66,8 +66,6 @@ const Ctx = createContext<WorkspaceDataValue>({
 });
 
 interface ProviderProps {
-  /** Every workspace id we want diff stats for (sidebar + fleet). */
-  workspaceIds: string[];
   /** The workspace currently shown in the center/right panels, if any. */
   activeWorkspaceId: string | null;
   children: React.ReactNode;

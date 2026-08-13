@@ -17,7 +17,6 @@ import type {
   ChatTurnEvent,
   GitHubLoginEvent,
   GitPayload,
-  NotifyPayload,
   PrPayload,
   ReviewInboxPayload,
   SessionPayload,
@@ -50,9 +49,6 @@ export function onWorkspaceSession(cb: (p: SessionPayload) => void) {
 }
 export function onWorkspaceTodos(cb: (p: TodosPayload) => void) {
   return on<TodosPayload>("workspace:todos", cb);
-}
-export function onWorkspaceNotify(cb: (p: NotifyPayload) => void) {
-  return on<NotifyPayload>("workspace:notify", cb);
 }
 
 export function onGitHubAccounts(cb: (p: AccountsPayload) => void) {

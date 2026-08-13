@@ -7,7 +7,6 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile, rm, readdir } from "node:fs/promises";
 import path from "node:path";
-import { transform } from "esbuild";
 import { minify as minifyHtml } from "html-minifier-terser";
 import sharp from "sharp";
 
@@ -46,19 +45,14 @@ const ogPng = await sharp(path.join(SRC, "assets", og)).png({ compressionLevel: 
 const ogName = `session-changes-dark.${hash8(ogPng)}.png`;
 await writeFile(path.join(OUT, "assets", ogName), ogPng);
 
-// ── CSS / JS: minify with esbuild, then INLINE into the HTML ──
+// ── CSS / JS: INLINE raw into the HTML (html-minifier-terser minifies them
+// via minifyCSS/minifyJS below) ──
 // Both are small (≈10 kB CSS, <1 kB JS); inlining removes the render-blocking
 // stylesheet request from the critical path (Lighthouse: "avoid chaining
 // critical requests") — the page renders from the single HTML response.
-const minified = {};
-for (const [file, loader] of [
-  ["styles.css", "css"],
-  ["main.js", "js"],
-]) {
-  const source = await readFile(path.join(SRC, file), "utf8");
-  const { code } = await transform(source, { loader, minify: true });
-  minified[file] = code.trim();
-  console.log(`${file}  ${kb(source.length)} → ${kb(code.length)} (inlined)`);
+const inlined = {};
+for (const file of ["styles.css", "main.js"]) {
+  inlined[file] = (await readFile(path.join(SRC, file), "utf8")).trim();
 }
 
 // ── HTML: rewrite asset refs to hashed names, inline CSS/JS, then minify ──
@@ -79,13 +73,13 @@ html = html.replaceAll(/(src|href)="assets\/([\w-]+\.png)"/g, (_m, attr, file) =
 });
 html = html.replace(
   /<link rel="stylesheet" href="styles.css"\s*\/?>/,
-  () => `<style>${minified["styles.css"]}</style>`,
+  () => `<style>${inlined["styles.css"]}</style>`,
 );
 // The script sits at the end of <body>, so the DOM above it is already
 // parsed — `defer` is unnecessary once inlined.
 html = html.replace(
   /<script src="main.js" defer><\/script>/,
-  () => `<script>${minified["main.js"]}</script>`,
+  () => `<script>${inlined["main.js"]}</script>`,
 );
 if (html.includes("styles.css") || html.includes("main.js")) {
   throw new Error("inlining failed — stylesheet/script tag not replaced");

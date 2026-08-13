@@ -157,15 +157,7 @@ impl TurnAssembler {
         self.tool_raw.insert(call_id.clone(), tc.clone());
         let times = self.stamp(&call_id, tc.status);
         let block = Block::Tool(Box::new(tool_block(tc, times)));
-        if let Some(&idx) = self.tool_idx.get(&call_id) {
-            self.blocks[idx] = block;
-            BlockDelta { index: idx, text_append: None }
-        } else {
-            self.blocks.push(block);
-            let idx = self.blocks.len() - 1;
-            self.tool_idx.insert(call_id, idx);
-            BlockDelta { index: idx, text_append: None }
-        }
+        self.upsert_tool(call_id, block)
     }
 
     fn apply_tool_update(&mut self, u: &acp::ToolCallUpdate) -> Option<BlockDelta> {
@@ -182,15 +174,25 @@ impl TurnAssembler {
         let raw = raw.clone();
         let times = self.stamp(&call_id, status);
         let block = Block::Tool(Box::new(tool_block(&raw, times)));
-        if let Some(&idx) = self.tool_idx.get(&call_id) {
-            self.blocks[idx] = block;
-            Some(BlockDelta { index: idx, text_append: None })
-        } else {
-            self.blocks.push(block);
-            let idx = self.blocks.len() - 1;
-            self.tool_idx.insert(call_id, idx);
-            Some(BlockDelta { index: idx, text_append: None })
-        }
+        Some(self.upsert_tool(call_id, block))
+    }
+
+    /// Upsert a tool block by its `call_id`: replace the existing block in
+    /// place, or append and index a new one.
+    fn upsert_tool(&mut self, call_id: String, block: Block) -> BlockDelta {
+        let idx = match self.tool_idx.get(&call_id) {
+            Some(&idx) => {
+                self.blocks[idx] = block;
+                idx
+            }
+            None => {
+                self.blocks.push(block);
+                let idx = self.blocks.len() - 1;
+                self.tool_idx.insert(call_id, idx);
+                idx
+            }
+        };
+        BlockDelta { index: idx, text_append: None }
     }
 
     /// Record local receipt times for a tool call: first sight starts the

@@ -20,8 +20,6 @@ pub enum AccountStatus {
     Ok,
     /// Token missing/expired/revoked — the user must sign in again.
     NeedsReauth,
-    /// Some other error (network, GHE unreachable). Carries a message.
-    Error(String),
 }
 
 /// A GitHub identity backing one isolated `gh` auth entry.

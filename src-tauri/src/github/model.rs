@@ -27,7 +27,6 @@ impl From<&Account> for AccountView {
         let (active, status) = match &a.status {
             AccountStatus::Ok => (true, None),
             AccountStatus::NeedsReauth => (false, Some("Sign-in required".to_string())),
-            AccountStatus::Error(m) => (false, Some(m.clone())),
         };
         AccountView {
             id: a.id.clone(),

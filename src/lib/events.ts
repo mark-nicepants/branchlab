@@ -18,7 +18,6 @@ import type {
   ChatTurnEvent,
   GitHubLoginEvent,
   GitPayload,
-  NotifyPayload,
   PrPayload,
   ReviewInboxPayload,
   SessionPayload,
@@ -48,11 +47,6 @@ export function onWorkspaceSession(cb: (p: SessionPayload) => void) {
 /** The active workspace's todo list. */
 export function onWorkspaceTodos(cb: (p: TodosPayload) => void) {
   return on<TodosPayload>("workspace:todos", cb);
-}
-
-/** Discrete notification signals (turn done, awaiting input, pipeline status). */
-export function onWorkspaceNotify(cb: (p: NotifyPayload) => void) {
-  return on<NotifyPayload>("workspace:notify", cb);
 }
 
 // ── GitHub subsystem (Rust `github` module) ──

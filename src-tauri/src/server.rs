@@ -28,12 +28,6 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(20 * 60);
 /// How often the reaper wakes to check for idle servers.
 const REAP_INTERVAL: Duration = Duration::from_secs(60);
 
-/// Origins the webview may use, passed to `opencode serve --cors` so the
-/// frontend can call the server's REST/SSE endpoints cross-origin.
-/// Covers the Vite dev server and the packaged Tauri custom protocol on
-/// macOS/Linux and Windows.
-pub const CORS_ORIGINS: &[&str] = &["http://localhost:1420", "tauri://localhost", "http://tauri.localhost"];
-
 #[derive(Debug, Clone, Serialize)]
 pub struct ServerInfo {
     pub workspace_id: String,
@@ -104,9 +98,6 @@ impl ServerManager {
 
         let mut cmd = Command::new("opencode");
         cmd.arg("serve").arg("--hostname").arg("127.0.0.1").arg("--port").arg("0");
-        for origin in CORS_ORIGINS {
-            cmd.arg("--cors").arg(origin);
-        }
         cmd.current_dir(cwd).stdout(Stdio::piped()).stderr(Stdio::null());
 
         let mut child = cmd.spawn().map_err(|e| format!("failed to spawn opencode: {e}"))?;
@@ -156,13 +147,6 @@ impl ServerManager {
         }
     }
 
-    /// Mark a workspace's server as recently used, deferring idle reaping.
-    pub fn touch(&self, workspace_id: &str) {
-        if let Some(rs) = self.servers.lock().unwrap().get_mut(workspace_id) {
-            rs.last_touched = Instant::now();
-        }
-    }
-
     /// Current server info, reaping the entry if the process has exited.
     pub fn status(&self, workspace_id: &str) -> Option<ServerInfo> {
         let mut servers = self.servers.lock().unwrap();
@@ -172,21 +156,6 @@ impl ServerManager {
             return None;
         }
         servers.get(workspace_id).map(|rs| rs.info.clone())
-    }
-
-    /// Info for every running server (reaping any that have exited).
-    pub fn list(&self) -> Vec<ServerInfo> {
-        let mut servers = self.servers.lock().unwrap();
-        let mut dead = Vec::new();
-        for (id, rs) in servers.iter_mut() {
-            if matches!(rs.child.try_wait(), Ok(Some(_))) {
-                dead.push(id.clone());
-            }
-        }
-        for id in dead {
-            servers.remove(&id);
-        }
-        servers.values().map(|rs| rs.info.clone()).collect()
     }
 
     /// Kill every running server — called on app exit.

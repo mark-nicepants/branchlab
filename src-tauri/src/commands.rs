@@ -6,7 +6,7 @@ use tauri::State;
 
 use crate::config::{self, ConfigFile};
 use crate::engine::opencode_http::{self, ToolsStatus};
-use crate::git::{self, DiffStat, FileChange, FileContent, PrStatus, RemoteInfo};
+use crate::git::{self, FileContent};
 use crate::project::{AutofixMode, ProjectView, Registry, Workspace};
 use crate::server::{ServerInfo, ServerManager};
 use crate::supervisor::Supervisor;
@@ -95,7 +95,7 @@ pub async fn list_project_prs(
     registry: State<'_, Registry>,
     github: State<'_, crate::github::GithubManager>,
 ) -> Result<Vec<crate::github::model::PrSummary>, String> {
-    let root = registry.project_root(&project_id).ok_or("unknown project")?;
+    let root = registry.repo_root(&project_id).ok_or("unknown project")?;
     let override_id = registry.project_account_id(&project_id);
     let (account, owner, repo) = github.resolve_account(&root, override_id.as_deref())?;
     let client = github.client_for(&account.id)?;
@@ -113,20 +113,17 @@ pub async fn create_workspace_from_pr(
     supervisor: State<'_, Supervisor>,
     telemetry: State<'_, crate::telemetry::Telemetry>,
 ) -> Result<Workspace, String> {
-    let root = registry.project_root(&project_id).ok_or("unknown project")?;
+    let root = registry.repo_root(&project_id).ok_or("unknown project")?;
     let override_id = registry.project_account_id(&project_id);
     let (account, owner, repo) = github.resolve_account(&root, override_id.as_deref())?;
     let client = github.client_for(&account.id)?;
     let detail = client.pr_detail(&owner, &repo, pr_number).await?;
 
     let title = if detail.title.is_empty() { format!("PR #{pr_number}") } else { detail.title.clone() };
-    let head_repo = if detail.is_fork { None } else { Some(detail.repo.clone()) };
     let meta = crate::project::PrWorkspaceMeta {
         number: pr_number,
         title,
         base_ref: detail.base_ref,
-        url: detail.url,
-        head_repo,
         is_fork: detail.is_fork,
     };
     let ws = registry.create_workspace_from_pr(&project_id, meta)?;
@@ -134,14 +131,6 @@ pub async fn create_workspace_from_pr(
     supervisor.reconcile_now();
     telemetry.event("session_created", "/session", Some(serde_json::json!({ "source": "pr" })));
     Ok(ws)
-}
-
-#[tauri::command]
-pub fn get_project_prompts(
-    project_id: String,
-    registry: State<Registry>,
-) -> Result<crate::project::ProjectPrompts, String> {
-    registry.prompts(&project_id)
 }
 
 /// Remove a workspace: stop its server first. For worktree workspaces the git
@@ -194,24 +183,6 @@ pub fn clear_init_prompt(workspace_id: String, registry: State<Registry>) {
     registry.clear_init_prompt(&workspace_id);
 }
 
-#[tauri::command]
-pub fn workspace_diff_stat(workspace_id: String, registry: State<Registry>) -> DiffStat {
-    match registry.workspace_path(&workspace_id) {
-        Some(path) => git::diff_stat(&path),
-        None => DiffStat::default(),
-    }
-}
-
-/// Changed files for the diff panel. `against` defaults to HEAD (local working
-/// tree); pass a base branch to compare against it instead.
-#[tauri::command]
-pub fn workspace_changes(workspace_id: String, against: Option<String>, registry: State<Registry>) -> Vec<FileChange> {
-    match registry.workspace_path(&workspace_id) {
-        Some(path) => git::changes(&path, against.as_deref().unwrap_or("HEAD")),
-        None => vec![],
-    }
-}
-
 /// Unified diff for one file in a workspace.
 #[tauri::command]
 pub fn workspace_file_diff(
@@ -257,20 +228,6 @@ pub fn discard_file(
 // ── Workspace lifecycle: commit, merge, push, PR ──
 
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct MergeResult {
-    pub branch: String,
-    pub base: String,
-    pub summary: String,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct PushResult {
-    pub branch: String,
-    pub remote: String,
-    pub output: String,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
 pub struct PrResult {
     pub branch: String,
     pub base: String,
@@ -291,32 +248,6 @@ fn resolve_workspace_branch(
 #[tauri::command]
 pub fn commit_workspace(workspace_id: String, message: String, registry: State<Registry>) -> Result<String, String> {
     with_workspace_path(&registry, &workspace_id, |path| git::commit_all(path, &message))
-}
-
-/// Merge the workspace branch into its base branch in the parent repo.
-#[tauri::command]
-pub fn merge_workspace(
-    workspace_id: String,
-    registry: State<Registry>,
-    supervisor: State<Supervisor>,
-) -> Result<MergeResult, String> {
-    let (_ws, root, branch, base) = resolve_workspace_branch(&registry, &workspace_id)?;
-    let summary = git::merge_into_base(&root, &branch, &base)?;
-    supervisor.poke(&workspace_id);
-    Ok(MergeResult { branch, base, summary })
-}
-
-/// Push the workspace branch to `origin`.
-#[tauri::command]
-pub fn push_workspace(
-    workspace_id: String,
-    registry: State<Registry>,
-    supervisor: State<Supervisor>,
-) -> Result<PushResult, String> {
-    let (_ws, root, branch, _base) = resolve_workspace_branch(&registry, &workspace_id)?;
-    let output = git::push_branch(&root, "origin", &branch)?;
-    supervisor.poke(&workspace_id);
-    Ok(PushResult { branch, remote: "origin".to_string(), output })
 }
 
 /// Push the branch and open a GitHub PR via the API (routed through the repo's
@@ -352,22 +283,8 @@ pub fn github_detect_account(
     registry: State<Registry>,
     github: State<crate::github::GithubManager>,
 ) -> Option<crate::github::model::AccountView> {
-    let root = registry.project_root(&project_id)?;
+    let root = registry.repo_root(&project_id)?;
     github.detect_account(&root)
-}
-
-/// Fetch the pull-request CI status for the workspace's branch (via the GitHub
-/// API, routed through the account bound to the repo). `Ok(None)` means the
-/// branch has no PR yet; `Err` means no account is bound or the API call failed.
-#[tauri::command]
-pub async fn workspace_pr_status(
-    workspace_id: String,
-    registry: State<'_, Registry>,
-    github: State<'_, crate::github::GithubManager>,
-) -> Result<Option<PrStatus>, String> {
-    let (ws, root, branch, _base) = resolve_workspace_branch(&registry, &workspace_id)?;
-    let account_id = registry.project_account_id(&ws.project_id);
-    github.pr_status_for(&root, &branch, account_id.as_deref()).await
 }
 
 // ── Backend orchestration surface (see supervisor.rs / watcher.rs) ──
@@ -497,40 +414,12 @@ pub async fn mcp_disconnect(
 }
 
 #[tauri::command]
-pub fn list_remotes(workspace_id: String, registry: State<Registry>) -> Result<Vec<RemoteInfo>, String> {
-    let root = registry.workspace_project_root(&workspace_id).ok_or("unknown workspace")?;
-    git::list_remotes(&root)
-}
-
-#[tauri::command]
 pub fn start_server(
     workspace_id: String,
     registry: State<Registry>,
     servers: State<ServerManager>,
 ) -> Result<ServerInfo, String> {
     with_workspace_path(&registry, &workspace_id, |path| servers.start(&workspace_id, path))
-}
-
-#[tauri::command]
-pub fn stop_server(workspace_id: String, servers: State<ServerManager>) {
-    servers.stop(&workspace_id);
-}
-
-#[tauri::command]
-pub fn server_status(workspace_id: String, servers: State<ServerManager>) -> Option<ServerInfo> {
-    servers.status(&workspace_id)
-}
-
-/// Info for every running server (drives the fleet dashboard).
-#[tauri::command]
-pub fn list_servers(servers: State<ServerManager>) -> Vec<ServerInfo> {
-    servers.list()
-}
-
-/// Heartbeat from the UI to defer idle reaping of the active workspace.
-#[tauri::command]
-pub fn touch_server(workspace_id: String, servers: State<ServerManager>) {
-    servers.touch(&workspace_id);
 }
 
 /// Restart a workspace's server (used after editing config to apply it).

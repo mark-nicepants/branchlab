@@ -5,12 +5,11 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "dev": "python3 -m http.server 8899",
+    "dev": "node build.mjs && python3 -m http.server 8899 -d dist",
     "preview": "python3 -m http.server 8899 -d dist",
     "shots": "node screenshots.mjs"
   },
   "devDependencies": {
-    "esbuild": "^0.28.2",
     "html-minifier-terser": "^7.2.0",
     "playwright": "^1.62.1",
     "sharp": "^0.35.3"

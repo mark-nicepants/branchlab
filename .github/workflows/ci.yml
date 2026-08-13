@@ -95,11 +95,8 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
 
-      - name: Install dependencies
-        run: npm ci
-
+      # No install needed: npm audit reads package-lock.json + the registry.
       # Fail the build on a known high/critical advisory in npm dependencies.
       - name: npm audit
         run: npm audit --audit-level=high

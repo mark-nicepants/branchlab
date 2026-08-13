@@ -10,23 +10,25 @@ export default defineConfig(async ({ mode }) => ({
   plugins: [react(), tailwindcss()],
 
   resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
-      // In browser debug mode, swap the Tauri IPC API and events for their mock
-      // implementations. Aliases match the exact import specifier, so every
-      // relative form used across the tree is listed.
-      ...(mode === "browser" && {
-        "./lib/api": path.resolve(__dirname, "./src/lib/api.mock.ts"),
-        "../lib/api": path.resolve(__dirname, "./src/lib/api.mock.ts"),
-        "../../lib/api": path.resolve(__dirname, "./src/lib/api.mock.ts"),
-        "./lib/events": path.resolve(__dirname, "./src/lib/events.mock.ts"),
-        "../lib/events": path.resolve(__dirname, "./src/lib/events.mock.ts"),
-        "../../lib/events": path.resolve(
-          __dirname,
-          "./src/lib/events.mock.ts",
-        ),
-      }),
-    },
+    alias: [
+      { find: "@", replacement: path.resolve(__dirname, "./src") },
+      // In browser debug mode, swap the Tauri IPC API and events for their
+      // mock implementations. The regexes match every relative import form
+      // used across the tree (./lib/api, ../lib/api, ../../lib/api, …) and
+      // nothing else (anchored, so lib/api.mock is untouched).
+      ...(mode === "browser"
+        ? [
+            {
+              find: /^(\.\.\/)*(\.\/)?lib\/api$/,
+              replacement: path.resolve(__dirname, "./src/lib/api.mock.ts"),
+            },
+            {
+              find: /^(\.\.\/)*(\.\/)?lib\/events$/,
+              replacement: path.resolve(__dirname, "./src/lib/events.mock.ts"),
+            },
+          ]
+        : []),
+    ],
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

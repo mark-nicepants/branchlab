@@ -1,12 +1,12 @@
 import { useEffect, useRef } from "react";
-import type { CommandOption } from "../lib/types";
+import type { ChatCommand } from "../lib/types";
 import { cn } from "@/lib/utils";
 
 interface Props {
-  commands: CommandOption[];
+  commands: ChatCommand[];
   selectedIndex: number;
   onHover: (index: number) => void;
-  onPick: (cmd: CommandOption) => void;
+  onPick: (cmd: ChatCommand) => void;
 }
 
 /**
@@ -63,11 +63,6 @@ export function SlashCommandPalette({
           {c.description && (
             <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
               {c.description}
-            </span>
-          )}
-          {c.source === "skill" && (
-            <span className="shrink-0 rounded bg-muted px-1 text-[10px] uppercase tracking-wider text-muted-foreground">
-              skill
             </span>
           )}
         </button>

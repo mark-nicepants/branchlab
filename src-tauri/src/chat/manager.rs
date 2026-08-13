@@ -224,12 +224,10 @@ impl ChatManager {
             let assistant = Entry::Assistant(AssistantEntry {
                 seq: 0,
                 entry_id: assistant_id.clone(),
-                engine_session_id: None,
                 status: TurnStatus::Queued,
                 origin,
                 blocks: Vec::new(),
                 summary: CollapseSummary::default(),
-                usage: None,
                 started_at: now,
                 ended_at: None,
             });
@@ -240,12 +238,10 @@ impl ChatManager {
         let assistant = Entry::Assistant(AssistantEntry {
             seq: assistant_seq,
             entry_id: assistant_id.clone(),
-            engine_session_id: None,
             status: TurnStatus::Queued,
             origin,
             blocks: Vec::new(),
             summary: CollapseSummary::default(),
-            usage: None,
             started_at: now,
             ended_at: None,
         });
@@ -253,7 +249,7 @@ impl ChatManager {
 
         conv.assembler = TurnAssembler::new();
         conv.current = Some(LiveTurn {
-            entry_id: assistant_id.clone(),
+            entry_id: assistant_id,
             seq: assistant_seq,
             origin,
             started_at: now,
@@ -264,7 +260,7 @@ impl ChatManager {
         let inputs = build_inputs(&sent, &attachments);
         crate::logf!("chat", "send ws={workspace_id} origin={origin:?} ready={} sent_len={}", conv.ready, sent.len());
         if let Some(engine) = &conv.engine {
-            engine.send(EngineCommand::Prompt { entry_id: assistant_id, inputs });
+            engine.send(EngineCommand::Prompt { inputs });
         }
         let _ = self.inner.turn_tx.send(TurnEvent {
             workspace_id: workspace_id.to_string(),
@@ -435,7 +431,7 @@ impl ChatManager {
                 let db = self.inner.db.lock().unwrap();
                 match db.get_conversation(workspace_id)? {
                     Some(c) => {
-                        let has = !db.list_engine_sessions(&c.id)?.is_empty();
+                        let has = db.has_engine_sessions(&c.id)?;
                         (c.id, has)
                     }
                     None => {
@@ -443,7 +439,6 @@ impl ChatManager {
                         db.create_conversation(&Conversation {
                             id: id.clone(),
                             workspace_id: workspace_id.to_string(),
-                            title: None,
                             created_at: now_ms(),
                             active_engine_session: None,
                         })?;
@@ -669,12 +664,10 @@ impl Inner {
                         let entry = Entry::Assistant(AssistantEntry {
                             seq: cur.seq,
                             entry_id: cur.entry_id.clone(),
-                            engine_session_id: None,
                             status: TurnStatus::Streaming,
                             origin: cur.origin,
                             blocks: conv.assembler.blocks.clone(),
                             summary: compute_collapse(&conv.assembler.blocks, true),
-                            usage: None,
                             started_at: cur.started_at,
                             ended_at: None,
                         });
@@ -744,12 +737,10 @@ impl Inner {
         let entry = Entry::Assistant(AssistantEntry {
             seq: cur.seq,
             entry_id: cur.entry_id.clone(),
-            engine_session_id: None,
             status,
             origin: cur.origin,
             blocks,
             summary: summary.clone(),
-            usage: None,
             started_at: cur.started_at,
             ended_at: Some(now),
         });
@@ -763,7 +754,7 @@ impl Inner {
         }
         let origin = cur.origin;
         drop(convs);
-        events::emit_turn(&self.app, ws, cur.seq, status, &summary, None, Some(now));
+        events::emit_turn(&self.app, ws, cur.seq, status, &summary, Some(now));
         if let Some(text) = err_text {
             crate::logf!("chat", "turn failed ws={ws} seq={}: {text}", cur.seq);
             self.push_system(ws, &conv_id, SystemKind::Error, format!("Turn failed: {text}"));

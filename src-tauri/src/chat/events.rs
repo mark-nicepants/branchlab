@@ -9,7 +9,7 @@
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
-use crate::chat::model::{Block, CollapseSummary, ConfigOption, Entry, TurnStatus, Usage};
+use crate::chat::model::{Block, CollapseSummary, ConfigOption, Entry, TurnStatus};
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -34,7 +34,6 @@ struct TurnEventPayload<'a> {
     entry_seq: i64,
     status: TurnStatus,
     summary: &'a CollapseSummary,
-    usage: Option<&'a Usage>,
     /// Set when the turn reached a terminal status — drives the live duration
     /// footer without waiting for a snapshot reload.
     ended_at: Option<i64>,
@@ -125,10 +124,9 @@ pub fn emit_turn(
     entry_seq: i64,
     status: TurnStatus,
     summary: &CollapseSummary,
-    usage: Option<&Usage>,
     ended_at: Option<i64>,
 ) {
-    let _ = app.emit("chat:turn", TurnEventPayload { workspace_id, entry_seq, status, summary, usage, ended_at });
+    let _ = app.emit("chat:turn", TurnEventPayload { workspace_id, entry_seq, status, summary, ended_at });
 }
 
 #[allow(clippy::too_many_arguments)]

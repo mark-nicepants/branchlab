@@ -31,11 +31,8 @@ export interface Workspace {
    *  Optional only so the browser mock's literals stay terse — the real
    *  backend always sends it; treat an absent value as "off". */
   autofix_mode?: AutofixMode;
-  /** OpenCode session id the backend drives for this workspace, if registered. */
-  session_id?: string | null;
   /** Set when this workspace was checked out from an existing PR. */
   pr_number?: number | null;
-  pr_url?: string | null;
   /** A fork PR — read-only (no push/autofix back to the fork). */
   pr_is_fork?: boolean;
 }
@@ -74,7 +71,6 @@ export interface Project {
   name: string;
   root_path: string;
   default_branch: string | null;
-  default_model_key: string | null;
   prompts: ProjectPrompts;
   /** GitHub account override (`"{host}/{login}"`); null = use auto-detected. */
   account_id: string | null;
@@ -91,7 +87,6 @@ export interface ProjectPrompts {
 export interface ProjectUpdate {
   name?: string;
   default_branch?: string;
-  default_model_key?: string | null;
   prompts?: ProjectPrompts;
   /** GitHub account override: "" clears it (auto-detect), an id sets it,
    *  undefined leaves it unchanged. */
@@ -107,23 +102,6 @@ export interface ServerInfo {
   workspace_id: string;
   base_url: string;
   port: number;
-}
-
-export interface RemoteInfo {
-  name: string;
-  url: string;
-}
-
-export interface MergeResult {
-  branch: string;
-  base: string;
-  summary: string;
-}
-
-export interface PushResult {
-  branch: string;
-  remote: string;
-  output: string;
 }
 
 export interface PrResult {
@@ -145,7 +123,7 @@ export interface PrCheck {
   workflow: string | null;
 }
 
-/** A pull request's CI status for one branch (from `workspacePrStatus`). */
+/** A pull request's CI status for one branch. */
 export interface PrStatus {
   number: number;
   url: string;
@@ -210,12 +188,6 @@ export interface SessionPayload {
 export interface TodosPayload {
   workspaceId: string;
   todos: Todo[];
-}
-
-/** `workspace:notify` — discrete notification signals (foundation for sounds). */
-export interface NotifyPayload {
-  workspaceId: string;
-  kind: "turn_done" | "awaiting_input" | "pipeline_failed" | "pipeline_green";
 }
 
 // ── GitHub accounts, identity & review inbox ──
@@ -342,121 +314,6 @@ export interface ConfigFile {
 
 // ── OpenCode HTTP API types (subset we use; from the OpenAPI 3.1 spec) ──
 
-export interface Session {
-  id: string;
-  title: string;
-  directory: string;
-  projectID: string;
-}
-
-export type MessageRole = "user" | "assistant";
-
-export interface MessageInfo {
-  id: string;
-  role: MessageRole;
-  sessionID: string;
-  /** Token usage for this message (assistant messages may include this). */
-  tokens?: {
-    input?: number;
-    output?: number;
-    reasoning?: number;
-    cache?: { read?: number; write?: number };
-  };
-}
-
-/** A part of a message. We render `text`; other kinds get a one-line summary. */
-export interface Part {
-  id: string;
-  messageID: string;
-  sessionID: string;
-  type:
-    | "text"
-    | "reasoning"
-    | "tool"
-    | "file"
-    | "step-start"
-    | "step-finish"
-    | string;
-  text?: string;
-  /** Tool name for tool parts (e.g. "edit", "bash", "read"). */
-  tool?: string;
-  /** Runtime state of a tool call. */
-  state?: ToolState;
-  /** Filename for file parts. */
-  filename?: string;
-  /** URL/path for file parts. */
-  url?: string;
-  /** MIME type for file parts. */
-  mime?: string;
-  /** Description for subtask parts. */
-  description?: string;
-  /** Agent name for subtask parts. */
-  agent?: string;
-}
-
-/** Runtime state of a tool call part. */
-export interface ToolState {
-  status?: "pending" | "running" | "completed" | "error" | string;
-  /** Tool arguments. */
-  input?: Record<string, unknown>;
-  /** Tool result text (when completed). */
-  output?: string;
-  /** Human-readable title while running or after completion. */
-  title?: string;
-  /** Error message when status is error. */
-  error?: string;
-  /** Raw pending representation. */
-  raw?: string;
-  /** Timing metadata. */
-  time?: { start?: number; end?: number };
-  /**
-   * Tool-specific extras. Edit/Write set:
-   *  - `diff`: full unified diff of the change (use over synthesized diffs).
-   *  - `diagnostics`: { [absPath]: LspDiagnostic[] } LSP results post-edit.
-   *  - `filediff`: `{ file, patch }`, `truncated`: boolean.
-   */
-  metadata?: Record<string, unknown>;
-}
-
-/** Subset of an LSP Diagnostic we render. */
-export interface LspDiagnostic {
-  range: {
-    start: { line: number; character: number };
-    end: { line: number; character: number };
-  };
-  /** LSP severity: 1=error, 2=warning, 3=info, 4=hint. */
-  severity?: 1 | 2 | 3 | 4;
-  message: string;
-  source?: string;
-  code?: string | number;
-}
-
-export interface MessageWithParts {
-  info: MessageInfo;
-  parts: Part[];
-}
-
-/** SSE event envelope: { id, type, properties }. */
-export interface BusEvent {
-  id?: string;
-  type: string;
-  properties: Record<string, unknown>;
-}
-
-/** A selectable model, flattened from /config/providers. */
-export interface ModelOption {
-  /** Stable identity: `${providerID}/${modelID}`. */
-  key: string;
-  providerID: string;
-  /** Provider display name, for grouping (e.g. "Anthropic"). */
-  providerName: string;
-  modelID: string;
-  /** Model display name (e.g. "Claude Sonnet 4.6"). */
-  name: string;
-  /** Max context window in tokens (model.limit.context), if known. */
-  contextLimit?: number;
-}
-
 /** One OpenCode todo item from /session/{id}/todo. */
 export interface Todo {
   content: string;
@@ -479,85 +336,10 @@ export interface LspStatus {
   status?: string;
 }
 
-/** One selectable option inside an OpenCode question. */
-export interface QuestionOption {
-  /** Display text (1-5 words, concise). */
-  label: string;
-  /** Explanation of choice. */
-  description: string;
-}
-
-/** One question inside a question request. */
-export interface QuestionInfo {
-  /** Complete question text. */
-  question: string;
-  /** Very short label (max 30 chars). */
-  header: string;
-  /** Available choices. */
-  options: QuestionOption[];
-  /** Allow selecting multiple options. */
-  multiple?: boolean;
-  /** Allow a free-text answer alongside/instead of options. */
-  custom?: boolean;
-}
-
-/** V2 question request emitted via `question.v2.asked` SSE event. */
-export interface QuestionV2Request {
-  /** Request ID used to reply. */
-  id: string;
-  sessionID: string;
-  questions: QuestionInfo[];
-  tool?: { messageID: string; callID: string };
-}
-
-/** V1 question request emitted via `question.asked` SSE event. */
-export interface QuestionRequest {
-  id: string;
-  sessionID: string;
-  questions: QuestionInfo[];
-  tool?: { messageID: string; callID: string };
-}
-
-/** Shape of the reply body for V2 questions. */
-export interface QuestionV2Reply {
-  /** User answers in order of questions (each answer is an array of selected labels). */
-  answers: string[][];
-}
-
-/** Shape of the reply body for V1 questions. */
-export interface QuestionReply {
-  answers: string[][];
-}
-
-export interface AgentOption {
-  /** Agent name passed to `/session/{id}/prompt_async` as `agent`. */
-  name: string;
-  /** Agent classification: "primary" agents are the user-facing modes. */
-  mode?: string;
-  description?: string;
-}
-
 /** Context-window usage for the active session. */
 export interface ContextInfo {
   used: number;
   max: number;
-}
-
-/** One slash command from OpenCode's `/command` endpoint.
- *
- * Slash commands are client-side prompt templates: the client expands
- * `$ARGUMENTS` in `template` with the user-supplied text and sends the result
- * as a normal prompt. There is no dedicated server execution endpoint. */
-export interface CommandOption {
-  /** Identifier the user types after `/` (e.g. "review"). */
-  name: string;
-  description?: string;
-  /** Prompt body, may contain `$ARGUMENTS` placeholders. */
-  template: string;
-  /** "command" (user-defined) or "skill" (an opencode skill surfaced as one). */
-  source?: string;
-  /** Run as a sub-agent (delegated task) instead of in the user's current mode. */
-  subtask?: boolean;
 }
 
 // ── New chat layer (Rust `chat` module) — mirrors src-tauri/src/chat/model.rs.

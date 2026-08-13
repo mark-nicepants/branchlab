@@ -49,7 +49,6 @@ npm run build                 # tsc type-check + vite production build
 npm test                      # frontend unit tests (Vitest, run once)
 npm run test:watch            # Vitest watch mode
 npm run test:integration      # real-engine ACP e2e (spawns `opencode acp`; needs auth+network, costs tokens)
-npm run test:probe            # real-engine diagnostics (dumps config/updates opencode emits)
 cd src-tauri && cargo test --lib   # Rust unit tests
 cd src-tauri && cargo build        # backend build
 ```

@@ -117,11 +117,6 @@ pub fn telemetry_pageview(telemetry: tauri::State<'_, Telemetry>, url: String) {
 }
 
 #[tauri::command]
-pub fn telemetry_event(telemetry: tauri::State<'_, Telemetry>, name: String, url: String, data: Option<Value>) {
-    telemetry.event(&name, &url, data);
-}
-
-#[tauri::command]
 pub fn telemetry_get_enabled(telemetry: tauri::State<'_, Telemetry>) -> bool {
     telemetry.enabled()
 }

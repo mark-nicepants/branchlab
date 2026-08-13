@@ -21,9 +21,7 @@ use std::path::Path;
 
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::chat::model::{Conversation, EngineSession, Entry, SessionReason, TurnStatus};
-
-const SCHEMA_VERSION: i64 = 1;
+use crate::chat::model::{Conversation, Entry, SessionReason, TurnStatus};
 
 pub struct ChatDb {
     conn: Connection,
@@ -48,11 +46,9 @@ impl ChatDb {
         conn.pragma_update(None, "journal_mode", "WAL").map_err(|e| e.to_string())?;
         conn.pragma_update(None, "foreign_keys", "ON").map_err(|e| e.to_string())?;
         conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-             CREATE TABLE IF NOT EXISTS conversations (
+            "CREATE TABLE IF NOT EXISTS conversations (
                id TEXT PRIMARY KEY,
                workspace_id TEXT NOT NULL UNIQUE,
-               title TEXT,
                created_at INTEGER NOT NULL,
                updated_at INTEGER NOT NULL,
                active_engine_session TEXT
@@ -80,12 +76,6 @@ impl ChatDb {
              CREATE INDEX IF NOT EXISTS idx_entries_conv_seq ON entries(conversation_id, seq);",
         )
         .map_err(|e| e.to_string())?;
-        conn.execute(
-            "INSERT INTO meta (key, value) VALUES ('schema_version', ?1)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params![SCHEMA_VERSION.to_string()],
-        )
-        .map_err(|e| e.to_string())?;
         Ok(Self { conn })
     }
 
@@ -94,16 +84,15 @@ impl ChatDb {
     pub fn get_conversation(&self, workspace_id: &str) -> Result<Option<Conversation>, String> {
         self.conn
             .query_row(
-                "SELECT id, workspace_id, title, created_at, active_engine_session
+                "SELECT id, workspace_id, created_at, active_engine_session
                  FROM conversations WHERE workspace_id = ?1",
                 params![workspace_id],
                 |r| {
                     Ok(Conversation {
                         id: r.get(0)?,
                         workspace_id: r.get(1)?,
-                        title: r.get(2)?,
-                        created_at: r.get(3)?,
-                        active_engine_session: r.get(4)?,
+                        created_at: r.get(2)?,
+                        active_engine_session: r.get(3)?,
                     })
                 },
             )
@@ -114,17 +103,10 @@ impl ChatDb {
     pub fn create_conversation(&self, c: &Conversation) -> Result<(), String> {
         self.conn
             .execute(
-                "INSERT INTO conversations (id, workspace_id, title, created_at, updated_at, active_engine_session)
-                 VALUES (?1, ?2, ?3, ?4, ?4, ?5)",
-                params![c.id, c.workspace_id, c.title, c.created_at, c.active_engine_session],
+                "INSERT INTO conversations (id, workspace_id, created_at, updated_at, active_engine_session)
+                 VALUES (?1, ?2, ?3, ?3, ?4)",
+                params![c.id, c.workspace_id, c.created_at, c.active_engine_session],
             )
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-    }
-
-    pub fn set_conversation_title(&self, conversation_id: &str, title: &str) -> Result<(), String> {
-        self.conn
-            .execute("UPDATE conversations SET title = ?2 WHERE id = ?1", params![conversation_id, title])
             .map(|_| ())
             .map_err(|e| e.to_string())
     }
@@ -140,7 +122,7 @@ impl ChatDb {
         engine: &str,
         reason: SessionReason,
         started_at: i64,
-    ) -> Result<EngineSession, String> {
+    ) -> Result<(), String> {
         self.conn
             .execute("UPDATE engine_sessions SET active = 0 WHERE conversation_id = ?1", params![conversation_id])
             .map_err(|e| e.to_string())?;
@@ -152,46 +134,25 @@ impl ChatDb {
                 params![conversation_id, acp_session_id, engine, reason_s, started_at],
             )
             .map_err(|e| e.to_string())?;
-        let id = self.conn.last_insert_rowid();
         self.conn
             .execute(
                 "UPDATE conversations SET active_engine_session = ?2 WHERE id = ?1",
                 params![conversation_id, acp_session_id],
             )
-            .map_err(|e| e.to_string())?;
-        Ok(EngineSession {
-            id,
-            conversation_id: conversation_id.to_string(),
-            acp_session_id: acp_session_id.to_string(),
-            engine: engine.to_string(),
-            reason,
-            started_at,
-            active: true,
-        })
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     }
 
-    pub fn list_engine_sessions(&self, conversation_id: &str) -> Result<Vec<EngineSession>, String> {
-        let mut stmt = self
-            .conn
-            .prepare(
-                "SELECT id, conversation_id, acp_session_id, engine, reason, started_at, active
-                 FROM engine_sessions WHERE conversation_id = ?1 ORDER BY id ASC",
+    /// Whether a conversation has ever had an engine session (drives the
+    /// Started-vs-Reloaded divider for a conversation loaded from disk).
+    pub fn has_engine_sessions(&self, conversation_id: &str) -> Result<bool, String> {
+        self.conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM engine_sessions WHERE conversation_id = ?1)",
+                params![conversation_id],
+                |r| r.get(0),
             )
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map(params![conversation_id], |r| {
-                Ok(EngineSession {
-                    id: r.get(0)?,
-                    conversation_id: r.get(1)?,
-                    acp_session_id: r.get(2)?,
-                    engine: r.get(3)?,
-                    reason: reason_from(&r.get::<_, String>(4)?),
-                    started_at: r.get(5)?,
-                    active: r.get::<_, i64>(6)? != 0,
-                })
-            })
-            .map_err(|e| e.to_string())?;
-        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())
     }
 
     // ── Entries ────────────────────────────────────────────────────────────
@@ -318,15 +279,6 @@ fn reason_str(r: SessionReason) -> &'static str {
     }
 }
 
-fn reason_from(s: &str) -> SessionReason {
-    match s {
-        "compacted" => SessionReason::Compacted,
-        "cleared" => SessionReason::Cleared,
-        "reloaded" => SessionReason::Reloaded,
-        _ => SessionReason::Started,
-    }
-}
-
 fn status_str(s: TurnStatus) -> &'static str {
     match s {
         TurnStatus::Queued => "queued",
@@ -375,7 +327,6 @@ mod tests {
         let c = Conversation {
             id: "conv-1".into(),
             workspace_id: "ws-1".into(),
-            title: None,
             created_at: 100,
             active_engine_session: None,
         };
@@ -402,12 +353,10 @@ mod tests {
         Entry::Assistant(AssistantEntry {
             seq: 0,
             entry_id: id.into(),
-            engine_session_id: Some(1),
             status,
             origin: TurnOrigin::User,
             blocks,
             summary: CollapseSummary::default(),
-            usage: None,
             started_at: 2,
             ended_at: None,
         })
@@ -469,12 +418,10 @@ mod tests {
         let updated = Entry::Assistant(AssistantEntry {
             seq,
             entry_id: "a1".into(),
-            engine_session_id: Some(1),
             status: TurnStatus::Completed,
             origin: TurnOrigin::User,
             blocks: vec![Block::Text { block_id: "t1".into(), text: "hello".into() }],
             summary: CollapseSummary { collapsed: true, headline: "Responded".into(), ..Default::default() },
-            usage: None,
             started_at: 2,
             ended_at: Some(9),
         });
@@ -494,14 +441,10 @@ mod tests {
     fn engine_sessions_span_a_conversation() {
         let db = ChatDb::open_in_memory().unwrap();
         conv(&db);
-        let s1 = db.add_engine_session("conv-1", "acp-a", "opencode", SessionReason::Started, 10).unwrap();
-        let s2 = db.add_engine_session("conv-1", "acp-b", "opencode", SessionReason::Compacted, 20).unwrap();
-        assert_ne!(s1.id, s2.id);
-        let all = db.list_engine_sessions("conv-1").unwrap();
-        assert_eq!(all.len(), 2);
-        assert!(!all[0].active, "first session deactivated");
-        assert!(all[1].active, "newest session active");
-        assert_eq!(all[1].reason, SessionReason::Compacted);
+        assert!(!db.has_engine_sessions("conv-1").unwrap());
+        db.add_engine_session("conv-1", "acp-a", "opencode", SessionReason::Started, 10).unwrap();
+        db.add_engine_session("conv-1", "acp-b", "opencode", SessionReason::Compacted, 20).unwrap();
+        assert!(db.has_engine_sessions("conv-1").unwrap());
         // conversation now points at the newest engine session
         let c = db.get_conversation("ws-1").unwrap().unwrap();
         assert_eq!(c.active_engine_session.as_deref(), Some("acp-b"));

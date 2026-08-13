@@ -1,5 +1,5 @@
 import { ChevronUp, GitBranch } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatStore } from "../hooks/useChat";
 import { useClipboardImages } from "../hooks/useClipboardImages";
 import { useTodos } from "../hooks/useTodos";
@@ -11,7 +11,7 @@ import {
   renameWorkspaceBranch,
 } from "../lib/api";
 import { filterCommands, isSlashTyping } from "../lib/slash";
-import type { CommandOption, Workspace } from "../lib/types";
+import type { Workspace } from "../lib/types";
 import { ActiveTodoStrip } from "./ActiveTodoStrip";
 import {
   AssistantTurnView,
@@ -212,18 +212,9 @@ export function Chat({
 
   // Slash palette: OpenCode expands `/cmd args` server-side over ACP, so we send
   // the raw text (display === sent) — no client-side template expansion.
-  const paletteCommands: CommandOption[] = useMemo(
-    () =>
-      chat.commands.map((c) => ({
-        name: c.name,
-        description: c.description,
-        template: "",
-      })),
-    [chat.commands],
-  );
   const showPalette = isSlashTyping(input);
   const slashMatches = showPalette
-    ? filterCommands(paletteCommands, input.slice(1))
+    ? filterCommands(chat.commands, input.slice(1))
     : [];
   useEffect(() => setSlashIndex(0), [showPalette, slashMatches.length]);
 

@@ -22,7 +22,7 @@ interface RouterState {
   settingsTab: SettingsTab | null;
 }
 
-export function routePath(s: RouterState): string {
+function routePath(s: RouterState): string {
   if (s.settingsTab) return `/settings/${s.settingsTab}`;
   return s.view === "session" ? "/session" : `/${s.view}`;
 }

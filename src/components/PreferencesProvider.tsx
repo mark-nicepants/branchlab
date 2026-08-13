@@ -6,12 +6,6 @@ export type ChatDensity = "tight" | "loose" | "roomy";
 
 /** Preferences stored per workspace. */
 export interface WorkspacePreferences {
-  /** Last selected model key (`providerID/modelID`). */
-  modelKey?: string;
-  /** Reasoning-effort variant; empty string means the model's default. */
-  variant?: string;
-  /** OpenCode session id reused for this workspace. */
-  sessionId?: string;
   /** Draft text in the composer input box. */
   inputText?: string;
 }
@@ -29,7 +23,7 @@ export interface Preferences {
    *  ACP-advertised model option so the global Models settings page can render
    *  the list without an open session. */
   modelCatalog: { value: string; name: string; group?: string | null }[];
-  /** Per-workspace preferences (model, variant, session, draft input, …). */
+  /** Per-workspace preferences (draft input). */
   workspace: Record<string, WorkspacePreferences>;
   /** Collapsed state of project stats panels in the sidebar (project id → boolean). */
   collapsedProjects: Record<string, boolean>;
@@ -75,34 +69,13 @@ const PrefsCtx = createContext<PrefsCtxValue>({
 
 type LegacyPreferences = Partial<
   Preferences & {
-    workspaceModels: Record<string, string>;
-    workspaceVariants: Record<string, string>;
-    workspaceSessions: Record<string, string>;
     /** Pre-pixel panel width, as a % of the session body. */
     changesPanelWidthPct: number;
   }
 >;
 
-/** Migrate old flat per-workspace keys into the grouped `workspace` object. */
+/** Normalize stored preferences (incl. legacy shapes) into `Preferences`. */
 function migrate(raw: LegacyPreferences): Preferences {
-  const workspace: Record<string, WorkspacePreferences> = {
-    ...(raw.workspace ?? {}),
-  };
-  if (raw.workspaceModels) {
-    for (const [id, key] of Object.entries(raw.workspaceModels)) {
-      workspace[id] = { ...workspace[id], modelKey: key };
-    }
-  }
-  if (raw.workspaceVariants) {
-    for (const [id, variant] of Object.entries(raw.workspaceVariants)) {
-      workspace[id] = { ...workspace[id], variant };
-    }
-  }
-  if (raw.workspaceSessions) {
-    for (const [id, sessionId] of Object.entries(raw.workspaceSessions)) {
-      workspace[id] = { ...workspace[id], sessionId };
-    }
-  }
   // Panel width moved from % of the body to fixed pixels — approximate the old
   // percentage against the current window so the panel keeps its familiar size.
   let changesPanelWidthPx = raw.changesPanelWidthPx;
@@ -115,7 +88,7 @@ function migrate(raw: LegacyPreferences): Preferences {
     1200,
     Math.max(320, changesPanelWidthPx ?? DEFAULTS.changesPanelWidthPx),
   );
-  return { ...DEFAULTS, ...raw, workspace, changesPanelWidthPx };
+  return { ...DEFAULTS, ...raw, changesPanelWidthPx };
 }
 
 function load(): Preferences {

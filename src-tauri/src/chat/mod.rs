@@ -7,11 +7,6 @@
 //!
 //! Built incrementally; submodules are wired into `ChatManager` as they land.
 
-// TODO(chat-rebuild): drop once every module is wired into ChatManager and the
-// commands/events surface. Kept during the incremental build so partially-wired
-// modules don't trip `clippy -D warnings`.
-#![allow(dead_code)]
-
 pub mod assembler;
 pub mod commands;
 pub mod events;

@@ -357,42 +357,6 @@ pub fn commit_all(repo: &str, message: &str) -> Result<String, String> {
     Ok(out)
 }
 
-/// Merge this branch into the base branch using `git checkout base && git merge branch`.
-/// Returns a description of the result (fast-forward or merge commit).
-pub fn merge_into_base(repo: &str, branch: &str, base: &str) -> Result<String, String> {
-    // Stash any dirty state in the base worktree before switching.
-    let stash = git(repo, &["stash", "push", "-u", "-m", "branchlab-auto-stash"]).ok();
-    // Save where we are so we can return after the merge.
-    let original = current_branch(repo)?;
-
-    git(repo, &["checkout", base]).inspect_err(|_| {
-        if stash.is_some() {
-            let _ = git(repo, &["stash", "pop"]);
-        }
-    })?;
-
-    let result = git(repo, &["merge", "--no-edit", branch]).map_err(|e| {
-        let _ = git(repo, &["checkout", &original]);
-        if stash.is_some() {
-            let _ = git(repo, &["stash", "pop"]);
-        }
-        format!("merge failed: {e}")
-    })?;
-
-    // Switch back to the original branch and restore stashed changes.
-    let _ = git(repo, &["checkout", &original]);
-    if stash.is_some() {
-        let _ = git(repo, &["stash", "pop"]);
-    }
-
-    let summary = if result.contains("Fast-forward") {
-        format!("Fast-forward merged `{branch}` into `{base}`.")
-    } else {
-        format!("Merged `{branch}` into `{base}`.")
-    };
-    Ok(summary)
-}
-
 /// Push `branch` to `remote`. The remote is assumed to exist (typically `origin`).
 pub fn push_branch(repo: &str, remote: &str, branch: &str) -> Result<String, String> {
     let out = git(repo, &["push", "-u", remote, branch])?;

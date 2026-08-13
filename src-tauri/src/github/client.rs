@@ -43,24 +43,19 @@ struct RawOrg {
 #[derive(Clone)]
 pub struct GithubClient {
     crab: Arc<Octocrab>,
-    host: String,
 }
 
 impl GithubClient {
     /// Build a client for one account. `api_base` is `https://api.github.com`
     /// (dotcom) or `https://{host}/api/v3` (GHE); `token` comes from `gh`.
-    pub fn build(host: &str, api_base: &str, token: &str) -> Result<Self, String> {
+    pub fn build(api_base: &str, token: &str) -> Result<Self, String> {
         let crab = Octocrab::builder()
             .base_uri(api_base)
             .map_err(|e| format!("invalid GitHub API base URL: {e}"))?
             .personal_token(token.to_string())
             .build()
             .map_err(|e| format!("could not build GitHub client: {e}"))?;
-        Ok(Self { crab: Arc::new(crab), host: host.to_string() })
-    }
-
-    pub fn host(&self) -> &str {
-        &self.host
+        Ok(Self { crab: Arc::new(crab) })
     }
 
     async fn timed<T>(fut: impl std::future::Future<Output = octocrab::Result<T>>) -> Result<T, String> {

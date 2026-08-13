@@ -70,7 +70,7 @@ import {
   Trash2,
   TriangleAlert,
 } from "lucide-react";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { toast } from "sonner";
 import { useWorkspaceData } from "../../hooks/useWorkspaceData";
 import { openExternal, removeProject, removeWorkspace } from "../../lib/api";
@@ -777,31 +777,38 @@ function WorkspaceRow({
     !isQuickChat && w.name && !(pr && ai.label) ? w.name : null;
   const hasRow2 = Boolean(pr || ai.label || secondaryName);
 
-  const menuItems = (
-    <>
-      <ContextMenuItem onClick={() => onOpenIn?.(w, terminalApp)}>
-        <Terminal className="size-4" /> Open in terminal
-      </ContextMenuItem>
-      <ContextMenuItem onClick={() => onOpenIn?.(w)}>
-        <FolderOpen className="size-4" /> Open in Finder
-      </ContextMenuItem>
-      <ContextMenuItem onClick={() => onOpenIn?.(w, editorApp)}>
-        <Code2 className="size-4" /> Open in IDE
-      </ContextMenuItem>
-      <ContextMenuSeparator />
-      <ContextMenuItem onClick={onRename}>
-        <Pencil className="size-4" /> Rename
-      </ContextMenuItem>
-      <ContextMenuItem variant="destructive" onClick={onDelete}>
-        <Trash2 className="size-4" />{" "}
-        {isQuickChat
-          ? "Delete quick chat"
-          : w.kind === "Base"
-            ? "Delete base workspace"
-            : "Delete session"}
-      </ContextMenuItem>
-    </>
-  );
+  // One shared item list drives both the right-click context menu and the ⋮
+  // dropdown so the two can't drift apart. A separator renders before Rename.
+  const menuItems: {
+    icon: typeof Terminal;
+    label: string;
+    onClick: () => void;
+    destructive?: boolean;
+  }[] = [
+    {
+      icon: Terminal,
+      label: "Open in terminal",
+      onClick: () => onOpenIn?.(w, terminalApp),
+    },
+    { icon: FolderOpen, label: "Open in Finder", onClick: () => onOpenIn?.(w) },
+    {
+      icon: Code2,
+      label: "Open in IDE",
+      onClick: () => onOpenIn?.(w, editorApp),
+    },
+    { icon: Pencil, label: "Rename", onClick: onRename },
+    {
+      icon: Trash2,
+      label: isQuickChat
+        ? "Delete quick chat"
+        : w.kind === "Base"
+          ? "Delete base workspace"
+          : "Delete session",
+      onClick: onDelete,
+      destructive: true,
+    },
+  ];
+  const SEPARATOR_BEFORE = "Rename";
 
   const row = (
     <div
@@ -873,27 +880,17 @@ function WorkspaceRow({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start">
-          <DropdownMenuItem onClick={() => onOpenIn?.(w, terminalApp)}>
-            <Terminal className="size-4" /> Open in terminal
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => onOpenIn?.(w)}>
-            <FolderOpen className="size-4" /> Open in Finder
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => onOpenIn?.(w, editorApp)}>
-            <Code2 className="size-4" /> Open in IDE
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={onRename}>
-            <Pencil className="size-4" /> Rename
-          </DropdownMenuItem>
-          <DropdownMenuItem variant="destructive" onClick={onDelete}>
-            <Trash2 className="size-4" />{" "}
-            {isQuickChat
-              ? "Delete quick chat"
-              : w.kind === "Base"
-                ? "Delete base workspace"
-                : "Delete session"}
-          </DropdownMenuItem>
+          {menuItems.map((m) => (
+            <Fragment key={m.label}>
+              {m.label === SEPARATOR_BEFORE && <DropdownMenuSeparator />}
+              <DropdownMenuItem
+                variant={m.destructive ? "destructive" : undefined}
+                onClick={m.onClick}
+              >
+                <m.icon className="size-4" /> {m.label}
+              </DropdownMenuItem>
+            </Fragment>
+          ))}
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
@@ -902,7 +899,19 @@ function WorkspaceRow({
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
-      <ContextMenuContent>{menuItems}</ContextMenuContent>
+      <ContextMenuContent>
+        {menuItems.map((m) => (
+          <Fragment key={m.label}>
+            {m.label === SEPARATOR_BEFORE && <ContextMenuSeparator />}
+            <ContextMenuItem
+              variant={m.destructive ? "destructive" : undefined}
+              onClick={m.onClick}
+            >
+              <m.icon className="size-4" /> {m.label}
+            </ContextMenuItem>
+          </Fragment>
+        ))}
+      </ContextMenuContent>
     </ContextMenu>
   );
 }

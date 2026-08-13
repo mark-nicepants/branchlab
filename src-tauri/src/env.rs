@@ -40,9 +40,9 @@ pub struct EnvReport {
 /// `extract` pulls a clean version string out of the raw stdout, since tools
 /// differ (git prints `git version 2.50.1`, opencode prints just `1.17.7`).
 fn probe_tool(bin: &str, version_args: &[&str], extract: fn(&str) -> Option<String>) -> ToolStatus {
-    let resolved = match which::which(bin) {
-        Ok(p) => p,
-        Err(_) => return ToolStatus::missing(),
+    let resolved = match find_on_path(bin) {
+        Some(p) => p,
+        None => return ToolStatus::missing(),
     };
 
     let version =
@@ -52,6 +52,12 @@ fn probe_tool(bin: &str, version_args: &[&str], extract: fn(&str) -> Option<Stri
         });
 
     ToolStatus { found: true, path: Some(resolved.to_string_lossy().into_owned()), version }
+}
+
+/// First PATH entry containing `bin` as a file — enough for our own binaries
+/// (git/opencode/gh are never PATHEXT-style Windows lookups here).
+fn find_on_path(bin: &str) -> Option<std::path::PathBuf> {
+    std::env::split_paths(&std::env::var_os("PATH")?).map(|d| d.join(bin)).find(|p| p.is_file())
 }
 
 /// opencode prints just the bare version (e.g. `1.17.7`) to stdout.
