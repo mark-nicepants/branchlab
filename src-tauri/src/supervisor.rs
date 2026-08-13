@@ -422,19 +422,41 @@ impl Inner {
 
         // Fork PRs are read-only here — never drive autofix back to the fork.
         let mode = if d.is_fork { AutofixMode::Off } else { d.mode };
-        let action = {
+        let (action, just_merged) = {
             let mut rts = self.runtimes.lock().unwrap();
             let Some(rt) = rts.get_mut(&d.id) else {
                 return;
             };
             rt.last_pr_poll = Some(Instant::now());
+            // Observed OPEN → MERGED transition (comparing against the previous
+            // snapshot, which is seeded from the registry, so a restart doesn't
+            // re-trigger it). Drives the "delete this workspace?" chat notice.
+            let just_merged = rt.pr.as_ref().is_some_and(|p| p.state == "OPEN")
+                && status.as_ref().is_some_and(|p| p.state == "MERGED");
             rt.pr = status.clone();
             rt.last_error = None;
-            decide(rt, status.as_ref(), mode)
+            (decide(rt, status.as_ref(), mode), just_merged)
         };
         // Persist the snapshot so the UI seeds instantly on next launch.
         self.app.state::<Registry>().set_workspace_pr(&d.id, status.clone());
         self.emit_pr(&d.id);
+
+        // The PR just merged: this worktree's work has landed, offer cleanup
+        // in the chat. Worktrees only — base workspaces are the repo itself.
+        if just_merged && d.is_worktree {
+            if let Some(pr) = &status {
+                let text = format!("PR #{} was merged — this workspace can be deleted.", pr.number);
+                if let Err(e) = self.chat.push_notice(
+                    &d.id,
+                    std::path::Path::new(&d.path),
+                    crate::chat::model::SystemKind::Success,
+                    text,
+                    Some(crate::chat::model::SystemAction::DeleteWorkspace),
+                ) {
+                    crate::logf!("pr", "merge notice failed ws={}: {e}", d.id);
+                }
+            }
+        }
 
         if let Some(prompt) = action {
             let cwd = PathBuf::from(&d.path);

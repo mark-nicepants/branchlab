@@ -495,6 +495,8 @@ export interface SystemEntry {
   text: string;
   /** Workspace-setup progress steps; empty for plain notices. */
   steps: SetupStep[];
+  /** Optional action button on the notice (e.g. delete after PR merge). */
+  action?: "deleteWorkspace" | null;
   createdAt: number;
 }
 

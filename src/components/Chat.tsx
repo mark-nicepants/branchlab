@@ -67,6 +67,8 @@ interface Props {
   onActionConsumed: () => void;
   /** Open Settings → Models (from the model picker's "Manage models"). */
   onManageModels: () => void;
+  /** Delete this workspace (from the "PR merged" system notice). */
+  onDeleteWorkspace?: (workspaceId: string) => void;
 }
 
 /** Derive a deterministic workspace title from the first user prompt. */
@@ -87,6 +89,7 @@ export function Chat({
   pendingAction,
   onActionConsumed,
   onManageModels,
+  onDeleteWorkspace,
 }: Props) {
   const { prefs, setWorkspacePref } = usePreferences();
   const { todos } = useTodos(workspace.id);
@@ -308,6 +311,7 @@ export function Chat({
               );
             return (
               <SystemMessageView
+                onDeleteWorkspace={onDeleteWorkspace}
                 key={entry.entryId}
                 entry={entry}
                 workspaceId={workspace.id}

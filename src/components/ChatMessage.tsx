@@ -254,9 +254,11 @@ function ReviewFeedbackMessage({ payload }: { payload: TypedDisplay }) {
 export function SystemMessageView({
   entry,
   workspaceId,
+  onDeleteWorkspace,
 }: {
   entry: SystemEntry;
   workspaceId?: string;
+  onDeleteWorkspace?: (workspaceId: string) => void;
 }) {
   if (entry.steps?.length) {
     return <SetupProgressCard entry={entry} workspaceId={workspaceId} />;
@@ -268,13 +270,25 @@ export function SystemMessageView({
   };
   return (
     <MessageShell role="system">
-      <div
-        className={cn(
-          "self-center rounded-full border px-3.5 py-1 text-[11.5px]",
-          kindStyles[entry.kind],
+      <div className="flex items-center gap-2 self-center">
+        <div
+          className={cn(
+            "rounded-full border px-3.5 py-1 text-[11.5px]",
+            kindStyles[entry.kind],
+          )}
+        >
+          {entry.text}
+        </div>
+        {entry.action === "deleteWorkspace" && workspaceId && onDeleteWorkspace && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-6 rounded-full px-3 text-[11.5px]"
+            onClick={() => onDeleteWorkspace(workspaceId)}
+          >
+            Delete workspace
+          </Button>
         )}
-      >
-        {entry.text}
       </div>
     </MessageShell>
   );

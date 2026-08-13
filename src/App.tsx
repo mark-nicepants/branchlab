@@ -248,6 +248,46 @@ function App() {
     [router, refreshProjects],
   );
 
+  // Delete from inside the chat (the "PR merged" notice). Mirrors the
+  // sidebar's delete flow, plus closing the session view being deleted.
+  const deleteWorkspaceFromChat = useCallback(
+    async (id: string) => {
+      const finish = () => {
+        router.closeSession(id);
+        void refreshProjects();
+        toast.success("Workspace deleted");
+      };
+      try {
+        await removeWorkspace(id, false);
+        finish();
+      } catch (e) {
+        const uncommitted = String(e).includes("uncommitted changes");
+        toast.error(
+          uncommitted
+            ? "Workspace has uncommitted changes"
+            : "Could not delete workspace",
+          {
+            description: uncommitted
+              ? "Deleting it will discard them."
+              : String(e),
+            action: {
+              label: "Delete anyway",
+              onClick: () =>
+                void removeWorkspace(id, true)
+                  .then(finish)
+                  .catch((e2) =>
+                    toast.error("Could not delete workspace", {
+                      description: String(e2),
+                    }),
+                  ),
+            },
+          },
+        );
+      }
+    },
+    [router, refreshProjects],
+  );
+
   useShortcuts({
     toggleLeft: () => setSidebarCollapsed((c) => !c),
     toggleRight: () => {},
@@ -322,6 +362,7 @@ function App() {
                 reloadNonce={reloadNonce}
                 sidebarCollapsed={sidebarCollapsed}
                 onManageModels={() => router.openSettings("models")}
+                onDeleteWorkspace={(id) => void deleteWorkspaceFromChat(id)}
               />
             ) : view === "search" ? (
               <SearchScreen

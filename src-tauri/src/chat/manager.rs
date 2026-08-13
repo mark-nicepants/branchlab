@@ -518,6 +518,36 @@ impl ChatManager {
         }
     }
 
+    /// Push a one-shot system notice into a workspace's transcript, optionally
+    /// carrying an action button (e.g. "Delete workspace" when its PR merged).
+    /// Get-or-creates the conversation, so it works before the chat was opened.
+    pub fn push_notice(
+        &self,
+        workspace_id: &str,
+        cwd: &Path,
+        kind: SystemKind,
+        text: String,
+        action: Option<crate::chat::model::SystemAction>,
+    ) -> Result<(), String> {
+        self.ensure(workspace_id, cwd)?;
+        let conversation_id = {
+            let convs = self.inner.convs.lock().unwrap();
+            convs.get(workspace_id).ok_or("no conversation")?.conversation_id.clone()
+        };
+        let entry = Entry::System(SystemEntry {
+            seq: 0,
+            entry_id: new_id(),
+            kind,
+            text,
+            created_at: now_ms(),
+            steps: Vec::new(),
+            action,
+        });
+        let seq = self.inner.db.lock().unwrap().insert_entry(&conversation_id, &entry)?;
+        events::emit_entry(&self.inner.app, workspace_id, &with_seq(entry, seq));
+        Ok(())
+    }
+
     /// Insert the workspace-setup progress card into the transcript. Returns
     /// `(entry_id, seq)` for subsequent in-place updates.
     pub fn begin_setup_card(&self, workspace_id: &str, cwd: &Path, steps: Vec<SetupStep>) -> Result<SetupCard, String> {
@@ -534,6 +564,7 @@ impl ChatManager {
             text: "Setting up workspace".into(),
             created_at: card.created_at,
             steps,
+            action: None,
         });
         let seq = self.inner.db.lock().unwrap().insert_entry(&conversation_id, &entry)?;
         events::emit_entry(&self.inner.app, workspace_id, &with_seq(entry, seq));
@@ -557,6 +588,7 @@ impl ChatManager {
             text,
             created_at: card.created_at,
             steps,
+            action: None,
         });
         if let Err(e) = self.inner.db.lock().unwrap().update_entry(&entry) {
             crate::logf!("setup", "card persist failed ws={workspace_id}: {e}");
@@ -590,6 +622,7 @@ impl Inner {
             text,
             created_at: now_ms(),
             steps: Vec::new(),
+            action: None,
         });
         let seq = { self.db.lock().unwrap().insert_entry(conversation_id, &entry).unwrap_or(0) };
         events::emit_entry(&self.app, workspace_id, &with_seq(entry, seq));

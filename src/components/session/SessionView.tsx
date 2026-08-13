@@ -46,6 +46,8 @@ interface Props {
   sidebarCollapsed?: boolean;
   /** Open Settings → Models (from the model picker's "Manage models"). */
   onManageModels: () => void;
+  /** Delete this workspace (from the chat's "PR merged" notice). */
+  onDeleteWorkspace: (workspaceId: string) => void;
 }
 
 /** Right-panel content mode. */
@@ -78,6 +80,7 @@ export function SessionView({
   onRenamed,
   sidebarCollapsed = false,
   onManageModels,
+  onDeleteWorkspace,
 }: Props) {
   const { prefs, setPref } = usePreferences();
   const { diffStats, prByWorkspace } = useWorkspaceData();
@@ -410,6 +413,7 @@ export function SessionView({
             pendingAction={pendingAction}
             onActionConsumed={() => setPendingAction(null)}
             onManageModels={onManageModels}
+            onDeleteWorkspace={onDeleteWorkspace}
           />
         </div>
 

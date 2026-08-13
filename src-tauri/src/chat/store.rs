@@ -466,6 +466,7 @@ mod tests {
                 text: "note".into(),
                 created_at: 1,
                 steps: Vec::new(),
+                action: None,
             }),
         )
         .unwrap();

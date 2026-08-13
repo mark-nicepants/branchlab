@@ -225,6 +225,17 @@ pub struct SystemEntry {
     /// with the entry, so it survives restarts.
     #[serde(default)]
     pub steps: Vec<SetupStep>,
+    /// Optional action button on the notice (e.g. "Delete workspace" when the
+    /// attached PR merged). The frontend maps it to the matching command.
+    #[serde(default)]
+    pub action: Option<SystemAction>,
+}
+
+/// Actions a system notice can offer.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SystemAction {
+    DeleteWorkspace,
 }
 
 /// One step of the workspace-setup pipeline as shown in the chat card.
@@ -446,6 +457,7 @@ mod tests {
             text: "Committed changes.".into(),
             created_at: 0,
             steps: Vec::new(),
+            action: None,
         });
         let v = serde_json::to_value(&e).unwrap();
         assert_eq!(v["type"], "system");
