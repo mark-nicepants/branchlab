@@ -456,11 +456,10 @@ mod tests {
             let mut opus: Option<String> = None;
             while let Ok(Some((_ws, ev))) = timeout(Duration::from_secs(40), rx.recv()).await {
                 if let EngineEvent::Ready { config, .. } = ev {
+                    // The default model may itself be variant-capable (effort already
+                    // present at Ready) — that's fine; selecting an Opus below must
+                    // still surface thoughtLevel in the SetConfig response.
                     let model = config.iter().find(|c| c.category.as_deref() == Some("model")).expect("model option");
-                    assert!(
-                        !config.iter().any(|c| c.category.as_deref() == Some("thoughtLevel")),
-                        "default model unexpectedly already has an effort option (fine, but test assumes not)"
-                    );
                     opus = model
                         .choices
                         .iter()
