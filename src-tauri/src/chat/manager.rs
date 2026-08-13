@@ -120,7 +120,7 @@ fn now_ms() -> i64 {
 }
 
 fn new_id() -> String {
-    ulid::Ulid::new().to_string()
+    ulid::Ulid::generate().to_string()
 }
 
 impl ChatManager {

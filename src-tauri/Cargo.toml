@@ -26,28 +26,28 @@ serde_json = "1"
 which = "8"
 # Thin HTTP client for the *supplemental* `opencode serve` (active workspace
 # only) that backs the MCP/LSP status panel — ACP doesn't expose runtime tool
-# status. rustls-tls is for the telemetry client (analytics endpoint is HTTPS).
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# status. rustls is for the telemetry client (analytics endpoint is HTTPS).
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 # Tauri bundles tokio; we use it for the supervisor's reconcile loop and the
 # chat engine's async command loop (channels, select, task spawning).
 tokio = { version = "1", features = ["time", "rt", "macros", "sync"] }
 # Filesystem watching for git state (replaces frontend diff-stat/changes polling).
-notify = "6"
-notify-debouncer-full = "0.3"
+notify = "8"
+notify-debouncer-full = "0.7"
 # Persistent chat cache — a BranchLab-owned SQLite store, independent of the
 # OpenCode engine, so the transcript survives restarts and engine session
 # compaction/clear. `bundled` compiles SQLite in-tree (no system libsqlite dep).
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 # Stable, sortable ids for conversations/entries/blocks (monotonic ULIDs).
-ulid = "1"
+ulid = "3"
 # ACP (Agent Client Protocol) client — the engine transport. Pinned exactly:
 # the crate's high-level API is still evolving, and all its types are isolated
 # behind `crate::engine::acp` so an upgrade touches only that module.
-agent-client-protocol = "=1.0.1"
+agent-client-protocol = "=2.0.0"
 # GitHub API client (REST + GraphQL). Brings its own rustls-backed reqwest, so
 # it can reach api.github.com / GHE — the bare `reqwest` above is localhost-only.
 # One `Octocrab` per account (token from `gh auth token`) gives clean isolation.
-octocrab = "0.53.1"
+octocrab = "0.54"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 

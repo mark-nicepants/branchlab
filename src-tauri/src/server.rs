@@ -166,10 +166,7 @@ impl ServerManager {
     /// Current server info, reaping the entry if the process has exited.
     pub fn status(&self, workspace_id: &str) -> Option<ServerInfo> {
         let mut servers = self.servers.lock().unwrap();
-        let exited = match servers.get_mut(workspace_id) {
-            Some(rs) => matches!(rs.child.try_wait(), Ok(Some(_))),
-            None => return None,
-        };
+        let exited = matches!(servers.get_mut(workspace_id)?.child.try_wait(), Ok(Some(_)));
         if exited {
             servers.remove(workspace_id);
             return None;

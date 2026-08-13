@@ -320,7 +320,7 @@ fn perm_kind(k: PermissionOptionKind) -> String {
 
 fn to_permission_req(req: &RequestPermissionRequest) -> PermissionReq {
     PermissionReq {
-        request_id: ulid::Ulid::new().to_string(),
+        request_id: ulid::Ulid::generate().to_string(),
         tool_call_id: req.tool_call.tool_call_id.0.to_string(),
         title: req.tool_call.fields.title.clone(),
         options: req

@@ -10,9 +10,9 @@
     "shots": "node screenshots.mjs"
   },
   "devDependencies": {
-    "esbuild": "^0.25.0",
+    "esbuild": "^0.28.2",
     "html-minifier-terser": "^7.2.0",
-    "playwright": "^1.61.1",
-    "sharp": "^0.34.0"
+    "playwright": "^1.62.1",
+    "sharp": "^0.35.3"
   }
 }
