@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
-import { ListTodo, PanelLeft, Search } from "lucide-react";
+import { PanelLeft, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { HomeScreen } from "./components/home/HomeScreen";
@@ -11,6 +11,7 @@ import { Onboarding } from "./components/Onboarding";
 import { ProjectSettingsDialog } from "./components/ProjectSettingsDialog";
 import { SessionView } from "./components/session/SessionView";
 import { SettingsScreen } from "./components/settings/SettingsScreen";
+import { MyWorkScreen } from "./components/mywork/MyWorkScreen";
 import { SessionsSidebar } from "./components/shell/SessionsSidebar";
 import { useAppRouter } from "./hooks/useAppRouter";
 import { EmptyState } from "./components/ui/empty-state";
@@ -31,8 +32,14 @@ import {
   probeEnvironment,
   removeWorkspace,
   renameWorkspace,
+  taskLinkWorkspace,
 } from "./lib/api";
-import { type EnvReport, type ProjectView, type Workspace } from "./lib/types";
+import {
+  type EnvReport,
+  type ProjectView,
+  type Task,
+  type Workspace,
+} from "./lib/types";
 
 type Phase =
   | { kind: "loading" }
@@ -234,6 +241,27 @@ function App() {
     [openNewWorkspace],
   );
 
+  /** "Start session" on a board card: spawn a workspace (or quick chat when
+   *  the task has no project) with the task text as the prompt, then link it
+   *  back so the card auto-tracks the session's lifecycle. */
+  const startTaskSession = useCallback(
+    async (task: Task) => {
+      const prompt =
+        task.title + (task.description ? `\n\n${task.description}` : "");
+      try {
+        const ws =
+          task.projectId && projects.some((p) => p.id === task.projectId)
+            ? await createWorkspace(task.projectId, undefined, prompt)
+            : await createQuickChat(prompt);
+        openNewWorkspace(ws);
+        await taskLinkWorkspace(task.id, ws.id);
+      } catch (e) {
+        toast.error("Could not start session", { description: String(e) });
+      }
+    },
+    [projects, openNewWorkspace],
+  );
+
   const removeQuickChat = useCallback(
     async (id: string) => {
       try {
@@ -370,15 +398,14 @@ function App() {
                 quickChats={quickChats}
                 onSelect={openSession}
               />
-            ) : view === "my-work" || view === "automations" ? (
-              <StubScreen
-                icon={
-                  view === "my-work" ? (
-                    <ListTodo className="size-7 text-muted-foreground/60" />
-                  ) : undefined
-                }
-                label={view === "my-work" ? "My work" : "Automations"}
+            ) : view === "my-work" ? (
+              <MyWorkScreen
+                projects={projects}
+                onOpenSession={(id) => router.openSession(id)}
+                onStartTask={(task) => void startTaskSession(task)}
               />
+            ) : view === "automations" ? (
+              <StubScreen label="Automations" />
             ) : (
               <HomeScreen
                 projects={projects}

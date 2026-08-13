@@ -614,3 +614,36 @@ export interface ToolsStatus {
   mcp: McpStatus[];
   lsp: LspStatus[];
 }
+
+// ── "My work" task board (src-tauri/src/tasks.rs) ──
+
+export type ColumnRole = "none" | "active" | "done";
+
+export interface BoardColumn {
+  id: string;
+  name: string;
+  role: ColumnRole;
+  position: number;
+  updatedAt: number;
+  deletedAt: number | null;
+}
+
+export interface Task {
+  id: string;
+  title: string;
+  description: string | null;
+  projectId: string | null;
+  columnId: string;
+  position: number;
+  /** Linked session; cleared when that workspace is deleted. */
+  workspaceId: string | null;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt: number | null;
+}
+
+/** Live board state (`board_snapshot` seed + every `tasks:changed` event). */
+export interface BoardSnapshot {
+  columns: BoardColumn[];
+  tasks: Task[];
+}

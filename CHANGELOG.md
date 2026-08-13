@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- "My work" is now a task board: custom columns (rename, reorder, add,
+  delete, with configurable Active/Done roles), drag-and-drop cards tagged by
+  project, quick-add per column, and a project filter. A card can start an
+  agent session (its text becomes the first prompt) and then tracks it
+  automatically — into the Active column when the session starts, into Done
+  when its PR merges or the workspace is deleted. Tasks are stored locally
+  and shaped for future cloud sync.
 - When a workspace's pull request is merged, a notice appears in its chat
   with a "Delete workspace" button — teardown runs, the session closes, and
   uncommitted changes still get the usual warning first.

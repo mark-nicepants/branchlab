@@ -5,6 +5,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   Account,
+  BoardColumn,
+  BoardSnapshot,
+  ColumnRole,
+  Task,
   AutofixMode,
   PrSummary,
   ReviewInboxItem,
@@ -483,4 +487,77 @@ export function telemetryGetEnabled(): Promise<boolean> {
 
 export function telemetrySetEnabled(enabled: boolean): Promise<void> {
   return invoke<void>("telemetry_set_enabled", { enabled });
+}
+
+// ── "My work" task board (src-tauri/src/tasks.rs) ──
+
+/** The full live board (seed on mount; `tasks:changed` pushes updates). */
+export function boardSnapshot(): Promise<BoardSnapshot> {
+  return invoke<BoardSnapshot>("board_snapshot");
+}
+
+export function taskCreate(
+  title: string,
+  opts?: { description?: string; projectId?: string; columnId?: string },
+): Promise<Task> {
+  return invoke<Task>("task_create", {
+    title,
+    description: opts?.description ?? null,
+    projectId: opts?.projectId ?? null,
+    columnId: opts?.columnId ?? null,
+  });
+}
+
+/** Empty strings clear description/projectId; omitted fields are unchanged. */
+export function taskUpdate(
+  taskId: string,
+  patch: { title?: string; description?: string; projectId?: string },
+): Promise<void> {
+  return invoke<void>("task_update", { taskId, patch });
+}
+
+export function taskDelete(taskId: string): Promise<void> {
+  return invoke<void>("task_delete", { taskId });
+}
+
+/** `position` is the caller-computed fractional index within the column. */
+export function taskMove(
+  taskId: string,
+  columnId: string,
+  position: number,
+): Promise<void> {
+  return invoke<void>("task_move", { taskId, columnId, position });
+}
+
+/** Link a card to its session; the backend moves it to the active column. */
+export function taskLinkWorkspace(
+  taskId: string,
+  workspaceId: string,
+): Promise<void> {
+  return invoke<void>("task_link_workspace", { taskId, workspaceId });
+}
+
+export function columnCreate(name: string): Promise<BoardColumn> {
+  return invoke<BoardColumn>("column_create", { name });
+}
+
+/** Assigning role "active"/"done" steals it from the previous holder. */
+export function columnUpdate(
+  columnId: string,
+  patch: { name?: string; role?: ColumnRole },
+): Promise<void> {
+  return invoke<void>("column_update", {
+    columnId,
+    name: patch.name ?? null,
+    role: patch.role ?? null,
+  });
+}
+
+export function columnMove(columnId: string, position: number): Promise<void> {
+  return invoke<void>("column_move", { columnId, position });
+}
+
+/** Fails while the column still contains tasks. */
+export function columnDelete(columnId: string): Promise<void> {
+  return invoke<void>("column_delete", { columnId });
 }

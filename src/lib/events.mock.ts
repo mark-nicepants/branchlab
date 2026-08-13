@@ -7,6 +7,7 @@
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AccountsPayload,
+  BoardSnapshot,
   ChatBlockEvent,
   ChatCommandsEvent,
   ChatConfigEvent,
@@ -88,4 +89,9 @@ export function onChatContext(cb: (p: ChatContextEvent) => void) {
 }
 export function onChatCommands(cb: (p: ChatCommandsEvent) => void) {
   return on<ChatCommandsEvent>("chat:commands", cb);
+}
+
+/** The "My work" board changed (driven by api.mock's in-memory board). */
+export function onTasksChanged(cb: (s: BoardSnapshot) => void) {
+  return on<BoardSnapshot>("tasks:changed", cb);
 }

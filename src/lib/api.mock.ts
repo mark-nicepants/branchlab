@@ -5,6 +5,10 @@
 import { mockEmit } from "./events.mock";
 import type {
   Account,
+  BoardColumn,
+  BoardSnapshot,
+  ColumnRole,
+  Task,
   ChatAttachment,
   ChatSnapshot,
   ConfigFile,
@@ -1367,5 +1371,162 @@ export function telemetryGetEnabled(): Promise<boolean> {
 
 export function telemetrySetEnabled(enabled: boolean): Promise<void> {
   mockTelemetryEnabled = enabled;
+  return Promise.resolve();
+}
+
+// ── "My work" task board mock: a fully interactive in-memory board ──
+
+let boardCols: BoardColumn[] = [
+  { id: "c1", name: "Todo", role: "none", position: 1024, updatedAt: 0, deletedAt: null },
+  { id: "c2", name: "In progress", role: "active", position: 2048, updatedAt: 0, deletedAt: null },
+  { id: "c3", name: "Done", role: "done", position: 3072, updatedAt: 0, deletedAt: null },
+];
+let boardTasks: Task[] = [
+  { id: "t1", title: "Add dark-mode toggle to settings", description: null, projectId: "p1", columnId: "c1", position: 1024, workspaceId: null, createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t2", title: "Investigate flaky CI on main", description: "Started after the runner image bump.", projectId: "p1", columnId: "c1", position: 2048, workspaceId: null, createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t3", title: "Write onboarding docs", description: null, projectId: null, columnId: "c1", position: 3072, workspaceId: null, createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t4", title: "Refactor the review inbox polling", description: null, projectId: "p2", columnId: "c2", position: 1024, workspaceId: "p1-ws1", createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t5", title: "Ship v0.3.0", description: null, projectId: "p1", columnId: "c3", position: 1024, workspaceId: null, createdAt: 0, updatedAt: 0, deletedAt: null },
+];
+
+function boardSnap(): BoardSnapshot {
+  return {
+    columns: [...boardCols].sort((a, b) => a.position - b.position),
+    tasks: [...boardTasks].sort((a, b) => a.position - b.position),
+  };
+}
+
+function emitBoard(): void {
+  mockEmit("tasks:changed", boardSnap());
+}
+
+export function boardSnapshot(): Promise<BoardSnapshot> {
+  return Promise.resolve(boardSnap());
+}
+
+export function taskCreate(
+  title: string,
+  opts?: { description?: string; projectId?: string; columnId?: string },
+): Promise<Task> {
+  const columnId = opts?.columnId ?? boardSnap().columns[0].id;
+  const max = Math.max(
+    0,
+    ...boardTasks.filter((t) => t.columnId === columnId).map((t) => t.position),
+  );
+  const task: Task = {
+    id: `t${Date.now()}`,
+    title,
+    description: opts?.description ?? null,
+    projectId: opts?.projectId ?? null,
+    columnId,
+    position: max + 1024,
+    workspaceId: null,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    deletedAt: null,
+  };
+  boardTasks = [...boardTasks, task];
+  emitBoard();
+  return Promise.resolve(task);
+}
+
+export function taskUpdate(
+  taskId: string,
+  patch: { title?: string; description?: string; projectId?: string },
+): Promise<void> {
+  boardTasks = boardTasks.map((t) =>
+    t.id === taskId
+      ? {
+          ...t,
+          title: patch.title?.trim() || t.title,
+          description:
+            patch.description !== undefined
+              ? patch.description.trim() || null
+              : t.description,
+          projectId:
+            patch.projectId !== undefined
+              ? patch.projectId || null
+              : t.projectId,
+        }
+      : t,
+  );
+  emitBoard();
+  return Promise.resolve();
+}
+
+export function taskDelete(taskId: string): Promise<void> {
+  boardTasks = boardTasks.filter((t) => t.id !== taskId);
+  emitBoard();
+  return Promise.resolve();
+}
+
+export function taskMove(
+  taskId: string,
+  columnId: string,
+  position: number,
+): Promise<void> {
+  boardTasks = boardTasks.map((t) =>
+    t.id === taskId ? { ...t, columnId, position } : t,
+  );
+  emitBoard();
+  return Promise.resolve();
+}
+
+export function taskLinkWorkspace(
+  taskId: string,
+  workspaceId: string,
+): Promise<void> {
+  const active = boardCols.find((c) => c.role === "active");
+  boardTasks = boardTasks.map((t) =>
+    t.id === taskId
+      ? { ...t, workspaceId, columnId: active?.id ?? t.columnId }
+      : t,
+  );
+  emitBoard();
+  return Promise.resolve();
+}
+
+export function columnCreate(name: string): Promise<BoardColumn> {
+  const max = Math.max(...boardCols.map((c) => c.position));
+  const col: BoardColumn = {
+    id: `c${Date.now()}`,
+    name,
+    role: "none",
+    position: max + 1024,
+    updatedAt: Date.now(),
+    deletedAt: null,
+  };
+  boardCols = [...boardCols, col];
+  emitBoard();
+  return Promise.resolve(col);
+}
+
+export function columnUpdate(
+  columnId: string,
+  patch: { name?: string; role?: ColumnRole },
+): Promise<void> {
+  boardCols = boardCols.map((c) => {
+    if (c.id === columnId)
+      return { ...c, name: patch.name ?? c.name, role: patch.role ?? c.role };
+    // Role steal: the previous holder loses it.
+    if (patch.role && patch.role !== "none" && c.role === patch.role)
+      return { ...c, role: "none" };
+    return c;
+  });
+  emitBoard();
+  return Promise.resolve();
+}
+
+export function columnMove(columnId: string, position: number): Promise<void> {
+  boardCols = boardCols.map((c) => (c.id === columnId ? { ...c, position } : c));
+  emitBoard();
+  return Promise.resolve();
+}
+
+export function columnDelete(columnId: string): Promise<void> {
+  if (boardTasks.some((t) => t.columnId === columnId))
+    return Promise.reject(new Error("column still contains tasks"));
+  boardCols = boardCols.filter((c) => c.id !== columnId);
+  emitBoard();
   return Promise.resolve();
 }

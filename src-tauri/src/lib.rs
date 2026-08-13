@@ -11,6 +11,7 @@ mod project;
 mod server;
 mod setup;
 mod supervisor;
+mod tasks;
 mod telemetry;
 mod watcher;
 
@@ -101,6 +102,10 @@ pub fn run() {
             // Failed by Registry::load, and the chat card offers Retry.
             app.manage(setup::SetupManager::new(app.handle().clone()));
 
+            // The "My work" task board (local-first; tasks.json is shaped as
+            // a future cloud-sync unit — see tasks.rs).
+            app.manage(tasks::TaskStore::load(dir.join("tasks.json")));
+
             // The window starts hidden to avoid a white flash; the frontend
             // shows it after first paint. This is a safety net so a failed
             // frontend can't leave the window invisible forever.
@@ -134,6 +139,16 @@ pub fn run() {
             commands::remove_workspace,
             commands::retry_setup,
             commands::generate_setup_scripts,
+            tasks::board_snapshot,
+            tasks::task_create,
+            tasks::task_update,
+            tasks::task_delete,
+            tasks::task_move,
+            tasks::task_link_workspace,
+            tasks::column_create,
+            tasks::column_update,
+            tasks::column_move,
+            tasks::column_delete,
             commands::list_workspaces,
             commands::rename_workspace,
             commands::rename_workspace_branch,

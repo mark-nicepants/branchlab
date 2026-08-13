@@ -444,6 +444,11 @@ impl Inner {
         // The PR just merged: this worktree's work has landed, offer cleanup
         // in the chat. Worktrees only — base workspaces are the repo itself.
         if just_merged && d.is_worktree {
+            // Auto-track: a "My work" card linked to this session moves to
+            // its done column.
+            if self.app.state::<crate::tasks::TaskStore>().on_workspace_done(&d.id) {
+                let _ = self.app.emit("tasks:changed", self.app.state::<crate::tasks::TaskStore>().snapshot());
+            }
             if let Some(pr) = &status {
                 let text = format!("PR #{} was merged — this workspace can be deleted.", pr.number);
                 if let Err(e) = self.chat.push_notice(

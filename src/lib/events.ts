@@ -8,6 +8,7 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AccountsPayload,
+  BoardSnapshot,
   ChatBlockEvent,
   ChatCommandsEvent,
   ChatConfigEvent,
@@ -112,4 +113,9 @@ export function onChatContext(cb: (p: ChatContextEvent) => void) {
 /** Available slash commands advertised by the agent. */
 export function onChatCommands(cb: (p: ChatCommandsEvent) => void) {
   return on<ChatCommandsEvent>("chat:commands", cb);
+}
+
+/** The "My work" board changed (any mutation, incl. backend auto-moves). */
+export function onTasksChanged(cb: (s: BoardSnapshot) => void) {
+  return on<BoardSnapshot>("tasks:changed", cb);
 }

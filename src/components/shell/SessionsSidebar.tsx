@@ -97,7 +97,7 @@ interface NavItemDef {
 
 const NAV: NavItemDef[] = [
   { id: "home", label: "Home", icon: House, enabled: true },
-  { id: "my-work", label: "My work", icon: ListTodo, enabled: false },
+  { id: "my-work", label: "My work", icon: ListTodo, enabled: true },
   {
     id: "automations",
     label: "Automations",

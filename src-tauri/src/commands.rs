@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use tauri::State;
+use tauri::{Emitter, State};
 
 use crate::config::{self, ConfigFile};
 use crate::engine::opencode_http::{self, ToolsStatus};
@@ -169,13 +169,16 @@ pub async fn create_workspace_from_pr(
 /// remove the worktree. Async so the teardown wait never blocks the UI; the
 /// sidebar shows a spinner while the returned promise is in flight.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn remove_workspace(
     workspace_id: String,
     force: bool,
+    app: tauri::AppHandle,
     registry: State<'_, Registry>,
     setup: State<'_, crate::setup::SetupManager>,
     servers: State<'_, ServerManager>,
     watcher: State<'_, GitWatcher>,
+    tasks: State<'_, crate::tasks::TaskStore>,
 ) -> Result<(), String> {
     let setup = setup.inner().clone();
     let ws_id = workspace_id.clone();
@@ -183,7 +186,13 @@ pub async fn remove_workspace(
     let _ = tauri::async_runtime::spawn_blocking(move || setup.run_teardown(&ws_id)).await;
     servers.stop(&workspace_id);
     watcher.unwatch(&workspace_id);
-    registry.remove_workspace(&workspace_id, force)
+    registry.remove_workspace(&workspace_id, force)?;
+    // Auto-track: a "My work" card linked to this session moves to its done
+    // column and drops the (now dangling) link.
+    if tasks.on_workspace_removed(&workspace_id) {
+        let _ = app.emit("tasks:changed", tasks.snapshot());
+    }
+    Ok(())
 }
 
 #[tauri::command]
