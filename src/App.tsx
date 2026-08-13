@@ -14,6 +14,7 @@ import { SettingsScreen } from "./components/settings/SettingsScreen";
 import { SessionsSidebar } from "./components/shell/SessionsSidebar";
 import { useAppRouter } from "./hooks/useAppRouter";
 import { EmptyState } from "./components/ui/empty-state";
+import { onWorkspaceSetup } from "./lib/events";
 import { useDesktopBehaviors } from "./hooks/useDesktopBehaviors";
 import { GitHubProvider } from "./hooks/useGitHub";
 import { useShortcuts } from "./hooks/useShortcuts";
@@ -125,6 +126,16 @@ function App() {
   useEffect(() => {
     if (phase.kind !== "blocked") void refreshProjects();
   }, [phase.kind, refreshProjects]);
+
+  // When a workspace finishes provisioning, refresh the registry snapshot so
+  // every consumer of `Workspace.setup` (sidebar rows, etc.) heals even if a
+  // live overlay missed the event.
+  useEffect(() => {
+    const unlisten = onWorkspaceSetup((p) => {
+      if (!p.running) void refreshProjects();
+    });
+    return () => void unlisten.then((f) => f());
+  }, [refreshProjects]);
 
   const allWorkspaces = useMemo(
     () => [...projects.flatMap((p) => p.workspaces), ...quickChats],
