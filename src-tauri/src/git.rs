@@ -120,6 +120,12 @@ pub fn remove_worktree(repo: &str, worktree_path: &str, force: bool) -> Result<(
     Ok(())
 }
 
+/// Drop stale worktree registrations (dirs deleted or broken outside git —
+/// `worktree remove` refuses those even with `--force`).
+pub fn prune_worktrees(repo: &str) {
+    let _ = git(repo, &["worktree", "prune"]);
+}
+
 /// Uncommitted change summary: changed/untracked file count (porcelain) plus
 /// insertions/deletions (tracked via numstat vs HEAD, untracked counted as
 /// whole-file lines) — matching the totals shown in the Changes view.

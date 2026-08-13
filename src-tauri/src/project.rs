@@ -585,7 +585,22 @@ impl Registry {
 
         if kind == WorkspaceKind::Worktree {
             let root = self.repo_root(&project_id).ok_or("unknown project")?;
-            git::remove_worktree(&root, &path, force)?;
+            if let Err(e) = git::remove_worktree(&root, &path, force) {
+                let app_owned = Path::new(&path).starts_with(&self.worktrees_dir);
+                if !Path::new(&path).exists() || (force && app_owned) {
+                    // Stale/broken worktree (dir deleted or metadata pruned
+                    // outside the app): git refuses even with --force, but the
+                    // intent is unambiguous — clear the leftovers and move on.
+                    if app_owned {
+                        let _ = std::fs::remove_dir_all(&path);
+                    }
+                    git::prune_worktrees(&root);
+                } else if e.contains("modified or untracked") {
+                    return Err("uncommitted changes".into());
+                } else {
+                    return Err(e);
+                }
+            }
         }
         // Quick chats own their scratch dir; delete it (only ever app-managed,
         // but keep the guard so a corrupt registry entry can't delete elsewhere).
@@ -746,6 +761,33 @@ mod tests {
         reg2.remove_workspace(&ws.id, false).unwrap();
         assert!(!reg2.all_workspaces().iter().any(|w| w.id == ws.id));
         assert!(!Path::new(&ws.path).exists(), "scratch dir removed");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn remove_workspace_survives_stale_worktree() {
+        // A worktree dir deleted outside the app makes `git worktree remove`
+        // fail ("is not a working tree") even with --force; removal must fall
+        // back to pruning instead of surfacing git's error.
+        let dir = std::env::temp_dir().join(format!("bl-reg-stale-{}", std::process::id()));
+        let repo = dir.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let sh = |args: &[&str]| {
+            let out = std::process::Command::new("git").args(args).current_dir(&repo).output().unwrap();
+            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        };
+        sh(&["init", "-q", "-b", "main"]);
+        sh(&["-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-q", "-m", "init"]);
+
+        let reg = Registry::load(dir.join("registry.json"), dir.join("worktrees"), dir.join("quick-chats"));
+        let project = reg.add_project(repo.to_str().unwrap()).unwrap();
+        let ws = reg.create_workspace(&project.project.id, None, None).unwrap();
+        assert!(Path::new(&ws.path).is_dir());
+
+        // Simulate the user (or a cleanup tool) deleting the worktree dir.
+        std::fs::remove_dir_all(&ws.path).unwrap();
+        reg.remove_workspace(&ws.id, false).unwrap();
+        assert!(!reg.all_workspaces().iter().any(|w| w.id == ws.id));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Deleting a workspace whose worktree directory was removed or broken outside
+  the app (git's "is not a working tree" error) now succeeds instead of
+  failing — including via "Delete anyway".
+- The delete-workspace error toast shows a short message instead of raw git
+  output, and "Delete anyway" reports its own failures cleanly.
+
 ### Changed
 
 - The app window now appears ~340ms after launch with the full UI (sidebar,

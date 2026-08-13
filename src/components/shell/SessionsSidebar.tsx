@@ -186,16 +186,28 @@ export function SessionsSidebar({
       onProjectsChanged();
       toast.success(`Deleted workspace ${workspaceLabel(w)}`);
     } catch (e) {
-      toast.error("Workspace has uncommitted changes", {
-        description: String(e),
-        action: {
-          label: "Delete anyway",
-          onClick: () =>
-            void removeWorkspace(w.id, true)
-              .then(onProjectsChanged)
-              .catch((e2) => toast.error(String(e2))),
+      const uncommitted = String(e).includes("uncommitted changes");
+      toast.error(
+        uncommitted
+          ? "Workspace has uncommitted changes"
+          : "Could not delete workspace",
+        {
+          description: uncommitted
+            ? "Deleting it will discard them."
+            : String(e),
+          action: {
+            label: "Delete anyway",
+            onClick: () =>
+              void removeWorkspace(w.id, true)
+                .then(onProjectsChanged)
+                .catch((e2) =>
+                  toast.error("Could not delete workspace", {
+                    description: String(e2),
+                  }),
+                ),
+          },
         },
-      });
+      );
     }
   }
 
