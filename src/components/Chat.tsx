@@ -306,7 +306,13 @@ export function Chat({
                   />
                 </MessageShell>
               );
-            return <SystemMessageView key={entry.entryId} entry={entry} />;
+            return (
+              <SystemMessageView
+                key={entry.entryId}
+                entry={entry}
+                workspaceId={workspace.id}
+              />
+            );
           })}
           {/* Permissions whose entry isn't in the transcript (shouldn't happen,
               but the turn must never be silently blocked) render detached. */}

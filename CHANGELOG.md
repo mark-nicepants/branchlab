@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Per-project setup and teardown scripts (Project settings → Scripts): the
+  setup script runs once in every fresh workspace before the first prompt,
+  with live progress shown as a step card in the chat (and a "Retry setup"
+  button on failure); the teardown script runs before a workspace is deleted.
+- New workspaces open instantly — provisioning continues in the background,
+  with a spinner in the sidebar while a workspace is setting up or being
+  deleted, and a warning icon when setup failed.
+
 ### Fixed
 
 - Deleting a workspace whose worktree directory was removed or broken outside

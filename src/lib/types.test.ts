@@ -11,6 +11,7 @@ function ws(overrides: Partial<Workspace>): Workspace {
     name: null,
     base_branch: null,
     init_prompt: null,
+    setup: "ready",
     ...overrides,
   };
 }

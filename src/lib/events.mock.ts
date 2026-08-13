@@ -21,6 +21,7 @@ import type {
   ReviewInboxPayload,
   SessionPayload,
   TodosPayload,
+  WorkspaceSetupPayload,
 } from "./types";
 
 type Handler = (payload: unknown) => void;
@@ -49,6 +50,9 @@ export function onWorkspaceSession(cb: (p: SessionPayload) => void) {
 }
 export function onWorkspaceTodos(cb: (p: TodosPayload) => void) {
   return on<TodosPayload>("workspace:todos", cb);
+}
+export function onWorkspaceSetup(cb: (p: WorkspaceSetupPayload) => void) {
+  return on<WorkspaceSetupPayload>("workspace:setup", cb);
 }
 
 export function onGitHubAccounts(cb: (p: AccountsPayload) => void) {

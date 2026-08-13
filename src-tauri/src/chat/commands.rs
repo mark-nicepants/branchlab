@@ -27,12 +27,14 @@ fn parse_origin(origin: Option<String>) -> TurnOrigin {
 }
 
 /// Ensure the conversation + engine exist and return the initial snapshot
-/// (newest page of entries + advertised config options).
+/// (newest page of entries + advertised config options). Async: it does
+/// SQLite reads and possibly an engine spawn — neither belongs on the main
+/// thread, which would stall first paint on a fresh open.
 #[tauri::command]
-pub fn chat_open(
+pub async fn chat_open(
     workspace_id: String,
-    registry: State<Registry>,
-    chat: State<ChatManager>,
+    registry: State<'_, Registry>,
+    chat: State<'_, ChatManager>,
 ) -> Result<ChatSnapshot, String> {
     let cwd = workspace_cwd(&registry, &workspace_id)?;
     chat.open(&workspace_id, &cwd, PAGE)

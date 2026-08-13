@@ -70,16 +70,18 @@ import {
   Trash2,
   TriangleAlert,
 } from "lucide-react";
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useWorkspaceData } from "../../hooks/useWorkspaceData";
 import { openExternal, removeProject, removeWorkspace } from "../../lib/api";
+import { onWorkspaceSetup } from "../../lib/events";
 import {
   workspaceLabel,
   type PipelinePhase,
   type ProjectView,
   type PrStatus,
   type SessionPayload,
+  type SetupState,
   type Workspace,
 } from "../../lib/types";
 import { usePreferences } from "../PreferencesProvider";
@@ -156,6 +158,23 @@ export function SessionsSidebar({
   const updateAvailable = useAppUpdate().availableVersion !== null;
   const [renaming, setRenaming] = useState<Workspace | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  // Workspaces whose removeWorkspace call is in flight (teardown can take ~30s).
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
+  // Live setup-state overlay over the registry data (cleared on success).
+  const [setupOverlay, setSetupOverlay] = useState<Map<string, SetupState>>(
+    new Map(),
+  );
+  useEffect(() => {
+    const unlisten = onWorkspaceSetup((p) => {
+      setSetupOverlay((prev) => {
+        const next = new Map(prev);
+        if (p.ok) next.delete(p.workspaceId);
+        else next.set(p.workspaceId, p.running ? "provisioning" : "failed");
+        return next;
+      });
+    });
+    return () => void unlisten.then((f) => f());
+  }, []);
   const [filter, setFilter] = useState("");
   const [filterOpen, setFilterOpen] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<string>>(
@@ -180,7 +199,17 @@ export function SessionsSidebar({
     setPref("collapsedProjects", record);
   };
 
+  function setDeleting(id: string, on: boolean) {
+    setDeletingIds((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
   async function deleteWorkspace(w: Workspace) {
+    setDeleting(w.id, true);
     try {
       await removeWorkspace(w.id, false);
       onProjectsChanged();
@@ -197,17 +226,22 @@ export function SessionsSidebar({
             : String(e),
           action: {
             label: "Delete anyway",
-            onClick: () =>
+            onClick: () => {
+              setDeleting(w.id, true);
               void removeWorkspace(w.id, true)
                 .then(onProjectsChanged)
                 .catch((e2) =>
                   toast.error("Could not delete workspace", {
                     description: String(e2),
                   }),
-                ),
+                )
+                .finally(() => setDeleting(w.id, false));
+            },
           },
         },
       );
+    } finally {
+      setDeleting(w.id, false);
     }
   }
 
@@ -361,6 +395,8 @@ export function SessionsSidebar({
                     key={w.id}
                     workspace={w}
                     selected={w.id === selectedWorkspaceId}
+                    deleting={deletingIds.has(w.id)}
+                    setup={setupOverlay.get(w.id) ?? w.setup}
                     onSelect={() => onSelectWorkspace(w)}
                     onDelete={() => onRemoveQuickChat(w.id)}
                     onRename={() => startRename(w)}
@@ -457,6 +493,8 @@ export function SessionsSidebar({
                       key={w.id}
                       workspace={w}
                       selected={w.id === selectedWorkspaceId}
+                      deleting={deletingIds.has(w.id)}
+                      setup={setupOverlay.get(w.id) ?? w.setup}
                       onSelect={() => onSelectWorkspace(w)}
                       onDelete={() => void deleteWorkspace(w)}
                       onRename={() => startRename(w)}
@@ -749,6 +787,8 @@ function PrChip({ pr }: { pr: PrStatus }) {
 function WorkspaceRow({
   workspace: w,
   selected,
+  deleting,
+  setup,
   onSelect,
   onDelete,
   onRename,
@@ -758,6 +798,10 @@ function WorkspaceRow({
 }: {
   workspace: Workspace;
   selected: boolean;
+  /** removeWorkspace in flight (teardown can take ~30s). */
+  deleting: boolean;
+  /** Registry setup state, overlaid with live `workspace:setup` events. */
+  setup: SetupState;
   onSelect: () => void;
   onDelete: () => void;
   onRename: () => void;
@@ -778,6 +822,21 @@ function WorkspaceRow({
   const isQuickChat = w.kind === "QuickChat";
 
   const ai = aiState(session, prPayload?.phase);
+  // Deleting / provisioning / failed-setup take over the status icon slot.
+  const statusIcon =
+    deleting || setup === "provisioning" ? (
+      <Loader2
+        className="size-3.5 shrink-0 animate-spin text-muted-foreground"
+        aria-label={deleting ? "Deleting…" : "Setting up…"}
+      />
+    ) : setup === "failed" ? (
+      <TriangleAlert
+        className="size-3.5 shrink-0 text-destructive"
+        aria-label="Setup failed"
+      />
+    ) : (
+      ai.icon
+    );
   // Row 1 is identity: the live checked-out branch (the agent may rename it),
   // else the registry branch, else the label for quick chats.
   const primary = branchByWorkspace[w.id] ?? w.branch ?? workspaceLabel(w);
@@ -827,6 +886,7 @@ function WorkspaceRow({
       className={cn(
         "group/ws relative min-w-0 rounded-md hover:bg-sidebar-accent/60",
         selected && "bg-sidebar-accent hover:bg-sidebar-accent",
+        deleting && "pointer-events-none opacity-60",
       )}
     >
       <button
@@ -836,8 +896,11 @@ function WorkspaceRow({
         {/* On hover, row 1 yields space to the (absolute) ⋮ so the diff slides
             left instead of being overlapped — the mock's slide-in. */}
         <span className="flex min-w-0 items-center gap-1.5 transition-[padding] duration-150 group-focus-within/ws:pr-6 group-hover/ws:pr-6 motion-reduce:transition-none">
-          <span className="flex size-4 shrink-0 items-center justify-center">
-            {ai.icon}
+          <span
+            className="flex size-4 shrink-0 items-center justify-center"
+            title={setup === "failed" ? "Setup failed" : undefined}
+          >
+            {statusIcon}
           </span>
           <span
             className="min-w-0 flex-1 truncate font-mono text-xs tracking-tight text-sidebar-accent-foreground"

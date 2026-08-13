@@ -12,6 +12,7 @@ import type {
   ProjectView,
   ProjectPrompts,
   ProjectUpdate,
+  RunSettings,
 } from "../lib/types";
 import { githubDetectAccount, openExternal, updateProject } from "../lib/api";
 import { useGitHub } from "../hooks/useGitHub";
@@ -23,7 +24,7 @@ import { Field } from "@/components/ui/field";
 import { ConfigView } from "./center/ConfigView";
 import { cn } from "@/lib/utils";
 
-type Tab = "general" | "opencode" | "prompts";
+type Tab = "general" | "opencode" | "prompts" | "scripts";
 
 interface Props {
   project: ProjectView;
@@ -63,6 +64,9 @@ export function ProjectSettingsDialog({
       create_pr: "",
     },
   );
+  const [run, setRun] = useState<RunSettings>(
+    project.run ?? { setup_script: null, teardown_script: null },
+  );
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -70,6 +74,7 @@ export function ProjectSettingsDialog({
     setDefaultBranch(project.default_branch ?? "");
     setAccountId(project.account_id ?? "");
     setPrompts(project.prompts);
+    setRun(project.run ?? { setup_script: null, teardown_script: null });
   }, [project]);
 
   async function save(updates: ProjectUpdate) {
@@ -94,6 +99,7 @@ export function ProjectSettingsDialog({
   }[] = [
     { id: "general", label: "General", icon: FileText },
     { id: "prompts", label: "Prompts", icon: MessageSquare },
+    { id: "scripts", label: "Scripts", icon: Terminal },
     { id: "opencode", label: "OpenCode config", icon: Braces },
   ];
 
@@ -170,6 +176,21 @@ export function ProjectSettingsDialog({
                   setPrompts={setPrompts}
                   saving={saving}
                   onSave={() => save({ prompts })}
+                />
+              )}
+              {tab === "scripts" && (
+                <ScriptsTab
+                  run={run}
+                  setRun={setRun}
+                  saving={saving}
+                  onSave={() =>
+                    save({
+                      run: {
+                        setup_script: run.setup_script?.trim() || null,
+                        teardown_script: run.teardown_script?.trim() || null,
+                      },
+                    })
+                  }
                 />
               )}
             </div>
@@ -286,6 +307,60 @@ function GeneralTab({
       <div className="flex justify-end">
         <Button onClick={onSave} disabled={saving}>
           {saving ? "Saving…" : "Save changes"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ScriptsTab({
+  run,
+  setRun,
+  saving,
+  onSave,
+}: {
+  run: RunSettings;
+  setRun: (r: RunSettings) => void;
+  saving: boolean;
+  onSave: () => void;
+}) {
+  return (
+    <div className="space-y-5">
+      <Field label="Setup script">
+        <Textarea
+          value={run.setup_script ?? ""}
+          onChange={(e) => setRun({ ...run, setup_script: e.target.value })}
+          placeholder="npm install && ln -sf $BL_PROJECT_ROOT/.env .env"
+          className="min-h-[80px] font-mono text-xs"
+        />
+        <p className="mt-1 text-xs text-muted-foreground">
+          Runs once in every fresh workspace, before your first prompt is
+          delivered.
+        </p>
+      </Field>
+
+      <Field label="Teardown script">
+        <Textarea
+          value={run.teardown_script ?? ""}
+          onChange={(e) => setRun({ ...run, teardown_script: e.target.value })}
+          placeholder="docker compose down"
+          className="min-h-[80px] font-mono text-xs"
+        />
+        <p className="mt-1 text-xs text-muted-foreground">
+          Best-effort, max 30s, runs before a workspace is deleted.
+        </p>
+      </Field>
+
+      <p className="text-xs text-muted-foreground">
+        Available environment variables:{" "}
+        <span className="font-mono">BL_WORKTREE_PATH</span>,{" "}
+        <span className="font-mono">BL_PROJECT_ROOT</span>,{" "}
+        <span className="font-mono">BL_WORKSPACE_ID</span>.
+      </p>
+
+      <div className="flex justify-end">
+        <Button onClick={onSave} disabled={saving}>
+          {saving ? "Saving…" : "Save scripts"}
         </Button>
       </div>
     </div>

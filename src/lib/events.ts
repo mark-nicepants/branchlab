@@ -22,6 +22,7 @@ import type {
   ReviewInboxPayload,
   SessionPayload,
   TodosPayload,
+  WorkspaceSetupPayload,
 } from "./types";
 
 /** Subscribe to a backend event; resolves to an unsubscribe function. */
@@ -47,6 +48,11 @@ export function onWorkspaceSession(cb: (p: SessionPayload) => void) {
 /** The active workspace's todo list. */
 export function onWorkspaceTodos(cb: (p: TodosPayload) => void) {
   return on<TodosPayload>("workspace:todos", cb);
+}
+
+/** Workspace provisioning progress (setup script running / finished / failed). */
+export function onWorkspaceSetup(cb: (p: WorkspaceSetupPayload) => void) {
+  return on<WorkspaceSetupPayload>("workspace:setup", cb);
 }
 
 // ── GitHub subsystem (Rust `github` module) ──

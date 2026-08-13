@@ -9,6 +9,7 @@ mod logx;
 mod path;
 mod project;
 mod server;
+mod setup;
 mod supervisor;
 mod telemetry;
 mod watcher;
@@ -95,6 +96,11 @@ pub fn run() {
             supervisor.spawn();
             app.manage(supervisor);
 
+            // Background workspace provisioning (worktree checkout + setup
+            // script). Resume nothing here: interrupted pipelines were marked
+            // Failed by Registry::load, and the chat card offers Retry.
+            app.manage(setup::SetupManager::new(app.handle().clone()));
+
             // The window starts hidden to avoid a white flash; the frontend
             // shows it after first paint. This is a safety net so a failed
             // frontend can't leave the window invisible forever.
@@ -126,6 +132,7 @@ pub fn run() {
             commands::list_project_prs,
             commands::update_project,
             commands::remove_workspace,
+            commands::retry_setup,
             commands::list_workspaces,
             commands::rename_workspace,
             commands::rename_workspace_branch,

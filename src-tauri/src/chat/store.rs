@@ -465,6 +465,7 @@ mod tests {
                 kind: SystemKind::Info,
                 text: "note".into(),
                 created_at: 1,
+                steps: Vec::new(),
             }),
         )
         .unwrap();

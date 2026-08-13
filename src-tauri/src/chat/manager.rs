@@ -21,7 +21,7 @@ use crate::chat::events;
 use crate::chat::model::AssistantEntry;
 use crate::chat::model::{
     compute_collapse, Attachment, Block, CollapseSummary, ConfigOption, Conversation, Entry, Seq, SessionReason,
-    SystemEntry, SystemKind, TurnOrigin, TurnStatus, UserEntry,
+    SetupStep, SystemEntry, SystemKind, TurnOrigin, TurnStatus, UserEntry,
 };
 use crate::chat::store::ChatDb;
 use crate::engine::{acp as acp_engine, EngineCommand, EngineEvent, EngineHandle, PromptInput, StopKind};
@@ -81,6 +81,11 @@ struct ConvState {
     /// variant-capable model is selected — so it is re-applied from the
     /// `ConfigChanged` that follows the model re-apply, not from `Ready`.
     desired_effort: Option<String>,
+    /// A prompt held back while the workspace is still provisioning (worktree
+    /// checkout / setup script). The transcript already shows the user entry
+    /// and a queued turn; this is just the engine delivery, released by
+    /// `release_held` when setup reaches a terminal state.
+    held: Option<Vec<PromptInput>>,
 }
 
 impl ConvState {
@@ -98,6 +103,7 @@ impl ConvState {
             pending_reason: SessionReason::Started,
             desired_model: None,
             desired_effort: None,
+            held: None,
         }
     }
 }
@@ -259,8 +265,16 @@ impl ChatManager {
 
         let inputs = build_inputs(&sent, &attachments);
         crate::logf!("chat", "send ws={workspace_id} origin={origin:?} ready={} sent_len={}", conv.ready, sent.len());
-        if let Some(engine) = &conv.engine {
-            engine.send(EngineCommand::Prompt { inputs });
+        let provisioning = {
+            use tauri::Manager as _;
+            self.inner.app.state::<crate::project::Registry>().setup_state(workspace_id)
+                == Some(crate::project::SetupState::Provisioning)
+        };
+        match &conv.engine {
+            Some(engine) if !provisioning => engine.send(EngineCommand::Prompt { inputs }),
+            // Held until setup reaches a terminal state (release_held); the
+            // queued turn is already visible in the transcript.
+            _ => conv.held = Some(inputs),
         }
         let _ = self.inner.turn_tx.send(TurnEvent {
             workspace_id: workspace_id.to_string(),
@@ -451,7 +465,10 @@ impl ChatManager {
             convs.insert(workspace_id.to_string(), state);
         }
         let conv = convs.get_mut(workspace_id).unwrap();
-        if conv.engine.is_none() {
+        // A provisioning workspace's cwd doesn't exist yet — the engine can't
+        // boot there. SetupManager re-enters via ensure_engine once the
+        // worktree checkout lands.
+        if conv.engine.is_none() && conv.cwd.exists() {
             crate::logf!("chat", "spawn engine ws={workspace_id} cwd={}", conv.cwd.display());
             let handle =
                 acp_engine::spawn_engine(workspace_id.to_string(), conv.cwd.clone(), self.inner.event_tx.clone());
@@ -460,6 +477,81 @@ impl ChatManager {
         }
         Ok(())
     }
+
+    // ── Workspace-setup integration (called by SetupManager) ────────────────
+
+    /// Boot the engine once the worktree exists (ensure's cwd gate passes now).
+    pub fn ensure_engine(&self, workspace_id: &str, cwd: &Path) {
+        let _ = self.ensure(workspace_id, cwd);
+    }
+
+    /// Deliver a prompt held during provisioning. Called on setup success AND
+    /// failure — the workspace stays usable either way.
+    pub fn release_held(&self, workspace_id: &str, cwd: &Path) {
+        let _ = self.ensure(workspace_id, cwd);
+        let mut convs = self.inner.convs.lock().unwrap();
+        let Some(conv) = convs.get_mut(workspace_id) else { return };
+        if let Some(inputs) = conv.held.take() {
+            if let Some(engine) = &conv.engine {
+                crate::logf!("chat", "release held prompt ws={workspace_id}");
+                engine.send(EngineCommand::Prompt { inputs });
+            }
+        }
+    }
+
+    /// Insert the workspace-setup progress card into the transcript. Returns
+    /// `(entry_id, seq)` for subsequent in-place updates.
+    pub fn begin_setup_card(&self, workspace_id: &str, cwd: &Path, steps: Vec<SetupStep>) -> Result<SetupCard, String> {
+        self.ensure(workspace_id, cwd)?; // guarantees the conversation row exists (FK)
+        let conversation_id = {
+            let convs = self.inner.convs.lock().unwrap();
+            convs.get(workspace_id).ok_or("no conversation")?.conversation_id.clone()
+        };
+        let card = SetupCard { entry_id: new_id(), seq: 0, created_at: now_ms() };
+        let entry = Entry::System(SystemEntry {
+            seq: 0,
+            entry_id: card.entry_id.clone(),
+            kind: SystemKind::Info,
+            text: "Setting up workspace".into(),
+            created_at: card.created_at,
+            steps,
+        });
+        let seq = self.inner.db.lock().unwrap().insert_entry(&conversation_id, &entry)?;
+        events::emit_entry(&self.inner.app, workspace_id, &with_seq(entry, seq));
+        Ok(SetupCard { seq, ..card })
+    }
+
+    /// Update the progress card in place: persist the new state and re-emit at
+    /// the same seq (the frontend upserts by seq).
+    pub fn update_setup_card(
+        &self,
+        workspace_id: &str,
+        card: &SetupCard,
+        kind: SystemKind,
+        text: String,
+        steps: Vec<SetupStep>,
+    ) {
+        let entry = Entry::System(SystemEntry {
+            seq: card.seq,
+            entry_id: card.entry_id.clone(),
+            kind,
+            text,
+            created_at: card.created_at,
+            steps,
+        });
+        if let Err(e) = self.inner.db.lock().unwrap().update_entry(&entry) {
+            crate::logf!("setup", "card persist failed ws={workspace_id}: {e}");
+        }
+        events::emit_entry(&self.inner.app, workspace_id, &entry);
+    }
+}
+
+/// Handle to the setup progress card for in-place updates.
+#[derive(Clone)]
+pub struct SetupCard {
+    pub entry_id: String,
+    pub seq: i64,
+    pub created_at: i64,
 }
 
 impl Inner {
@@ -472,7 +564,14 @@ impl Inner {
     /// Insert + emit a System entry (lifecycle notice, config change, error).
     /// Persisted so it survives reloads/restarts.
     fn push_system(&self, workspace_id: &str, conversation_id: &str, kind: SystemKind, text: String) {
-        let entry = Entry::System(SystemEntry { seq: 0, entry_id: new_id(), kind, text, created_at: now_ms() });
+        let entry = Entry::System(SystemEntry {
+            seq: 0,
+            entry_id: new_id(),
+            kind,
+            text,
+            created_at: now_ms(),
+            steps: Vec::new(),
+        });
         let seq = { self.db.lock().unwrap().insert_entry(conversation_id, &entry).unwrap_or(0) };
         events::emit_entry(&self.app, workspace_id, &with_seq(entry, seq));
     }

@@ -10,6 +10,7 @@ import type {
   ConfigFile,
   ConfigOption,
   DiffStat,
+  Entry,
   EnvReport,
   FileContent,
   GeneratedTitle,
@@ -40,6 +41,10 @@ let projects: ProjectView[] = [
       push: "Push branch.",
       create_pr: "Create PR.",
     },
+    run: {
+      setup_script: "npm install",
+      teardown_script: null,
+    },
     workspaces: [
       {
         id: "p1-base",
@@ -50,6 +55,7 @@ let projects: ProjectView[] = [
         name: null,
         base_branch: null,
         init_prompt: null,
+        setup: "ready",
       },
       {
         id: "p1-ws1",
@@ -60,6 +66,7 @@ let projects: ProjectView[] = [
         name: "Continuing from previous prompt and making it way too long to fit",
         base_branch: "main",
         init_prompt: null,
+        setup: "ready",
       },
       {
         id: "p1-ws2",
@@ -70,6 +77,7 @@ let projects: ProjectView[] = [
         name: "Fix project settings popup modal regression",
         base_branch: "main",
         init_prompt: null,
+        setup: "ready",
       },
       {
         id: "p1-ws3",
@@ -80,6 +88,8 @@ let projects: ProjectView[] = [
         name: "Create a new conversation",
         base_branch: "main",
         init_prompt: null,
+        // Setup demo: this workspace is still provisioning (see chatOpen).
+        setup: "provisioning",
       },
       {
         id: "p1-ws4",
@@ -90,6 +100,7 @@ let projects: ProjectView[] = [
         name: "Abandoned spike",
         base_branch: "main",
         init_prompt: null,
+        setup: "ready",
       },
     ],
   },
@@ -106,6 +117,7 @@ let projects: ProjectView[] = [
       push: null,
       create_pr: null,
     },
+    run: { setup_script: null, teardown_script: null },
     workspaces: [
       {
         id: "p2-base",
@@ -116,6 +128,7 @@ let projects: ProjectView[] = [
         name: "This base workspace name is also extremely long and should truncate cleanly without pushing buttons away",
         base_branch: null,
         init_prompt: null,
+        setup: "ready",
       },
     ],
   },
@@ -147,6 +160,7 @@ export function addProject(path: string): Promise<ProjectView> {
       push: null,
       create_pr: null,
     },
+    run: { setup_script: null, teardown_script: null },
     workspaces: [
       {
         id: `p${Date.now()}-base`,
@@ -157,6 +171,7 @@ export function addProject(path: string): Promise<ProjectView> {
         name: null,
         base_branch: null,
         init_prompt: null,
+        setup: "ready",
       },
     ],
   };
@@ -290,6 +305,7 @@ export function createWorkspaceFromPr(
     base_branch: project?.default_branch ?? "main",
     init_prompt: null,
     pr_number: prNumber,
+    setup: "ready",
   };
   if (project) project.workspaces.push(ws);
   return Promise.resolve(ws);
@@ -455,6 +471,7 @@ export function createWorkspace(
     name: null,
     base_branch: base ?? project?.default_branch ?? "main",
     init_prompt: initPrompt ?? null,
+    setup: "ready",
   };
   if (project) {
     project.workspaces.push(ws);
@@ -477,6 +494,7 @@ export function createQuickChat(initPrompt?: string): Promise<Workspace> {
     name: null,
     base_branch: null,
     init_prompt: initPrompt ?? null,
+    setup: "ready",
   };
   quickChats.push(ws);
   return Promise.resolve(ws);
@@ -491,7 +509,14 @@ export function updateProject(
   if (update.name) p.name = update.name;
   if (update.default_branch) p.default_branch = update.default_branch;
   if (update.prompts) p.prompts = update.prompts;
+  if (update.run) p.run = update.run;
   return Promise.resolve(p);
+}
+
+export function retrySetup(workspaceId: string): Promise<void> {
+  // eslint-disable-next-line no-console
+  console.log("retry setup", workspaceId);
+  return Promise.resolve();
 }
 
 export function removeWorkspace(workspaceId: string): Promise<void> {
@@ -713,16 +738,47 @@ const MOCK_CONFIG: ConfigOption[] = [
 let mockSeq = 100;
 const nextSeq = () => ++mockSeq;
 
+// Setup-progress demo entry for the "provisioning" workspace (p1-ws3).
+const SETUP_ENTRY: Entry = {
+  type: "system",
+  seq: 1,
+  entryId: "sys-setup",
+  kind: "info",
+  text: "Setting up workspace",
+  steps: [
+    {
+      label: "Create worktree",
+      status: "completed",
+      log: [],
+      startedAt: Date.now() - 9000,
+      endedAt: Date.now() - 8200,
+    },
+    {
+      label: "Run setup script",
+      status: "running",
+      log: [
+        "$ npm install",
+        "added 421 packages in 6s",
+        "$ ln -sf $BL_PROJECT_ROOT/.env .env",
+      ],
+      startedAt: Date.now() - 8200,
+      endedAt: null,
+    },
+  ],
+  createdAt: Date.now() - 9000,
+};
+
 export function chatOpen(workspaceId: string): Promise<ChatSnapshot> {
   // Seed config so the selectors render immediately.
   setTimeout(
     () => mockEmit("chat:config", { workspaceId, options: MOCK_CONFIG }),
     30,
   );
+  const provisioning = workspaceId === "p1-ws3";
   return Promise.resolve({
     conversationId: `conv-${workspaceId}`,
-    entries: [],
-    headSeq: 0,
+    entries: provisioning ? [SETUP_ENTRY] : [],
+    headSeq: provisioning ? 1 : 0,
     hasMore: false,
     config: MOCK_CONFIG,
     commands: [

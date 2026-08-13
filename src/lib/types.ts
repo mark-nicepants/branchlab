@@ -35,7 +35,12 @@ export interface Workspace {
   pr_number?: number | null;
   /** A fork PR — read-only (no push/autofix back to the fork). */
   pr_is_fork?: boolean;
+  /** Background provisioning state (creation returns before setup finishes). */
+  setup: SetupState;
 }
+
+/** Workspace provisioning state (serde lowercase enum). */
+export type SetupState = "ready" | "provisioning" | "failed";
 
 /** PR pipeline autofix mode. Persisted per-workspace in the Rust registry. */
 export type AutofixMode = "off" | "auto" | "super";
@@ -72,8 +77,15 @@ export interface Project {
   root_path: string;
   default_branch: string | null;
   prompts: ProjectPrompts;
+  run: RunSettings;
   /** GitHub account override (`"{host}/{login}"`); null = use auto-detected. */
   account_id: string | null;
+}
+
+/** Per-project workspace setup/teardown scripts (snake_case on the wire). */
+export interface RunSettings {
+  setup_script: string | null;
+  teardown_script: string | null;
 }
 
 export interface ProjectPrompts {
@@ -88,6 +100,8 @@ export interface ProjectUpdate {
   name?: string;
   default_branch?: string;
   prompts?: ProjectPrompts;
+  /** Whole-block replace, like `prompts`. */
+  run?: RunSettings;
   /** GitHub account override: "" clears it (auto-detect), an id sets it,
    *  undefined leaves it unchanged. */
   account_id?: string;
@@ -182,6 +196,14 @@ export interface SessionPayload {
    *  turn). Cleared when the workspace becomes active. Drives the warning icon. */
   needsAttention: boolean;
   error: string | null;
+}
+
+/** `workspace:setup` — workspace provisioning progress. `ok` is null while
+ *  running. */
+export interface WorkspaceSetupPayload {
+  workspaceId: string;
+  running: boolean;
+  ok: boolean | null;
 }
 
 /** `workspace:todos` — the active workspace's todo list. */
@@ -464,7 +486,18 @@ export interface SystemEntry {
   entryId: string;
   kind: "info" | "success" | "error";
   text: string;
+  /** Workspace-setup progress steps; empty for plain notices. */
+  steps: SetupStep[];
   createdAt: number;
+}
+
+/** One step of the workspace setup card (updated via `chat:entry` upserts). */
+export interface SetupStep {
+  label: string;
+  status: BlockToolStatus;
+  log: string[];
+  startedAt: number | null;
+  endedAt: number | null;
 }
 
 /** One item in a conversation timeline; discriminated by `type`. */

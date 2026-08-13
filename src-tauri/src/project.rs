@@ -35,6 +35,21 @@ pub struct Project {
     /// the account from this repo's `origin` remote (host + owner/org).
     #[serde(default)]
     pub account_id: Option<String>,
+    /// Workspace lifecycle scripts (block named `run` for forward-compat with
+    /// the run/preview feature branch, which extends this same struct).
+    #[serde(default)]
+    pub run: RunSettings,
+}
+
+/// Per-project workspace lifecycle scripts. Snake_case on the wire (matches
+/// the feat/run-preview shape). Both run as `sh -lc` in the worktree with
+/// `BL_WORKTREE_PATH` / `BL_PROJECT_ROOT` / `BL_WORKSPACE_ID` in the env.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RunSettings {
+    /// Runs once in a fresh worktree right after creation (installs, .env links).
+    pub setup_script: Option<String>,
+    /// Best-effort, bounded; runs before worktree removal.
+    pub teardown_script: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,6 +140,22 @@ pub struct Workspace {
     /// (previously this lived only in the supervisor's in-memory runtime).
     #[serde(default)]
     pub pr: Option<git::PrStatus>,
+    /// Background provisioning lifecycle. Serde default = `Ready`, so every
+    /// pre-existing registry row (and quick chats, created inline) loads ready.
+    #[serde(default)]
+    pub setup: SetupState,
+}
+
+/// Workspace provisioning state. `Provisioning` covers the whole background
+/// pipeline (worktree checkout + setup script); `Failed` is recoverable via
+/// the chat card's Retry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SetupState {
+    #[default]
+    Ready,
+    Provisioning,
+    Failed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -135,6 +166,8 @@ pub struct ProjectUpdate {
     /// GitHub account override. `Some("")` clears it (back to auto-detect),
     /// `Some(id)` sets it, `None` leaves it unchanged.
     pub account_id: Option<String>,
+    /// Lifecycle scripts — replaced as a whole block, like `prompts`.
+    pub run: Option<RunSettings>,
 }
 
 /// A project together with its workspaces — the shape the UI consumes.
@@ -197,7 +230,14 @@ impl Registry {
     /// Worktrees are created under `worktrees_dir`, quick-chat scratch dirs
     /// under `quick_chats_dir`.
     pub fn load(file: PathBuf, worktrees_dir: PathBuf, quick_chats_dir: PathBuf) -> Self {
-        let data = std::fs::read_to_string(&file).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        let mut data: RegistryData =
+            std::fs::read_to_string(&file).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        // Startup repair: a workspace still marked Provisioning means the app
+        // died mid-setup. Mark it Failed so the chat card offers Retry instead
+        // of showing a spinner forever.
+        for w in data.workspaces.iter_mut().filter(|w| w.setup == SetupState::Provisioning) {
+            w.setup = SetupState::Failed;
+        }
         Self { data: Mutex::new(data), file, worktrees_dir, quick_chats_dir }
     }
 
@@ -230,6 +270,7 @@ impl Registry {
                 default_branch: default_branch_for(&canonical),
                 prompts: ProjectPrompts::default(),
                 account_id: None,
+                run: RunSettings::default(),
             });
             data.workspaces.push(Workspace {
                 id: format!("{id}-base"),
@@ -246,6 +287,7 @@ impl Registry {
                 pr_number: None,
                 pr_is_fork: false,
                 pr: None,
+                setup: SetupState::Ready,
             });
             self.persist(&data);
         }
@@ -399,6 +441,9 @@ impl Registry {
         if let Some(account_id) = update.account_id {
             project.account_id = if account_id.is_empty() { None } else { Some(account_id) };
         }
+        if let Some(run) = update.run {
+            project.run = run;
+        }
         self.persist(&data);
         Ok(self.view_of(&data, project_id))
     }
@@ -468,8 +513,9 @@ impl Registry {
         let dir = self.worktrees_dir.join(project_id).join(git::sanitize_branch(&branch));
         let path = dir.to_string_lossy().into_owned();
 
-        git::add_worktree(&root, &path, &branch, &base)?;
-
+        // The expensive checkout (`git worktree add`) happens later, off the
+        // create path, in `provision_worktree` — the workspace registers as
+        // `Provisioning` so the UI can open it instantly.
         let ws = Workspace {
             id: id_for(&path),
             project_id: project_id.to_string(),
@@ -485,11 +531,82 @@ impl Registry {
             pr_number: None,
             pr_is_fork: false,
             pr: None,
+            setup: SetupState::Provisioning,
         };
         let mut data = self.data.lock().unwrap();
         data.workspaces.push(ws.clone());
         self.persist(&data);
         Ok(ws)
+    }
+
+    /// Run the expensive part of workspace creation: the actual worktree
+    /// checkout. Idempotent — a torn dir from an interrupted attempt is
+    /// cleaned up (app-owned paths only) and the branch is reused if the
+    /// previous attempt already created it. PR workspaces re-fetch the PR
+    /// head (`fetch --force`, retry-safe).
+    pub fn provision_worktree(&self, workspace_id: &str) -> Result<(), String> {
+        let (ws, root) = {
+            let data = self.data.lock().unwrap();
+            let ws = data.workspaces.iter().find(|w| w.id == workspace_id).ok_or("unknown workspace")?.clone();
+            let root = data
+                .projects
+                .iter()
+                .find(|p| p.id == ws.project_id)
+                .map(|p| p.root_path.clone())
+                .ok_or("unknown project")?;
+            (ws, root)
+        };
+        if ws.kind != WorkspaceKind::Worktree {
+            return Ok(());
+        }
+        let branch = ws.branch.as_deref().ok_or("workspace has no branch")?;
+
+        // Already provisioned (e.g. Retry after a setup-script failure): the
+        // worktree may hold agent work by now — never re-checkout over it.
+        if Path::new(&ws.path).join(".git").exists() {
+            return Ok(());
+        }
+
+        // Torn previous attempt: clear the leftover dir and stale registration.
+        if Path::new(&ws.path).exists() && Path::new(&ws.path).starts_with(&self.worktrees_dir) {
+            let _ = std::fs::remove_dir_all(&ws.path);
+            git::prune_worktrees(&root);
+        }
+
+        if let Some(number) = ws.pr_number {
+            git::fetch_pr(&root, "origin", number, branch)?;
+            git::add_worktree_existing(&root, &ws.path, branch)?;
+        } else if git::has_branch(&root, branch) {
+            // Branch survived a torn attempt — reuse it.
+            git::add_worktree_existing(&root, &ws.path, branch)?;
+        } else {
+            let base = ws.base_branch.as_deref().ok_or("workspace has no base branch")?;
+            git::add_worktree(&root, &ws.path, branch, base)?;
+        }
+        Ok(())
+    }
+
+    /// A workspace with its project's lifecycle scripts and repo root.
+    /// `None` for quick chats and unknown workspaces (no project → no scripts).
+    pub fn run_context(&self, workspace_id: &str) -> Option<(Workspace, RunSettings, String)> {
+        let data = self.data.lock().unwrap();
+        let ws = data.workspaces.iter().find(|w| w.id == workspace_id)?.clone();
+        let project = data.projects.iter().find(|p| p.id == ws.project_id)?;
+        Some((ws.clone(), project.run.clone(), project.root_path.clone()))
+    }
+
+    pub fn setup_state(&self, workspace_id: &str) -> Option<SetupState> {
+        self.data.lock().unwrap().workspaces.iter().find(|w| w.id == workspace_id).map(|w| w.setup)
+    }
+
+    pub fn set_setup_state(&self, workspace_id: &str, state: SetupState) {
+        let mut data = self.data.lock().unwrap();
+        if let Some(w) = data.workspaces.iter_mut().find(|w| w.id == workspace_id) {
+            if w.setup != state {
+                w.setup = state;
+                self.persist(&data);
+            }
+        }
     }
 
     /// Create a quick chat: an app-managed empty scratch directory (no git
@@ -525,6 +642,7 @@ impl Registry {
             pr_number: None,
             pr_is_fork: false,
             pr: None,
+            setup: SetupState::Ready,
         };
         let mut data = self.data.lock().unwrap();
         data.workspaces.push(ws.clone());
@@ -537,18 +655,19 @@ impl Registry {
     /// on it, and records the PR metadata. Reuses the same worktree machinery as
     /// `create_workspace`.
     pub fn create_workspace_from_pr(&self, project_id: &str, meta: PrWorkspaceMeta) -> Result<Workspace, String> {
-        let root = self.repo_root(project_id).ok_or("unknown project")?;
+        self.repo_root(project_id).ok_or("unknown project")?;
         let branch = format!("pr-{}", meta.number);
         let sanitized = git::sanitize_branch(&branch);
         let dir = self.worktrees_dir.join(project_id).join(&sanitized);
         let path = dir.to_string_lossy().into_owned();
-        if dir.exists() {
-            return Err(format!("a workspace for PR #{} already exists", meta.number));
+        // Guard on the registry, not the dir: a torn provisioning attempt may
+        // leave a dir behind that provision_worktree knows how to clean up.
+        {
+            let data = self.data.lock().unwrap();
+            if data.workspaces.iter().any(|w| w.path == path) {
+                return Err(format!("a workspace for PR #{} already exists", meta.number));
+            }
         }
-
-        git::fetch_pr(&root, "origin", meta.number, &branch)?;
-        git::add_worktree_existing(&root, &path, &branch)?;
-
         let ws = Workspace {
             id: id_for(&path),
             project_id: project_id.to_string(),
@@ -564,6 +683,7 @@ impl Registry {
             pr_number: Some(meta.number),
             pr_is_fork: meta.is_fork,
             pr: None,
+            setup: SetupState::Provisioning,
         };
         let mut data = self.data.lock().unwrap();
         data.workspaces.push(ws.clone());
@@ -721,6 +841,7 @@ mod tests {
                 pr_number: None,
                 pr_is_fork: false,
                 pr: None,
+                setup: SetupState::Ready,
             });
             reg.persist(&data);
         }
@@ -782,12 +903,25 @@ mod tests {
         let reg = Registry::load(dir.join("registry.json"), dir.join("worktrees"), dir.join("quick-chats"));
         let project = reg.add_project(repo.to_str().unwrap()).unwrap();
         let ws = reg.create_workspace(&project.project.id, None, None).unwrap();
+        // Creation is instant: the checkout is deferred to provisioning.
+        assert_eq!(ws.setup, SetupState::Provisioning);
+        assert!(!Path::new(&ws.path).exists());
+        reg.provision_worktree(&ws.id).unwrap();
         assert!(Path::new(&ws.path).is_dir());
+        // Idempotent: a valid worktree is never re-checked-out.
+        reg.provision_worktree(&ws.id).unwrap();
 
         // Simulate the user (or a cleanup tool) deleting the worktree dir.
         std::fs::remove_dir_all(&ws.path).unwrap();
         reg.remove_workspace(&ws.id, false).unwrap();
         assert!(!reg.all_workspaces().iter().any(|w| w.id == ws.id));
+
+        // A torn half-provisioned dir (no .git) is cleaned up and re-created.
+        let ws2 = reg.create_workspace(&project.project.id, None, None).unwrap();
+        std::fs::create_dir_all(&ws2.path).unwrap();
+        std::fs::write(Path::new(&ws2.path).join("leftover"), b"x").unwrap();
+        reg.provision_worktree(&ws2.id).unwrap();
+        assert!(Path::new(&ws2.path).join(".git").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -835,6 +969,7 @@ mod tests {
                 pr_number: Some(7),
                 pr_is_fork: false,
                 pr: None,
+                setup: SetupState::Ready,
             });
         }
         assert_eq!(reg.rename_branch_for_title("pr-ws", "Some Title").unwrap(), None);

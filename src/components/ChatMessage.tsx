@@ -4,6 +4,7 @@ import { fileName } from "@/lib/review";
 import { cn } from "@/lib/utils";
 import {
   Bot,
+  Check,
   ChevronRight,
   FileText,
   Globe,
@@ -28,10 +29,13 @@ import type {
   Block,
   ChatPermissionEvent,
   DiffBlock,
+  SetupStep,
   SystemEntry,
   ToolBlock,
   UserEntry,
 } from "../lib/types";
+import { retrySetup } from "../lib/api";
+import { toast } from "sonner";
 import { UnifiedDiff } from "./DiffBody";
 import { Button } from "@/components/ui/button";
 import { usePreferences, type ChatDensity } from "./PreferencesProvider";
@@ -245,8 +249,18 @@ function ReviewFeedbackMessage({ payload }: { payload: TypedDisplay }) {
 
 // ── System messages ───────────────────────────────────────────────────────
 
-/** System entries: centered pills — "the room speaking", not a participant. */
-export function SystemMessageView({ entry }: { entry: SystemEntry }) {
+/** System entries: centered pills — "the room speaking", not a participant.
+ *  Entries carrying setup steps render the setup progress card instead. */
+export function SystemMessageView({
+  entry,
+  workspaceId,
+}: {
+  entry: SystemEntry;
+  workspaceId?: string;
+}) {
+  if (entry.steps?.length) {
+    return <SetupProgressCard entry={entry} workspaceId={workspaceId} />;
+  }
   const kindStyles = {
     info: "border-border bg-card text-muted-foreground",
     success: "border-additions/30 bg-additions/10 text-additions",
@@ -263,6 +277,105 @@ export function SystemMessageView({ entry }: { entry: SystemEntry }) {
         {entry.text}
       </div>
     </MessageShell>
+  );
+}
+
+/** Workspace setup progress: one step row per provisioning step, updated in
+ *  place via the normal `chat:entry` upsert. Failed setups offer a retry. */
+function SetupProgressCard({
+  entry,
+  workspaceId,
+}: {
+  entry: SystemEntry;
+  workspaceId?: string;
+}) {
+  const live = entry.steps.some(
+    (s) => s.status === "pending" || s.status === "running",
+  );
+  return (
+    <MessageShell role="system">
+      <div className="w-[32rem] max-w-full">
+        <SectionCard
+          header={
+            <>
+              <span className="min-w-0 truncate">{entry.text}</span>
+              {live && (
+                <Loader2 className="size-3 shrink-0 animate-spin text-primary" />
+              )}
+            </>
+          }
+          footer={
+            entry.kind === "error" && workspaceId ? (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 px-2.5 text-xs"
+                onClick={() =>
+                  retrySetup(workspaceId).catch((e) =>
+                    toast.error("Could not retry setup", {
+                      description: String(e),
+                    }),
+                  )
+                }
+              >
+                Retry setup
+              </Button>
+            ) : undefined
+          }
+        >
+          {entry.steps.map((s, i) => (
+            <SetupStepRow key={i} step={s} />
+          ))}
+        </SectionCard>
+      </div>
+    </MessageShell>
+  );
+}
+
+/** One setup step, in the tool-step row grammar. The failed step's log opens
+ *  automatically; a running step's log is expandable like a tool detail. */
+function SetupStepRow({ step }: { step: SetupStep }) {
+  const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const running = step.status === "pending" || step.status === "running";
+  const failed = step.status === "failed";
+  const hasLog = step.log.length > 0;
+  const open = (userOpen ?? failed) && hasLog;
+  return (
+    <StepRowShell
+      leading={
+        running ? (
+          <Loader2 className="size-3 animate-spin text-primary" />
+        ) : failed ? (
+          <X className="size-3.5 text-destructive" />
+        ) : (
+          <Check className="size-3.5 text-additions opacity-70" />
+        )
+      }
+      verb={step.label}
+      obj=""
+      aux={
+        <>
+          {failed && (
+            <span className="font-semibold text-destructive">failed</span>
+          )}
+          {step.startedAt != null &&
+            step.endedAt != null &&
+            fmtDuration(step.endedAt - step.startedAt) && (
+              <span className="tabular-nums opacity-70">
+                {fmtDuration(step.endedAt - step.startedAt)}
+              </span>
+            )}
+        </>
+      }
+      open={open}
+      onToggle={() => setUserOpen(!open)}
+    >
+      {hasLog && (
+        <pre className="max-h-48 select-text overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-muted-foreground">
+          {step.log.join("\n")}
+        </pre>
+      )}
+    </StepRowShell>
   );
 }
 

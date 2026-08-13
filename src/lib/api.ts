@@ -110,7 +110,13 @@ export function updateProject(
   return invoke<ProjectView>("update_project", { projectId, update });
 }
 
-/** Remove a worktree workspace (stops its server first). */
+/** Re-run a failed workspace setup (progress arrives via chat + `workspace:setup`). */
+export function retrySetup(workspaceId: string): Promise<void> {
+  return invoke<void>("retry_setup", { workspaceId });
+}
+
+/** Remove a worktree workspace (stops its server first; runs the project's
+ *  teardown script, so this can take up to ~30s). */
 export function removeWorkspace(
   workspaceId: string,
   force: boolean,

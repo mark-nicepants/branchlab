@@ -44,19 +44,22 @@ pub fn list_branches(project_id: String, registry: State<Registry>) -> Result<Ve
 }
 
 /// Create a workspace (worktree on a generated branch codename). `base` is
-/// optional — omit to fork from the repo's current branch.
+/// optional — omit to fork from the repo's current branch. Returns instantly:
+/// the expensive checkout + setup script run in the background (SetupManager),
+/// with progress in the chat's setup card. Async so the cheap git probes
+/// (base branch, codenames) stay off the main thread too.
 #[tauri::command]
-pub fn create_workspace(
+pub async fn create_workspace(
     project_id: String,
     base: Option<String>,
     init_prompt: Option<String>,
-    registry: State<Registry>,
-    watcher: State<GitWatcher>,
-    supervisor: State<Supervisor>,
-    telemetry: State<crate::telemetry::Telemetry>,
+    registry: State<'_, Registry>,
+    setup: State<'_, crate::setup::SetupManager>,
+    supervisor: State<'_, Supervisor>,
+    telemetry: State<'_, crate::telemetry::Telemetry>,
 ) -> Result<Workspace, String> {
     let ws = registry.create_workspace(&project_id, base, init_prompt)?;
-    watcher.watch(&ws.id, &ws.path);
+    setup.start(&ws.id); // watches git + boots the engine once the worktree exists
     supervisor.reconcile_now();
     telemetry.event("session_created", "/session", Some(serde_json::json!({ "source": "branch" })));
     Ok(ws)
@@ -66,16 +69,24 @@ pub fn create_workspace(
 /// own opencode server, but no git repo or project. Not registered with the
 /// git watcher — there is nothing to diff.
 #[tauri::command]
-pub fn create_quick_chat(
+pub async fn create_quick_chat(
     init_prompt: Option<String>,
-    registry: State<Registry>,
-    supervisor: State<Supervisor>,
-    telemetry: State<crate::telemetry::Telemetry>,
+    registry: State<'_, Registry>,
+    supervisor: State<'_, Supervisor>,
+    telemetry: State<'_, crate::telemetry::Telemetry>,
 ) -> Result<Workspace, String> {
     let ws = registry.create_quick_chat(init_prompt)?;
     supervisor.reconcile_now();
     telemetry.event("session_created", "/session", Some(serde_json::json!({ "source": "quick_chat" })));
     Ok(ws)
+}
+
+/// Re-run a failed workspace setup (the chat card's Retry button). The
+/// worktree checkout is idempotent; an already-valid worktree is kept as-is
+/// and only the setup script re-runs.
+#[tauri::command]
+pub fn retry_setup(workspace_id: String, setup: State<crate::setup::SetupManager>) {
+    setup.start(&workspace_id);
 }
 
 #[tauri::command]
@@ -109,7 +120,7 @@ pub async fn create_workspace_from_pr(
     pr_number: i64,
     registry: State<'_, Registry>,
     github: State<'_, crate::github::GithubManager>,
-    watcher: State<'_, GitWatcher>,
+    setup: State<'_, crate::setup::SetupManager>,
     supervisor: State<'_, Supervisor>,
     telemetry: State<'_, crate::telemetry::Telemetry>,
 ) -> Result<Workspace, String> {
@@ -127,23 +138,29 @@ pub async fn create_workspace_from_pr(
         is_fork: detail.is_fork,
     };
     let ws = registry.create_workspace_from_pr(&project_id, meta)?;
-    watcher.watch(&ws.id, &ws.path);
+    setup.start(&ws.id); // fetch + checkout happen in the background pipeline
     supervisor.reconcile_now();
     telemetry.event("session_created", "/session", Some(serde_json::json!({ "source": "pr" })));
     Ok(ws)
 }
 
-/// Remove a workspace: stop its server first. For worktree workspaces the git
-/// worktree is also removed; for base workspaces only the registry entry is
-/// deleted and the repo directory is left untouched.
+/// Remove a workspace: run the project's teardown script (best-effort,
+/// bounded — the worktree must still exist for it), stop its server, then
+/// remove the worktree. Async so the teardown wait never blocks the UI; the
+/// sidebar shows a spinner while the returned promise is in flight.
 #[tauri::command]
-pub fn remove_workspace(
+pub async fn remove_workspace(
     workspace_id: String,
     force: bool,
-    registry: State<Registry>,
-    servers: State<ServerManager>,
-    watcher: State<GitWatcher>,
+    registry: State<'_, Registry>,
+    setup: State<'_, crate::setup::SetupManager>,
+    servers: State<'_, ServerManager>,
+    watcher: State<'_, GitWatcher>,
 ) -> Result<(), String> {
+    let setup = setup.inner().clone();
+    let ws_id = workspace_id.clone();
+    // Blocking script wait (≤30s) off the async pool's core threads.
+    let _ = tauri::async_runtime::spawn_blocking(move || setup.run_teardown(&ws_id)).await;
     servers.stop(&workspace_id);
     watcher.unwatch(&workspace_id);
     registry.remove_workspace(&workspace_id, force)

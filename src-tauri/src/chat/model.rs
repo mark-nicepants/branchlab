@@ -220,6 +220,24 @@ pub struct SystemEntry {
     pub kind: SystemKind,
     pub text: String,
     pub created_at: i64,
+    /// Workspace-setup progress steps (empty for plain notices). The card
+    /// updates live via `chat:entry` re-emits at the same seq and persists
+    /// with the entry, so it survives restarts.
+    #[serde(default)]
+    pub steps: Vec<SetupStep>,
+}
+
+/// One step of the workspace-setup pipeline as shown in the chat card.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SetupStep {
+    pub label: String,
+    pub status: ToolStatus,
+    /// Bounded tail of script output (the full stream also goes to the debug log).
+    #[serde(default)]
+    pub log: Vec<String>,
+    pub started_at: Option<i64>,
+    pub ended_at: Option<i64>,
 }
 
 /// A selectable choice within a config option (a model, a reasoning level, …).
@@ -427,6 +445,7 @@ mod tests {
             kind: SystemKind::Success,
             text: "Committed changes.".into(),
             created_at: 0,
+            steps: Vec::new(),
         });
         let v = serde_json::to_value(&e).unwrap();
         assert_eq!(v["type"], "system");

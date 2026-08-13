@@ -111,6 +111,9 @@ before committing.
   `events`/`commands`), `engine/acp.rs` (the `opencode acp` driver — the only
   place ACP crate types appear), `watcher.rs` (filesystem watch → `workspace:git`),
   `supervisor.rs` (turn-state ingest + PR autofix → `workspace:{pr,session,notify}`),
+  `setup.rs` (background workspace provisioning: worktree checkout + project
+  setup/teardown scripts, progress into the chat's setup card — creation
+  commands return instantly with `Workspace.setup = provisioning`),
   `server.rs` (legacy `opencode serve` lifecycle, no longer used by chat),
   `config.rs` (opencode config), `env.rs` (PATH probe), `commands.rs` (IPC surface).
   Put new logic in the matching module.

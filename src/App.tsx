@@ -103,9 +103,14 @@ function App() {
   // Reveal the pre-created hidden window on the first committed frame — the
   // backend's delayed show() is only a safety net for a crashed frontend.
   useEffect(() => {
-    getCurrentWindow()
-      .show()
-      .catch(() => {});
+    try {
+      // Throws synchronously in the browser dev harness (no Tauri window).
+      void getCurrentWindow()
+        .show()
+        .catch(() => {});
+    } catch {
+      /* dev:browser */
+    }
     void perfMark("first frame shown").catch(() => {});
   }, []);
 
@@ -140,56 +145,74 @@ function App() {
     [refreshProjects],
   );
 
+  /** Instant open: creation returns the Workspace before provisioning
+   *  finishes, so insert it into local state, navigate immediately, and let
+   *  the registry refresh catch up in the background. */
+  const openNewWorkspace = useCallback(
+    (ws: Workspace) => {
+      if (ws.kind === "QuickChat") {
+        setQuickChats((prev) => [...prev, ws]);
+      } else {
+        setProjects((prev) =>
+          prev.map((p) =>
+            p.id === ws.project_id
+              ? { ...p, workspaces: [...p.workspaces, ws] }
+              : p,
+          ),
+        );
+      }
+      openSession(ws);
+      void refreshProjects();
+    },
+    [openSession, refreshProjects],
+  );
+
   const createSession = useCallback(
     async (projectId: string, base: string | undefined, prompt: string) => {
       try {
         const ws = await createWorkspace(projectId, base, prompt || undefined);
-        await refreshProjects();
-        openSession(ws);
+        openNewWorkspace(ws);
       } catch (e) {
         toast.error("Could not create session", { description: String(e) });
       }
     },
-    [refreshProjects, openSession],
+    [openNewWorkspace],
   );
 
   const quickCreate = useCallback(
     async (project: ProjectView) => {
       try {
         const ws = await createWorkspace(project.id);
-        await refreshProjects();
-        openSession(ws);
+        openNewWorkspace(ws);
       } catch (e) {
         toast.error("Could not create session", { description: String(e) });
       }
     },
-    [refreshProjects, openSession],
+    [openNewWorkspace],
   );
 
   const checkoutPr = useCallback(
     async (projectId: string, prNumber: number) => {
       try {
         const ws = await createWorkspaceFromPr(projectId, prNumber);
-        await refreshProjects();
-        openSession(ws);
+        openNewWorkspace(ws);
       } catch (e) {
         toast.error("Could not check out PR", { description: String(e) });
       }
     },
-    [refreshProjects, openSession],
+    [openNewWorkspace],
   );
 
   const newQuickChat = useCallback(
     async (prompt?: string) => {
       try {
         const ws = await createQuickChat(prompt);
-        await refreshProjects();
-        openSession(ws);
+        openNewWorkspace(ws);
       } catch (e) {
         toast.error("Could not start quick chat", { description: String(e) });
       }
     },
-    [refreshProjects, openSession],
+    [openNewWorkspace],
   );
 
   const removeQuickChat = useCallback(
@@ -330,9 +353,7 @@ function App() {
             <NewWorkspaceModal
               project={branchModalProject}
               onClose={() => setBranchModalProject(null)}
-              onCreated={(ws) => {
-                void refreshProjects().then(() => openSession(ws));
-              }}
+              onCreated={openNewWorkspace}
             />
           )}
 
@@ -340,9 +361,7 @@ function App() {
             <CreateFromPrModal
               project={prModalProject}
               onClose={() => setPrModalProject(null)}
-              onCreated={(ws) => {
-                void refreshProjects().then(() => openSession(ws));
-              }}
+              onCreated={openNewWorkspace}
             />
           )}
 
