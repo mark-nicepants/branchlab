@@ -79,8 +79,10 @@ pub fn probe() -> EnvReport {
     }
 }
 
-/// Tauri command: report the state of external dependencies.
+/// Tauri command: report the state of external dependencies. Async so the
+/// three version-probe subprocesses never run on the main thread (sync
+/// commands block the UI event loop — and the first paint at startup).
 #[tauri::command]
-pub fn probe_environment() -> EnvReport {
+pub async fn probe_environment() -> EnvReport {
     probe()
 }

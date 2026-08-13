@@ -448,6 +448,11 @@ export function logPath(): Promise<string | null> {
   return invoke<string | null>("log_path");
 }
 
+// Stamp a frontend startup milestone on the backend's perf timeline.
+export function perfMark(name: string): Promise<void> {
+  return invoke("perf_mark", { name });
+}
+
 // ── Telemetry (anonymous usage analytics; see src-tauri/src/telemetry.rs) ──
 
 /** Report a screen change, website-style (e.g. "/session", "/settings/general"). */

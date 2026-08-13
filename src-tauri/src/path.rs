@@ -16,9 +16,19 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-/// Resolve the login shell's `PATH` and merge it (plus common install dirs)
-/// into this process's `PATH`. Best-effort: silently keeps the existing `PATH`
-/// on any failure. Call once, as early as possible at startup.
+/// Merge the launch `PATH`, the login shell's `PATH` (cached from a previous
+/// launch), and common install dirs into this process's `PATH`. Best-effort:
+/// silently keeps the existing `PATH` on any failure. Call once, as early as
+/// possible at startup.
+///
+/// Resolving the login-shell PATH live means running an interactive zsh
+/// (sourcing .zshrc, nvm, compinit, …) — routinely 0.5–2s, all of it spent
+/// before the window can appear. So the slow resolve runs on a background
+/// thread and only writes a cache file for the NEXT launch; `set_var` happens
+/// exactly once, here, while the process is still single-threaded (late
+/// `setenv` races concurrent `getenv` on macOS).
+// ponytail: the first-ever launch misses exotic .zshrc-only dirs until the
+// next launch; the common-dirs fallback below covers standard installs.
 pub fn fix_path() {
     let mut dirs: Vec<String> = Vec::new();
 
@@ -27,9 +37,9 @@ pub fn fix_path() {
         dirs.extend(current.split(':').map(str::to_string));
     }
 
-    // 2. The user's interactive login shell PATH (sources .zprofile/.zshrc/etc).
-    if let Some(shell_path) = login_shell_path() {
-        dirs.extend(shell_path.split(':').map(str::to_string));
+    // 2. The login-shell PATH cached by a previous launch.
+    if let Some(cached) = cache_file().and_then(|f| std::fs::read_to_string(f).ok()) {
+        dirs.extend(cached.trim().split(':').map(str::to_string));
     }
 
     // 3. Common locations tool installers use, in case the shell didn't list
@@ -50,6 +60,25 @@ pub fn fix_path() {
     if !merged.is_empty() {
         std::env::set_var("PATH", merged.join(":"));
     }
+
+    // 4. Refresh the cache off-thread so the next launch starts with the real
+    //    login-shell PATH without paying for the shell.
+    std::thread::spawn(|| {
+        if let (Some(cache), Some(path)) = (cache_file(), login_shell_path()) {
+            if let Some(parent) = cache.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(&cache, path);
+        }
+    });
+}
+
+/// Where the resolved login-shell PATH is cached between launches. Lives in
+/// the app-data dir, but computed without Tauri because `fix_path` must run
+/// before the builder starts.
+fn cache_file() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    Some(home.join("Library/Application Support/dev.branchlab.desktop/path-cache"))
 }
 
 #[cfg(target_os = "windows")]

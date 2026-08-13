@@ -310,19 +310,21 @@ pub fn set_autofix_mode(
     supervisor.note_autofix_mode(&workspace_id, mode);
 }
 
-/// A complete, synchronous read of every workspace's sidebar state (diff stat,
-/// session activity, PR/CI). The frontend seeds its store from this on mount,
-/// then applies `workspace:*` event deltas — no startup ordering races, since
+/// A complete read of every workspace's sidebar state (diff stat, session
+/// activity, PR/CI). The frontend seeds its store from this on mount, then
+/// applies `workspace:*` event deltas — no startup ordering races, since
 /// nothing depends on events emitted before the webview subscribed.
+/// Async because uncached diff stats spawn `git` per workspace — on the main
+/// thread that would block the UI event loop right at first paint.
 #[tauri::command]
-pub fn get_sidebar_snapshot(
-    registry: State<Registry>,
-    watcher: State<GitWatcher>,
-    supervisor: State<Supervisor>,
-) -> Vec<SidebarWorkspace> {
+pub async fn get_sidebar_snapshot(
+    registry: State<'_, Registry>,
+    watcher: State<'_, GitWatcher>,
+    supervisor: State<'_, Supervisor>,
+) -> Result<Vec<SidebarWorkspace>, String> {
     let statuses: std::collections::HashMap<String, crate::supervisor::WorkspaceStatus> =
         supervisor.sidebar_snapshot().into_iter().map(|s| (s.session.workspace_id.clone(), s)).collect();
-    registry
+    let rows = registry
         .all_workspaces()
         .into_iter()
         .filter_map(|w| {
@@ -334,7 +336,8 @@ pub fn get_sidebar_snapshot(
                 pr: status.pr.clone(),
             })
         })
-        .collect()
+        .collect();
+    Ok(rows)
 }
 
 /// One workspace's complete sidebar state (see [`get_sidebar_snapshot`]).
@@ -493,6 +496,13 @@ pub fn open_devtools(window: tauri::WebviewWindow) {
 #[tauri::command]
 pub fn log_path() -> Option<String> {
     crate::logx::path().map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Frontend startup marks land on the backend's boot-relative perf timeline
+/// (grep `[perf]` in the debug log).
+#[tauri::command]
+pub fn perf_mark(name: String) {
+    crate::logf!("perf", "{name} +{}ms", crate::logx::boot_ms());
 }
 
 /// Open a path in an external app. `app` is a macOS application name for

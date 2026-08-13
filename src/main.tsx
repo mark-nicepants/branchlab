@@ -1,6 +1,5 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import App from "./App";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { PreferencesProvider } from "@/components/PreferencesProvider";
@@ -8,7 +7,10 @@ import { UpdateProvider } from "@/hooks/useUpdateChecker";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import { installGlobalLinkCatcher } from "@/lib/links";
+import { perfMark } from "@/lib/api";
 import "./index.css";
+
+void perfMark("js eval").catch(() => {});
 
 // Never let a link navigate the single app webview — it would replace the
 // entire BranchLab UI. Route every external link out-of-process instead.
@@ -28,13 +30,9 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     </ThemeProvider>
   </React.StrictMode>,
 );
+void perfMark("render scheduled").catch(() => {});
 
-// The window starts hidden (tauri.conf.json) to avoid a white flash; reveal it
-// once the first frame has painted.
-requestAnimationFrame(() =>
-  requestAnimationFrame(() => {
-    getCurrentWindow()
-      .show()
-      .catch(() => {});
-  }),
-);
+// The window starts hidden (tauri.conf.json) to avoid a white flash; App
+// reveals it on its first committed frame. NOT requestAnimationFrame: WKWebView
+// doesn't run rAF while the window is hidden, so waiting on it deadlocks the
+// reveal until the backend's safety-net timer fires.

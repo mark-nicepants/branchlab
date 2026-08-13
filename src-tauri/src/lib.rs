@@ -22,23 +22,27 @@ use watcher::GitWatcher;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    logx::mark_boot();
     // Repair PATH first: a Finder/Dock-launched .app gets a minimal PATH that
     // omits where `opencode` lives, so the env probe and server spawn would
     // both fail. Must run before anything resolves an external binary.
     path::fix_path();
+    let fix_path_ms = logx::boot_ms();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .setup(|app| {
+        .setup(move |app| {
             // Persist the project registry and store worktrees under app data.
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir).ok();
             // Backend debug log — a single tailable file under app data. Init
             // early so every subsystem below logs to it. Truncated per launch.
             logx::init(dir.join("branchlab.log"));
+            crate::logf!("perf", "fix_path done +{fix_path_ms}ms");
+            crate::logf!("perf", "setup start +{}ms", logx::boot_ms());
             let registry = Registry::load(dir.join("registry.json"), dir.join("worktrees"), dir.join("quick-chats"));
             app.manage(registry);
 
@@ -101,7 +105,11 @@ pub fn run() {
                     let _ = w.show();
                 }
             });
+            crate::logf!("perf", "setup done +{}ms", logx::boot_ms());
             Ok(())
+        })
+        .on_page_load(|_webview, payload| {
+            crate::logf!("perf", "page {:?} +{}ms", payload.event(), logx::boot_ms());
         })
         .invoke_handler(tauri::generate_handler![
             env::probe_environment,
@@ -146,6 +154,7 @@ pub fn run() {
             commands::open_devtools,
             commands::open_external,
             commands::log_path,
+            commands::perf_mark,
             github::commands::github_list_accounts,
             github::commands::github_remove_account,
             github::commands::github_start_device_login,

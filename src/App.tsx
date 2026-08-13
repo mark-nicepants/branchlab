@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { ListTodo, PanelLeft, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -25,6 +26,7 @@ import {
   listProjects,
   listWorkspaces,
   openDevtools,
+  perfMark,
   probeEnvironment,
   removeWorkspace,
   renameWorkspace,
@@ -98,8 +100,17 @@ function App() {
     void check();
   }, [check]);
 
+  // Reveal the pre-created hidden window on the first committed frame — the
+  // backend's delayed show() is only a safety net for a crashed frontend.
   useEffect(() => {
-    if (phase.kind === "ready") void refreshProjects();
+    getCurrentWindow()
+      .show()
+      .catch(() => {});
+    void perfMark("first frame shown").catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (phase.kind !== "blocked") void refreshProjects();
   }, [phase.kind, refreshProjects]);
 
   const allWorkspaces = useMemo(
@@ -203,14 +214,9 @@ function App() {
     newProject: () => void pickProject(),
   });
 
-  if (phase.kind === "loading") {
-    return (
-      <div className="flex h-screen items-center justify-center bg-background text-muted-foreground">
-        Checking environment…
-      </div>
-    );
-  }
-
+  // While the env probe is in flight ("loading") the full shell renders
+  // optimistically — projects come from the registry, no engine needed. The
+  // blocked screen appears only if the probe actually finds opencode missing.
   if (phase.kind === "blocked") {
     return (
       <Onboarding env={phase.env} onRecheck={check} rechecking={rechecking} />

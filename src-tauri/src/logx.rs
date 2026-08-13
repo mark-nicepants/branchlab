@@ -22,6 +22,18 @@ struct LogState {
 
 static LOG: OnceLock<Mutex<Option<LogState>>> = OnceLock::new();
 
+/// Process-start reference for the `perf` timeline. Set once in `run()`.
+static BOOT: OnceLock<std::time::Instant> = OnceLock::new();
+
+pub fn mark_boot() {
+    let _ = BOOT.set(std::time::Instant::now());
+}
+
+/// Milliseconds since `mark_boot` (0 if never marked).
+pub fn boot_ms() -> u128 {
+    BOOT.get().map(|t| t.elapsed().as_millis()).unwrap_or(0)
+}
+
 fn cell() -> &'static Mutex<Option<LogState>> {
     LOG.get_or_init(|| Mutex::new(None))
 }

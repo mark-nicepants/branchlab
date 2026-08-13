@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The app window now appears ~340ms after launch with the full UI (sidebar,
+  home, review inbox) instead of ~5s of nothing. The login-shell PATH probe is
+  cached between launches, the window is revealed on the first rendered frame
+  rather than a stuck animation-frame wait, the environment check no longer
+  blocks the shell, and startup git work moved off the UI thread.
+
 ### Removed
 
 - The "Default model" field in project settings — it was never applied to new

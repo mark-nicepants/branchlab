@@ -1268,6 +1268,11 @@ export function logPath(): Promise<string | null> {
   return Promise.resolve("/tmp/branchlab.log");
 }
 
+export function perfMark(name: string): Promise<void> {
+  console.log("perf mark", name);
+  return Promise.resolve();
+}
+
 // ── Telemetry mocks: never send anything from the browser harness ──
 
 export function telemetryPageview(url: string): Promise<void> {
