@@ -3,7 +3,9 @@ import {
   Braces,
   FileText,
   FolderOpen,
+  Loader2,
   MessageSquare,
+  Sparkles,
   Terminal,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -14,7 +16,12 @@ import type {
   ProjectUpdate,
   RunSettings,
 } from "../lib/types";
-import { githubDetectAccount, openExternal, updateProject } from "../lib/api";
+import {
+  generateSetupScripts,
+  githubDetectAccount,
+  openExternal,
+  updateProject,
+} from "../lib/api";
 import { useGitHub } from "../hooks/useGitHub";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -34,6 +41,9 @@ interface Props {
   /** Workspace used to read project-scoped opencode config. */
   workspaceId: string;
   onConfigRestarted: () => void;
+  /** Tab to show when the dialog opens (e.g. "scripts" right after adding a
+   *  project, so lifecycle scripts are discoverable). Default "general". */
+  initialTab?: Tab;
 }
 
 /**
@@ -48,8 +58,9 @@ export function ProjectSettingsDialog({
   onUpdated,
   workspaceId,
   onConfigRestarted,
+  initialTab,
 }: Props) {
-  const [tab, setTab] = useState<Tab>("general");
+  const [tab, setTab] = useState<Tab>(initialTab ?? "general");
   const [name, setName] = useState(project.name);
   const [defaultBranch, setDefaultBranch] = useState(
     project.default_branch ?? "",
@@ -180,6 +191,7 @@ export function ProjectSettingsDialog({
               )}
               {tab === "scripts" && (
                 <ScriptsTab
+                  projectId={project.id}
                   run={run}
                   setRun={setRun}
                   saving={saving}
@@ -314,18 +326,72 @@ function GeneralTab({
 }
 
 function ScriptsTab({
+  projectId,
   run,
   setRun,
   saving,
   onSave,
 }: {
+  projectId: string;
   run: RunSettings;
   setRun: (r: RunSettings) => void;
   saving: boolean;
   onSave: () => void;
 }) {
+  const [generating, setGenerating] = useState(false);
+  const [notes, setNotes] = useState<string | null>(null);
+
+  async function generate() {
+    setGenerating(true);
+    setNotes(null);
+    try {
+      const proposal = await generateSetupScripts(projectId);
+      setRun({
+        setup_script: proposal.setup_script,
+        teardown_script: proposal.teardown_script,
+      });
+      setNotes(proposal.notes);
+      toast.success("Scripts proposed — review and save");
+    } catch (e) {
+      toast.error("Could not generate scripts", { description: String(e) });
+    } finally {
+      setGenerating(false);
+    }
+  }
+
   return (
     <div className="space-y-5">
+      <div className="flex items-start justify-between gap-4">
+        <p className="text-xs text-muted-foreground">
+          Let the AI read the project's manifests and propose scripts. The
+          result only fills the fields below — review it, then save.
+        </p>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void generate()}
+          disabled={generating}
+          className="shrink-0"
+        >
+          {generating ? (
+            <>
+              <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+              Analyzing repo…
+            </>
+          ) : (
+            <>
+              <Sparkles className="mr-1.5 size-3.5" />
+              Generate with AI
+            </>
+          )}
+        </Button>
+      </div>
+      {notes && (
+        <p className="rounded-md border border-border bg-accent/40 px-3 py-2 text-xs text-muted-foreground">
+          {notes}
+        </p>
+      )}
+
       <Field label="Setup script">
         <Textarea
           value={run.setup_script ?? ""}

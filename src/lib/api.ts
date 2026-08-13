@@ -13,6 +13,7 @@ import type {
   ConfigFile,
   EnvReport,
   FileContent,
+  GeneratedSetup,
   GeneratedTitle,
   PrResult,
   ProjectUpdate,
@@ -108,6 +109,16 @@ export function updateProject(
   update: ProjectUpdate,
 ): Promise<ProjectView> {
   return invoke<ProjectView>("update_project", { projectId, update });
+}
+
+/** Ask the AI to propose setup/teardown scripts for a project. The backend
+ *  collects the repo context (manifests, README) and prompts a throwaway
+ *  session; the result fills the Scripts form for review — nothing is saved.
+ *  Can take ~10-60s (one model round-trip). */
+export function generateSetupScripts(
+  projectId: string,
+): Promise<GeneratedSetup> {
+  return invoke<GeneratedSetup>("generate_setup_scripts", { projectId });
 }
 
 /** Re-run a failed workspace setup (progress arrives via chat + `workspace:setup`). */

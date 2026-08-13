@@ -133,6 +133,7 @@ pub fn run() {
             commands::update_project,
             commands::remove_workspace,
             commands::retry_setup,
+            commands::generate_setup_scripts,
             commands::list_workspaces,
             commands::rename_workspace,
             commands::rename_workspace_branch,

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- AI-generated setup scripts: adding a project now opens its settings on the
+  Scripts tab, where "Generate with AI" reads the repo's manifests and README
+  and proposes setup/teardown scripts — filled into the form for review, never
+  saved without you.
 - Per-project setup and teardown scripts (Project settings → Scripts): the
   setup script runs once in every fresh workspace before the first prompt,
   with live progress shown as a step card in the chat (and a "Retry setup"

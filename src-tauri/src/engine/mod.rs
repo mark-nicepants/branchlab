@@ -42,6 +42,13 @@ pub enum EngineCommand {
         text: String,
         reply: oneshot::Sender<Option<GeneratedTitle>>,
     },
+    /// Propose BranchLab setup/teardown scripts from a pre-collected repo
+    /// context (manifests, README, file list) — same throwaway-session
+    /// mechanics as GenerateTitle. Replies with None on failure.
+    GenerateSetup {
+        context: String,
+        reply: oneshot::Sender<Option<GeneratedSetup>>,
+    },
     Cancel,
     Shutdown,
 }
@@ -54,6 +61,17 @@ pub struct GeneratedTitle {
     pub title: String,
     /// Suggested branch; None when the model didn't produce a usable one.
     pub branch: Option<String>,
+}
+
+/// AI-proposed workspace lifecycle scripts (Project settings → Scripts →
+/// "Generate with AI"). Filled into the form for user review — never saved
+/// directly.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct GeneratedSetup {
+    pub setup_script: Option<String>,
+    pub teardown_script: Option<String>,
+    /// One-sentence rationale shown under the filled-in fields.
+    pub notes: Option<String>,
 }
 
 /// Why a prompt turn ended.

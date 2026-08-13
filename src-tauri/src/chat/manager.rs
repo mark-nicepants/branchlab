@@ -304,6 +304,25 @@ impl ChatManager {
         rx.await.ok().flatten()
     }
 
+    /// Propose setup/teardown scripts from a pre-collected repo context, via a
+    /// throwaway session on the workspace's connection (same as titling).
+    pub async fn generate_setup(
+        &self,
+        workspace_id: &str,
+        cwd: &Path,
+        context: String,
+    ) -> Option<crate::engine::GeneratedSetup> {
+        self.ensure(workspace_id, cwd).ok()?;
+        let rx = {
+            let convs = self.inner.convs.lock().unwrap();
+            let engine = convs.get(workspace_id)?.engine.as_ref()?;
+            let (tx, rx) = oneshot::channel();
+            engine.send(EngineCommand::GenerateSetup { context, reply: tx });
+            rx
+        };
+        rx.await.ok().flatten()
+    }
+
     pub fn abort(&self, workspace_id: &str) {
         let mut convs = self.inner.convs.lock().unwrap();
         if let Some(conv) = convs.get_mut(workspace_id) {

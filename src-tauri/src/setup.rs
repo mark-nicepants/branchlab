@@ -249,6 +249,62 @@ impl SetupManager {
     }
 }
 
+/// Collect the repo facts the model needs to propose setup scripts: a file
+/// listing plus the manifests that encode how the project is installed and
+/// run. Deterministic and tool-free — no agent loop, one model round-trip.
+pub fn collect_repo_context(root: &str) -> String {
+    const MANIFESTS: &[&str] = &[
+        "package.json",
+        "composer.json",
+        "pubspec.yaml",
+        "Cargo.toml",
+        "go.mod",
+        "pyproject.toml",
+        "requirements.txt",
+        "Gemfile",
+        "Makefile",
+        "justfile",
+        "docker-compose.yml",
+        "compose.yaml",
+        ".env.example",
+        ".env.sample",
+    ];
+    const MAX_FILE: usize = 4_000;
+
+    let mut ctx = String::new();
+    let files = std::process::Command::new("git")
+        .args(["ls-files"])
+        .current_dir(root)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    let listing: Vec<&str> = files.lines().take(150).collect();
+    ctx.push_str(&format!(
+        "## Tracked files (first {} of {})\n{}\n",
+        listing.len(),
+        files.lines().count(),
+        listing.join("\n")
+    ));
+
+    for name in MANIFESTS {
+        if let Ok(content) = std::fs::read_to_string(Path::new(root).join(name)) {
+            let truncated: String = content.chars().take(MAX_FILE).collect();
+            ctx.push_str(&format!("\n## {name}\n{truncated}\n"));
+        }
+    }
+    // README often documents the manual setup steps — take the head.
+    for name in ["README.md", "readme.md", "README"] {
+        if let Ok(content) = std::fs::read_to_string(Path::new(root).join(name)) {
+            let head: String = content.lines().take(80).collect::<Vec<_>>().join("\n");
+            ctx.push_str(&format!("\n## {name} (head)\n{head}\n"));
+            break;
+        }
+    }
+    ctx
+}
+
 fn step(label: &str, status: ToolStatus) -> SetupStep {
     SetupStep { label: label.to_string(), status, log: Vec::new(), started_at: Some(now_ms()), ended_at: None }
 }

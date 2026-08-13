@@ -13,6 +13,7 @@ import type {
   Entry,
   EnvReport,
   FileContent,
+  GeneratedSetup,
   GeneratedTitle,
   PipelinePhase,
   PrResult,
@@ -517,6 +518,27 @@ export function retrySetup(workspaceId: string): Promise<void> {
   // eslint-disable-next-line no-console
   console.log("retry setup", workspaceId);
   return Promise.resolve();
+}
+
+export function generateSetupScripts(
+  projectId: string,
+): Promise<GeneratedSetup> {
+  // eslint-disable-next-line no-console
+  console.log("generate setup scripts", projectId);
+  // Simulate the model round-trip so the button's loading state is visible.
+  return new Promise((resolve) =>
+    setTimeout(
+      () =>
+        resolve({
+          setup_script:
+            "npm install\nln -sf $BL_PROJECT_ROOT/.env .env 2>/dev/null || true",
+          teardown_script: null,
+          notes:
+            "Node project with a package-lock; .env is untracked so it is linked from the project root.",
+        }),
+      1500,
+    ),
+  );
 }
 
 export function removeWorkspace(workspaceId: string): Promise<void> {

@@ -488,6 +488,17 @@ impl Registry {
         git::list_branches(&root)
     }
 
+    /// A project's implicit base workspace (the repo root's own row).
+    pub fn base_workspace(&self, project_id: &str) -> Option<Workspace> {
+        self.data
+            .lock()
+            .unwrap()
+            .workspaces
+            .iter()
+            .find(|w| w.project_id == project_id && w.kind == WorkspaceKind::Base)
+            .cloned()
+    }
+
     /// A project's repo root path.
     pub fn repo_root(&self, project_id: &str) -> Option<String> {
         self.data.lock().unwrap().projects.iter().find(|p| p.id == project_id).map(|p| p.root_path.clone())

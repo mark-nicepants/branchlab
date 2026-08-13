@@ -88,6 +88,13 @@ export interface RunSettings {
   teardown_script: string | null;
 }
 
+/** AI-proposed lifecycle scripts (fills the Scripts form for review). */
+export interface GeneratedSetup {
+  setup_script: string | null;
+  teardown_script: string | null;
+  notes: string | null;
+}
+
 export interface ProjectPrompts {
   init_workspace: string | null;
   commit: string | null;

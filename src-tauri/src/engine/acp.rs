@@ -173,6 +173,15 @@ async fn run_loop(
                     let _ = reply.send(generate_title(&conn2, cwd2, &bufs, &text).await);
                 });
             }
+            EngineCommand::GenerateSetup { context, reply } => {
+                let conn2 = conn.clone();
+                let cwd2 = cwd.clone();
+                let bufs = Arc::clone(&title_bufs);
+                tauri::async_runtime::spawn(async move {
+                    let raw = throwaway_prompt(&conn2, cwd2, &bufs, &setup_scripts_prompt(&context)).await;
+                    let _ = reply.send(raw.as_deref().and_then(parse_generated_setup));
+                });
+            }
             EngineCommand::Prompt { inputs } => {
                 let content: Vec<ContentBlock> = inputs.into_iter().map(to_content_block).collect();
                 let conn2 = conn.clone();
@@ -233,15 +242,31 @@ async fn run_loop(
 /// connection. The session's streamed text is captured in `title_bufs` by the
 /// notification callback (keyed by the new session id) rather than surfacing
 /// as transcript.
+/// One prompt → collected reply text on a throwaway session (new session on
+/// the SAME connection: no extra process, no main-transcript pollution).
+async fn throwaway_prompt(
+    conn: &ConnectionTo<Agent>,
+    cwd: PathBuf,
+    title_bufs: &Arc<Mutex<HashMap<String, String>>>,
+    prompt: &str,
+) -> Option<String> {
+    let ns = conn.send_request(NewSessionRequest::new(cwd)).block_task().await.ok()?;
+    let sid = ns.session_id.0.to_string();
+    title_bufs.lock().unwrap().insert(sid.clone(), String::new());
+    let _ = conn
+        .send_request(PromptRequest::new(ns.session_id, vec![ContentBlock::Text(TextContent::new(prompt.to_string()))]))
+        .block_task()
+        .await;
+    let raw = title_bufs.lock().unwrap().remove(&sid).unwrap_or_default();
+    (!raw.trim().is_empty()).then_some(raw)
+}
+
 async fn generate_title(
     conn: &ConnectionTo<Agent>,
     cwd: PathBuf,
     title_bufs: &Arc<Mutex<HashMap<String, String>>>,
     text: &str,
 ) -> Option<crate::engine::GeneratedTitle> {
-    let ns = conn.send_request(NewSessionRequest::new(cwd)).block_task().await.ok()?;
-    let sid = ns.session_id.0.to_string();
-    title_bufs.lock().unwrap().insert(sid.clone(), String::new());
     let prompt = format!(
         "For a coding session that starts with the message below, reply with EXACTLY two lines and \
          nothing else.\n\
@@ -250,11 +275,7 @@ async fn generate_title(
          Line 2: a git branch name for the task — kebab-case with a conventional type prefix \
          (feature/, bugfix/, chore/, tech/, docs/), max 40 characters.\n\n{text}"
     );
-    let _ = conn
-        .send_request(PromptRequest::new(ns.session_id, vec![ContentBlock::Text(TextContent::new(prompt))]))
-        .block_task()
-        .await;
-    let raw = title_bufs.lock().unwrap().remove(&sid).unwrap_or_default();
+    let raw = throwaway_prompt(conn, cwd, title_bufs, &prompt).await?;
     let mut lines = raw.lines().map(|l| l.trim().trim_matches('"').trim()).filter(|l| !l.is_empty());
     let title: String = lines.next().unwrap_or("").chars().take(60).collect();
     if title.is_empty() {
@@ -262,6 +283,42 @@ async fn generate_title(
     }
     let branch = lines.next().map(crate::project::sanitize_branch).filter(|b| !b.is_empty());
     Some(crate::engine::GeneratedTitle { title, branch })
+}
+
+/// The setup-script proposal prompt: strict JSON-only contract so the reply
+/// can be parsed and filled into the Scripts form for user review.
+fn setup_scripts_prompt(context: &str) -> String {
+    format!(
+        "You are configuring BranchLab, a tool that creates a fresh git worktree per coding session. \
+         Propose shell scripts that make a fresh worktree of THIS repository ready for development.\n\n\
+         Rules:\n\
+         - Scripts run as `sh -lc` with the worktree as cwd. Available env vars: $BL_WORKTREE_PATH \
+         (the worktree), $BL_PROJECT_ROOT (the original repo checkout — copy or symlink untracked \
+         files like .env or secrets from there), $BL_WORKSPACE_ID (a stable unique key, useful for \
+         per-worktree database names or cache prefixes).\n\
+         - setup_script: dependency install + anything needed before the code runs (env files, \
+         codegen, migrations). Keep it minimal — only what the repo demonstrably needs.\n\
+         - teardown_script: ONLY if setup creates external resources to clean up (databases, \
+         containers); otherwise null.\n\
+         - notes: one short sentence explaining your choice.\n\n\
+         Reply with ONLY a JSON object, no markdown fences, no prose:\n\
+         {{\"setup_script\": \"...\", \"teardown_script\": null, \"notes\": \"...\"}}\n\n\
+         Repository context:\n\n{context}"
+    )
+}
+
+/// Tolerant parse: take the first `{{` .. last `}}` span (models love fences).
+fn parse_generated_setup(raw: &str) -> Option<crate::engine::GeneratedSetup> {
+    let start = raw.find('{')?;
+    let end = raw.rfind('}')?;
+    let parsed: crate::engine::GeneratedSetup = serde_json::from_str(&raw[start..=end]).ok()?;
+    let clean = |s: Option<String>| s.filter(|s| !s.trim().is_empty());
+    let setup = clean(parsed.setup_script);
+    let teardown = clean(parsed.teardown_script);
+    if setup.is_none() && teardown.is_none() {
+        return None;
+    }
+    Some(crate::engine::GeneratedSetup { setup_script: setup, teardown_script: teardown, notes: clean(parsed.notes) })
 }
 
 /// A concise one-line label for a session update, for the debug log. Returns

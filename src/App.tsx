@@ -56,6 +56,10 @@ function App() {
   const [settingsProject, setSettingsProject] = useState<ProjectView | null>(
     null,
   );
+  // Tab the settings dialog opens on ("scripts" right after adding a project).
+  const [settingsInitialTab, setSettingsInitialTab] = useState<
+    "general" | "scripts"
+  >("general");
   const [reloadNonce, setReloadNonce] = useState(0);
 
   useDesktopBehaviors();
@@ -89,8 +93,12 @@ function App() {
     });
     if (typeof dir !== "string") return;
     try {
-      await addProject(dir);
+      const view = await addProject(dir);
       await refreshProjects();
+      // First-run discovery: land the user in the new project's settings on
+      // the Scripts tab, where "Generate with AI" can propose setup scripts.
+      setSettingsProject(view);
+      setSettingsInitialTab("scripts");
     } catch (e) {
       toast.error("Could not add project", { description: String(e) });
     }
@@ -345,6 +353,7 @@ function App() {
             onAddProject={() => void pickProject()}
             onOpenProjectSettings={(p) => {
               router.closeSettings();
+              setSettingsInitialTab("general");
               setSettingsProject(p);
             }}
           />
@@ -368,6 +377,7 @@ function App() {
           {settingsProject && (
             <ProjectSettingsDialog
               project={settingsProject}
+              initialTab={settingsInitialTab}
               open
               onOpenChange={(o) => !o && setSettingsProject(null)}
               onUpdated={(updated) => {

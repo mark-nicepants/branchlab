@@ -81,6 +81,26 @@ pub async fn create_quick_chat(
     Ok(ws)
 }
 
+/// Propose setup/teardown scripts for a project with AI: BranchLab collects
+/// the repo context (manifests, README, file list) and asks the model over a
+/// throwaway session on the base workspace's engine. The result fills the
+/// Scripts form for user review — nothing is saved here.
+#[tauri::command]
+pub async fn generate_setup_scripts(
+    project_id: String,
+    registry: State<'_, Registry>,
+    chat: State<'_, crate::chat::manager::ChatManager>,
+) -> Result<crate::engine::GeneratedSetup, String> {
+    let base = registry.base_workspace(&project_id).ok_or("unknown project")?;
+    let root = base.path.clone();
+    let context = tauri::async_runtime::spawn_blocking(move || crate::setup::collect_repo_context(&root))
+        .await
+        .map_err(|e| e.to_string())?;
+    chat.generate_setup(&base.id, std::path::Path::new(&base.path), context)
+        .await
+        .ok_or_else(|| "the model did not return a usable proposal".to_string())
+}
+
 /// Re-run a failed workspace setup (the chat card's Retry button). The
 /// worktree checkout is idempotent; an already-valid worktree is kept as-is
 /// and only the setup script re-runs.
