@@ -167,8 +167,11 @@ export function SessionsSidebar({
   useEffect(() => {
     const unlisten = onWorkspaceSetup((p) => {
       setSetupOverlay((prev) => {
+        // Keep terminal states in the overlay instead of deleting: the row's
+        // registry snapshot (`w.setup`) is stale until the next projects
+        // refresh, so falling back to it would leave the spinner on forever.
         const next = new Map(prev);
-        if (p.ok) next.delete(p.workspaceId);
+        if (p.ok) next.set(p.workspaceId, "ready");
         else next.set(p.workspaceId, p.running ? "provisioning" : "failed");
         return next;
       });
