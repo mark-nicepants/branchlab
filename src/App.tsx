@@ -425,6 +425,7 @@ function App() {
             ) : view === "my-work" ? (
               <MyWorkScreen
                 projects={projects}
+                quickChats={quickChats}
                 onOpenSession={(id) => router.openSession(id)}
                 onStartTask={(task) => void startTaskSession(task)}
               />

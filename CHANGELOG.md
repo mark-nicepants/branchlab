@@ -9,13 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- The board is now a workflow: mark a column as Queued and the agent picks
-  up cards dropped there automatically (two at a time) — the session starts
-  in the background, the card moves to your Active column, and when the
-  agent finishes a turn the card lands in your Review column with a
-  "Ready for review" toast. Reviewing in the session (inline diff comments,
-  or any message) sends the card back to Active; a merged PR still lands it
-  in Done. Assign the new Queued/Review roles from any column's menu.
+- The board is now a workflow with a fixed, opinionated layout
+  (Todo / In progress / Needs review / Done): drop a card into
+  "In progress" and the agent picks it up automatically (two at a time,
+  a "queued" chip shows while it waits) — when the agent finishes a turn
+  the card lands in "Needs review" with a "Ready for review" toast.
+  Reviewing in the session (inline diff comments, or any message) sends
+  the card back to In progress; a merged PR lands it in Done. Tasks
+  without a project run as quick chats. Existing boards are migrated to
+  the standard layout automatically (cards keep their workflow stage).
 - Task-started sessions are labeled with a TASK badge on their first
   message, and the agent receives the full task context (title, description,
   project, task id).

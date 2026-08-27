@@ -16,22 +16,16 @@ import {
 } from "react";
 import {
   CircleDot,
+  Clock,
   CloudDownload,
-  GripVertical,
   Loader2,
   MessageSquare,
-  MoreHorizontal,
   Play,
   Plus,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
   boardSnapshot,
-  columnCreate,
-  columnDelete,
-  columnMove,
-  columnReset,
-  columnUpdate,
   listProjectIssues,
   taskCreate,
   taskDelete,
@@ -74,19 +68,14 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { MarkdownEditor } from "@/components/MarkdownEditor";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 interface Props {
   projects: ProjectView[];
+  /** Quick chats live outside projects but can be linked to tasks too. */
+  quickChats: Workspace[];
   onOpenSession: (workspaceId: string) => void;
   /** Spawn a session for this task (App links the workspace back to it). */
   onStartTask: (task: Task) => void;
@@ -114,7 +103,12 @@ function positionBefore(sorted: Task[], next: Task | null): number {
   return prev ? (prev.position + next.position) / 2 : next.position / 2;
 }
 
-export function MyWorkScreen({ projects, onOpenSession, onStartTask }: Props) {
+export function MyWorkScreen({
+  projects,
+  quickChats,
+  onOpenSession,
+  onStartTask,
+}: Props) {
   const [board, setBoard] = useState<BoardSnapshot>({ columns: [], tasks: [] });
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
@@ -137,8 +131,14 @@ export function MyWorkScreen({ projects, onOpenSession, onStartTask }: Props) {
   }, []);
 
   const allWorkspaces = useMemo(
-    () => new Map(projects.flatMap((p) => p.workspaces).map((w) => [w.id, w])),
-    [projects],
+    () =>
+      new Map(
+        [...projects.flatMap((p) => p.workspaces), ...quickChats].map((w) => [
+          w.id,
+          w,
+        ]),
+      ),
+    [projects, quickChats],
   );
   const projectNames = useMemo(
     () => new Map(projects.map((p) => [p.id, p.name])),
@@ -184,19 +184,6 @@ export function MyWorkScreen({ projects, onOpenSession, onStartTask }: Props) {
     [],
   );
 
-  // window.prompt doesn't exist in WKWebView — the add-column input lives in
-  // a small popover instead.
-  const [addingColumn, setAddingColumn] = useState(false);
-  const [columnDraft, setColumnDraft] = useState("");
-  const submitColumn = useCallback(() => {
-    const name = columnDraft.trim();
-    setAddingColumn(false);
-    setColumnDraft("");
-    if (name)
-      columnCreate(name).catch((e) =>
-        toast.error("Could not add column", { description: String(e) }),
-      );
-  }, [columnDraft]);
 
   // ── Keyboard: N = new task; arrows move card focus; Space/Enter opens. ──
   useEffect(() => {
@@ -282,44 +269,6 @@ export function MyWorkScreen({ projects, onOpenSession, onStartTask }: Props) {
           ))}
         </div>
         <div className="flex-1" />
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 px-2 text-xs text-muted-foreground"
-          title="Reset columns to the default workflow (tasks are kept)"
-          onClick={() =>
-            columnReset()
-              .then(() => toast.success("Board layout reset"))
-              .catch((e) =>
-                toast.error("Could not reset layout", {
-                  description: String(e),
-                }),
-              )
-          }
-        >
-          Reset layout
-        </Button>
-        <Popover open={addingColumn} onOpenChange={setAddingColumn}>
-          <PopoverTrigger asChild>
-            <Button variant="outline" size="sm">
-              <Plus className="mr-1 size-3.5" />
-              New column
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent align="end" className="w-64 p-2">
-            <Input
-              autoFocus
-              value={columnDraft}
-              onChange={(e) => setColumnDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") submitColumn();
-                if (e.key === "Escape") setAddingColumn(false);
-              }}
-              placeholder="Column name…"
-              className="h-8 text-sm"
-            />
-          </PopoverContent>
-        </Popover>
       </div>
 
       <div className="min-h-0 flex-1 overflow-x-auto px-6 pb-6">
@@ -328,7 +277,6 @@ export function MyWorkScreen({ projects, onOpenSession, onStartTask }: Props) {
             <BoardColumnView
               key={col.id}
               column={col}
-              columns={board.columns}
               tasks={grid[i]}
               projectNames={projectNames}
               workspaces={allWorkspaces}
@@ -394,7 +342,6 @@ function DropLine() {
 
 function BoardColumnView({
   column,
-  columns,
   tasks,
   projectNames,
   workspaces,
@@ -412,7 +359,6 @@ function BoardColumnView({
   onOpenSession,
 }: {
   column: BoardColumn;
-  columns: BoardColumn[];
   tasks: Task[];
   projectNames: Map<string, string>;
   workspaces: Map<string, Workspace>;
@@ -429,18 +375,7 @@ function BoardColumnView({
   onStartTask: (t: Task) => void;
   onOpenSession: (workspaceId: string) => void;
 }) {
-  const [renaming, setRenaming] = useState(false);
-  const [nameDraft, setNameDraft] = useState(column.name);
   const listRef = useRef<HTMLDivElement>(null);
-
-  const submitRename = () => {
-    setRenaming(false);
-    const name = nameDraft.trim();
-    if (name && name !== column.name)
-      columnUpdate(column.id, { name }).catch((e) =>
-        toast.error("Could not rename column", { description: String(e) }),
-      );
-  };
 
   /** The card the pointer is above (insert before it; null = end). */
   const dropBefore = (clientY: number): Task | null => {
@@ -493,142 +428,28 @@ function BoardColumnView({
         );
       }}
     >
-      <div
-        className="group flex items-center gap-2 px-3 py-2.5"
-        draggable={!renaming}
-        onDragStart={(e) => {
-          e.dataTransfer.setData("bl/column", column.id);
-          e.dataTransfer.effectAllowed = "move";
-        }}
-        onDragOver={(e) => {
-          // Column reorder: drop a column header onto another header.
-          if (e.dataTransfer.types.includes("bl/column")) e.preventDefault();
-        }}
-        onDrop={(e) => {
-          const dragged = e.dataTransfer.getData("bl/column");
-          if (!dragged || dragged === column.id) return;
-          e.preventDefault();
-          e.stopPropagation();
-          const i = columns.findIndex((c) => c.id === column.id);
-          const prev = columns[i - 1];
-          const position = prev
-            ? (prev.position + column.position) / 2
-            : column.position / 2;
-          columnMove(dragged, position).catch(() => {});
-        }}
-      >
-        <GripVertical className="size-3.5 shrink-0 cursor-grab text-muted-foreground/40 opacity-0 transition-opacity group-hover:opacity-100" />
-        {renaming ? (
-          <Input
-            autoFocus
-            value={nameDraft}
-            onChange={(e) => setNameDraft(e.target.value)}
-            onBlur={submitRename}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") submitRename();
-              if (e.key === "Escape") setRenaming(false);
-            }}
-            className="h-6 px-1.5 text-sm"
-          />
-        ) : (
-          <button
-            className="min-w-0 flex-1 truncate text-left text-sm font-medium"
-            onDoubleClick={() => {
-              setNameDraft(column.name);
-              setRenaming(true);
-            }}
-          >
-            {column.name}
-          </button>
-        )}
-        {column.role !== "none" && (
-          <span
-            className="text-[10px] uppercase tracking-wide text-muted-foreground/60"
-            title={
-              {
-                queued: "The agent picks up cards dropped here",
-                active: "Cards land here when their session starts",
-                review: "Cards land here when the agent finishes a turn",
-                done: "Cards land here when their PR merges or the workspace is deleted",
-                none: "",
-              }[column.role]
-            }
-          >
-            {column.role}
-          </span>
-        )}
+      <div className="flex items-center gap-2 px-3 py-2.5">
+        <span
+          className="min-w-0 flex-1 truncate text-sm font-medium"
+          title={
+            {
+              queued: "",
+              none: "",
+              active:
+                "Unlinked cards here are picked up by the agent; linked cards are in progress",
+              review: "Cards land here when the agent finishes a turn",
+              done: "Cards land here when their PR merges",
+            }[column.role]
+          }
+        >
+          {column.name}
+        </span>
         <Badge
           variant="secondary"
           className="h-5 min-w-5 justify-center px-1 text-[11px]"
         >
           {tasks.length}
         </Badge>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-6 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100"
-            >
-              <MoreHorizontal className="size-3.5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-72">
-            <DropdownMenuItem
-              onClick={() => {
-                setNameDraft(column.name);
-                setRenaming(true);
-              }}
-            >
-              Rename
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              disabled={column.role === "queued"}
-              onClick={() => void columnUpdate(column.id, { role: "queued" })}
-            >
-              Set as Queued (agent picks up cards here)
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={column.role === "active"}
-              onClick={() => void columnUpdate(column.id, { role: "active" })}
-            >
-              Set as Active (running sessions live here)
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={column.role === "review"}
-              onClick={() => void columnUpdate(column.id, { role: "review" })}
-            >
-              Set as Review (finished turns land here)
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={column.role === "done"}
-              onClick={() => void columnUpdate(column.id, { role: "done" })}
-            >
-              Set as Done (merged work lands here)
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={column.role === "none"}
-              onClick={() => void columnUpdate(column.id, { role: "none" })}
-            >
-              Clear role
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              variant="destructive"
-              disabled={tasks.length > 0}
-              onClick={() =>
-                columnDelete(column.id).catch((e) =>
-                  toast.error("Could not delete column", {
-                    description: String(e),
-                  }),
-                )
-              }
-            >
-              Delete column
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
       </div>
 
       <div
@@ -640,6 +461,7 @@ function BoardColumnView({
             {dropSpot?.before === task.id && <DropLine />}
             <TaskCard
               task={task}
+              columnRole={column.role}
               projectName={
                 task.projectId ? projectNames.get(task.projectId) : undefined
               }
@@ -701,6 +523,7 @@ function sessionStatus(
 
 function TaskCard({
   task,
+  columnRole,
   projectName,
   workspace,
   session,
@@ -714,6 +537,7 @@ function TaskCard({
   onOpenSession,
 }: {
   task: Task;
+  columnRole: BoardColumn["role"];
   projectName?: string;
   workspace?: Workspace;
   session?: SessionPayload;
@@ -755,21 +579,18 @@ function TaskCard({
     >
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1 text-sm leading-snug">{task.title}</div>
-        {!task.workspaceId && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onStartTask(task);
-            }}
-            title="Start a session for this task"
-            className="rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover/card:opacity-100"
-          >
-            <Play className="size-3.5" />
-          </button>
-        )}
       </div>
-      {(projectName || workspace || status) && (
+      {(projectName || workspace || status || columnRole === "active") && (
         <div className="mt-2 flex items-center gap-1.5">
+          {columnRole === "active" && !task.workspaceId && (
+            <span
+              className="flex items-center gap-1 rounded-full border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground"
+              title="Waiting for an agent slot — picked up automatically"
+            >
+              <Clock className="size-2.5" />
+              queued
+            </span>
+          )}
           {projectName && (
             <Badge
               variant="secondary"

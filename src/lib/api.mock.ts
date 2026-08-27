@@ -7,7 +7,6 @@ import type {
   Account,
   BoardColumn,
   BoardSnapshot,
-  ColumnRole,
   Task,
   UnlinkedTask,
   IssueSummary,
@@ -1429,6 +1428,7 @@ export function telemetrySetEnabled(enabled: boolean): Promise<void> {
 let boardCols: BoardColumn[] = [
   { id: "c1", name: "Todo", role: "none", position: 1024, updatedAt: 0, deletedAt: null },
   { id: "c2", name: "In progress", role: "active", position: 2048, updatedAt: 0, deletedAt: null },
+  { id: "cr", name: "Needs review", role: "review", position: 3000, updatedAt: 0, deletedAt: null },
   { id: "c3", name: "Done", role: "done", position: 3072, updatedAt: 0, deletedAt: null },
 ];
 let boardTasks: Task[] = [
@@ -1538,62 +1538,3 @@ export function taskLinkWorkspace(
   return Promise.resolve();
 }
 
-export function columnCreate(name: string): Promise<BoardColumn> {
-  const max = Math.max(...boardCols.map((c) => c.position));
-  const col: BoardColumn = {
-    id: `c${Date.now()}`,
-    name,
-    role: "none",
-    position: max + 1024,
-    updatedAt: Date.now(),
-    deletedAt: null,
-  };
-  boardCols = [...boardCols, col];
-  emitBoard();
-  return Promise.resolve(col);
-}
-
-export function columnUpdate(
-  columnId: string,
-  patch: { name?: string; role?: ColumnRole },
-): Promise<void> {
-  boardCols = boardCols.map((c) => {
-    if (c.id === columnId)
-      return { ...c, name: patch.name ?? c.name, role: patch.role ?? c.role };
-    // Role steal: the previous holder loses it.
-    if (patch.role && patch.role !== "none" && c.role === patch.role)
-      return { ...c, role: "none" };
-    return c;
-  });
-  emitBoard();
-  return Promise.resolve();
-}
-
-export function columnMove(columnId: string, position: number): Promise<void> {
-  boardCols = boardCols.map((c) => (c.id === columnId ? { ...c, position } : c));
-  emitBoard();
-  return Promise.resolve();
-}
-
-export function columnReset(): Promise<void> {
-  boardCols = [
-    { id: "c0", name: "Todo", role: "none", position: 1024, updatedAt: 0, deletedAt: null },
-    { id: "cq", name: "Queued", role: "queued", position: 2048, updatedAt: 0, deletedAt: null },
-    { id: "c2", name: "In progress", role: "active", position: 3072, updatedAt: 0, deletedAt: null },
-    { id: "cr", name: "Needs review", role: "review", position: 4096, updatedAt: 0, deletedAt: null },
-    { id: "c3", name: "Done", role: "done", position: 5120, updatedAt: 0, deletedAt: null },
-  ];
-  boardTasks = boardTasks.map((t) =>
-    boardCols.some((c) => c.id === t.columnId) ? t : { ...t, columnId: "c0" },
-  );
-  emitBoard();
-  return Promise.resolve();
-}
-
-export function columnDelete(columnId: string): Promise<void> {
-  if (boardTasks.some((t) => t.columnId === columnId))
-    return Promise.reject(new Error("column still contains tasks"));
-  boardCols = boardCols.filter((c) => c.id !== columnId);
-  emitBoard();
-  return Promise.resolve();
-}

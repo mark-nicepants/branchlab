@@ -5,9 +5,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   Account,
-  BoardColumn,
   BoardSnapshot,
-  ColumnRole,
   Task,
   UnlinkedTask,
   IssueSummary,
@@ -543,26 +541,6 @@ export function taskLinkWorkspace(
   return invoke<void>("task_link_workspace", { taskId, workspaceId });
 }
 
-export function columnCreate(name: string): Promise<BoardColumn> {
-  return invoke<BoardColumn>("column_create", { name });
-}
-
-/** Assigning role "active"/"done" steals it from the previous holder. */
-export function columnUpdate(
-  columnId: string,
-  patch: { name?: string; role?: ColumnRole },
-): Promise<void> {
-  return invoke<void>("column_update", {
-    columnId,
-    name: patch.name ?? null,
-    role: patch.role ?? null,
-  });
-}
-
-export function columnMove(columnId: string, position: number): Promise<void> {
-  return invoke<void>("column_move", { columnId, position });
-}
-
 /** Start a session for a board task (backend builds the prompt, links the
  *  card, and holds delivery until the workspace finishes provisioning). */
 export function taskStart(taskId: string): Promise<Workspace> {
@@ -581,13 +559,3 @@ export function listProjectIssues(
   return invoke<IssueSummary[]>("list_project_issues", { projectId });
 }
 
-/** Reset the board to the default workflow columns; tasks follow their
- *  column's role (role-less columns' cards land in Todo). */
-export function columnReset(): Promise<void> {
-  return invoke<void>("column_reset");
-}
-
-/** Fails while the column still contains tasks. */
-export function columnDelete(columnId: string): Promise<void> {
-  return invoke<void>("column_delete", { columnId });
-}
