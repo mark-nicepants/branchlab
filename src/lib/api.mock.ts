@@ -1575,6 +1575,21 @@ export function columnMove(columnId: string, position: number): Promise<void> {
   return Promise.resolve();
 }
 
+export function columnReset(): Promise<void> {
+  boardCols = [
+    { id: "c0", name: "Todo", role: "none", position: 1024, updatedAt: 0, deletedAt: null },
+    { id: "cq", name: "Queued", role: "queued", position: 2048, updatedAt: 0, deletedAt: null },
+    { id: "c2", name: "In progress", role: "active", position: 3072, updatedAt: 0, deletedAt: null },
+    { id: "cr", name: "Needs review", role: "review", position: 4096, updatedAt: 0, deletedAt: null },
+    { id: "c3", name: "Done", role: "done", position: 5120, updatedAt: 0, deletedAt: null },
+  ];
+  boardTasks = boardTasks.map((t) =>
+    boardCols.some((c) => c.id === t.columnId) ? t : { ...t, columnId: "c0" },
+  );
+  emitBoard();
+  return Promise.resolve();
+}
+
 export function columnDelete(columnId: string): Promise<void> {
   if (boardTasks.some((t) => t.columnId === columnId))
     return Promise.reject(new Error("column still contains tasks"));

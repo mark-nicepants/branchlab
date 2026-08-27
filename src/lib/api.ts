@@ -581,6 +581,12 @@ export function listProjectIssues(
   return invoke<IssueSummary[]>("list_project_issues", { projectId });
 }
 
+/** Reset the board to the default workflow columns; tasks follow their
+ *  column's role (role-less columns' cards land in Todo). */
+export function columnReset(): Promise<void> {
+  return invoke<void>("column_reset");
+}
+
 /** Fails while the column still contains tasks. */
 export function columnDelete(columnId: string): Promise<void> {
   return invoke<void>("column_delete", { columnId });

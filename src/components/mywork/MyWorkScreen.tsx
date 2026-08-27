@@ -23,6 +23,7 @@ import {
   MoreHorizontal,
   Play,
   Plus,
+  RotateCcw,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -30,6 +31,7 @@ import {
   columnCreate,
   columnDelete,
   columnMove,
+  columnReset,
   columnUpdate,
   listProjectIssues,
   taskCreate,
@@ -183,13 +185,19 @@ export function MyWorkScreen({ projects, onOpenSession, onStartTask }: Props) {
     [],
   );
 
-  const addColumn = useCallback(() => {
-    const name = window.prompt("Column name");
-    if (name?.trim())
+  // window.prompt doesn't exist in WKWebView — the add-column input lives in
+  // a small popover instead.
+  const [addingColumn, setAddingColumn] = useState(false);
+  const [columnDraft, setColumnDraft] = useState("");
+  const submitColumn = useCallback(() => {
+    const name = columnDraft.trim();
+    setAddingColumn(false);
+    setColumnDraft("");
+    if (name)
       columnCreate(name).catch((e) =>
         toast.error("Could not add column", { description: String(e) }),
       );
-  }, []);
+  }, [columnDraft]);
 
   // ── Keyboard: N = new task; arrows move card focus; Space/Enter opens. ──
   useEffect(() => {
@@ -275,10 +283,44 @@ export function MyWorkScreen({ projects, onOpenSession, onStartTask }: Props) {
           ))}
         </div>
         <div className="flex-1" />
-        <Button variant="outline" size="sm" onClick={addColumn}>
-          <Plus className="mr-1 size-3.5" />
-          New column
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8 text-muted-foreground"
+          title="Reset columns to the default workflow (tasks are kept)"
+          onClick={() =>
+            columnReset()
+              .then(() => toast.success("Board layout reset"))
+              .catch((e) =>
+                toast.error("Could not reset layout", {
+                  description: String(e),
+                }),
+              )
+          }
+        >
+          <RotateCcw className="size-3.5" />
         </Button>
+        <Popover open={addingColumn} onOpenChange={setAddingColumn}>
+          <PopoverTrigger asChild>
+            <Button variant="outline" size="sm">
+              <Plus className="mr-1 size-3.5" />
+              New column
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-64 p-2">
+            <Input
+              autoFocus
+              value={columnDraft}
+              onChange={(e) => setColumnDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submitColumn();
+                if (e.key === "Escape") setAddingColumn(false);
+              }}
+              placeholder="Column name…"
+              className="h-8 text-sm"
+            />
+          </PopoverContent>
+        </Popover>
       </div>
 
       <div className="min-h-0 flex-1 overflow-x-auto px-6 pb-6">
@@ -532,7 +574,7 @@ function BoardColumnView({
               <MoreHorizontal className="size-3.5" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
+          <DropdownMenuContent align="end" className="w-72">
             <DropdownMenuItem
               onClick={() => {
                 setNameDraft(column.name);

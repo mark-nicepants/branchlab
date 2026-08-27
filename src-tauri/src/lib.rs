@@ -152,6 +152,7 @@ pub fn run() {
             tasks::column_update,
             tasks::column_move,
             tasks::column_delete,
+            tasks::column_reset,
             commands::list_workspaces,
             commands::rename_workspace,
             commands::rename_workspace_branch,

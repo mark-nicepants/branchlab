@@ -24,7 +24,7 @@ const STRIDE: f64 = 1024.0;
 /// Below this neighbor gap a column is renumbered before inserting.
 const MIN_GAP: f64 = 1e-6;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum ColumnRole {
     #[default]
@@ -132,21 +132,7 @@ impl TaskStore {
         let mut data: BoardData =
             std::fs::read_to_string(&file).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
         if !data.columns.iter().any(|c| c.deleted_at.is_none()) {
-            let now = now_ms();
-            for (i, (name, role)) in
-                [("Todo", ColumnRole::None), ("In progress", ColumnRole::Active), ("Done", ColumnRole::Done)]
-                    .into_iter()
-                    .enumerate()
-            {
-                data.columns.push(Column {
-                    id: new_id(),
-                    name: name.into(),
-                    role,
-                    position: STRIDE * (i as f64 + 1.0),
-                    updated_at: now,
-                    deleted_at: None,
-                });
-            }
+            seed_default_columns(&mut data);
         }
         let store = Self { data: Mutex::new(data), file };
         store.persist(&store.data.lock().unwrap());
@@ -469,6 +455,31 @@ impl TaskStore {
         Ok(())
     }
 
+    /// Replace the current columns with the default workflow scaffold,
+    /// preserving every task: cards follow their column's ROLE to the new
+    /// layout (active stays active, …); role-less columns' cards land in Todo.
+    pub fn reset_columns(&self) {
+        let mut data = self.data.lock().unwrap();
+        let now = now_ms();
+        // Old column id -> its role, before tombstoning.
+        let old_roles: std::collections::HashMap<String, ColumnRole> =
+            data.columns.iter().filter(|c| c.deleted_at.is_none()).map(|c| (c.id.clone(), c.role)).collect();
+        for c in data.columns.iter_mut().filter(|c| c.deleted_at.is_none()) {
+            c.deleted_at = Some(now);
+            c.updated_at = now;
+        }
+        seed_default_columns(&mut data);
+        let by_role: std::collections::HashMap<ColumnRole, String> =
+            data.columns.iter().filter(|c| c.deleted_at.is_none()).map(|c| (c.role, c.id.clone())).collect();
+        let todo = data.columns.iter().find(|c| c.deleted_at.is_none()).map(|c| c.id.clone()).unwrap();
+        for t in data.tasks.iter_mut().filter(|t| t.deleted_at.is_none()) {
+            let role = old_roles.get(&t.column_id).copied().unwrap_or(ColumnRole::None);
+            t.column_id = by_role.get(&role).cloned().unwrap_or_else(|| todo.clone());
+            t.updated_at = now;
+        }
+        self.persist(&data);
+    }
+
     /// Refused while the column still holds live tasks — the UI moves them
     /// first, so nothing is ever deleted implicitly.
     pub fn delete_column(&self, id: &str) -> Result<(), String> {
@@ -482,6 +493,29 @@ impl TaskStore {
         col.updated_at = now;
         self.persist(&data);
         Ok(())
+    }
+}
+
+/// The scaffolded workflow: every role assigned out of the box.
+const DEFAULT_COLUMNS: [(&str, ColumnRole); 5] = [
+    ("Todo", ColumnRole::None),
+    ("Queued", ColumnRole::Queued),
+    ("In progress", ColumnRole::Active),
+    ("Needs review", ColumnRole::Review),
+    ("Done", ColumnRole::Done),
+];
+
+fn seed_default_columns(data: &mut BoardData) {
+    let now = now_ms();
+    for (i, (name, role)) in DEFAULT_COLUMNS.into_iter().enumerate() {
+        data.columns.push(Column {
+            id: new_id(),
+            name: name.into(),
+            role,
+            position: STRIDE * (i as f64 + 1.0),
+            updated_at: now,
+            deleted_at: None,
+        });
     }
 }
 
@@ -648,6 +682,12 @@ pub fn column_move(column_id: String, position: f64, app: AppHandle, tasks: Stat
 }
 
 #[tauri::command]
+pub fn column_reset(app: AppHandle, tasks: State<TaskStore>) {
+    tasks.reset_columns();
+    emit_changed(&app, &tasks);
+}
+
+#[tauri::command]
 pub fn column_delete(column_id: String, app: AppHandle, tasks: State<TaskStore>) -> Result<(), String> {
     tasks.delete_column(&column_id)?;
     emit_changed(&app, &tasks);
@@ -669,9 +709,12 @@ mod tests {
     fn seeds_default_board_and_persists() {
         let (s, dir) = store("seeds_default_board_and_persists");
         let snap = s.snapshot();
-        assert_eq!(snap.columns.len(), 3);
-        assert_eq!(snap.columns[1].role, ColumnRole::Active);
-        assert_eq!(snap.columns[2].role, ColumnRole::Done);
+        assert_eq!(snap.columns.len(), 5);
+        let roles: Vec<ColumnRole> = snap.columns.iter().map(|c| c.role).collect();
+        assert_eq!(
+            roles,
+            [ColumnRole::None, ColumnRole::Queued, ColumnRole::Active, ColumnRole::Review, ColumnRole::Done]
+        );
 
         let t = s.create_task("Ship the board".into(), None, Some("p1".into()), None).unwrap();
         assert_eq!(t.column_id, snap.columns[0].id, "new tasks land in the first column");
@@ -713,16 +756,17 @@ mod tests {
     #[test]
     fn lifecycle_hooks_route_by_role() {
         let (s, dir) = store("lifecycle_hooks_route_by_role");
-        let cols = s.snapshot().columns;
+        let active = col_id(&s, ColumnRole::Active);
+        let done = col_id(&s, ColumnRole::Done);
         let t = s.create_task("task".into(), None, None, None).unwrap();
 
         s.link_workspace(&t.id, "ws1").unwrap();
         let t2 = s.snapshot().tasks[0].clone();
-        assert_eq!(t2.column_id, cols[1].id, "linking moves to the active column");
+        assert_eq!(t2.column_id, active, "linking moves to the active column");
         assert_eq!(t2.workspace_id.as_deref(), Some("ws1"));
 
         assert!(s.on_workspace_done("ws1"));
-        assert_eq!(s.snapshot().tasks[0].column_id, cols[2].id, "merge moves to done");
+        assert_eq!(s.snapshot().tasks[0].column_id, done, "merge moves to done");
 
         // Removal only unlinks; the task already sits in Done, so no offer.
         assert!(s.on_workspace_removed("ws1").is_none(), "already done: no mark-done offer");
@@ -736,57 +780,50 @@ mod tests {
         assert_eq!(offer.title, "mid-flight");
         let snap = s.snapshot();
         let t2s = snap.tasks.iter().find(|t| t.id == t2.id).unwrap();
-        assert_eq!(t2s.column_id, cols[1].id, "stays in the active column until the user decides");
+        assert_eq!(t2s.column_id, active, "stays in the active column until the user decides");
         s.mark_done(&t2.id).unwrap();
-        assert_eq!(
-            s.snapshot().tasks.iter().find(|t| t.id == t2.id).unwrap().column_id,
-            cols[2].id,
-            "mark_done moves it"
-        );
+        assert_eq!(s.snapshot().tasks.iter().find(|t| t.id == t2.id).unwrap().column_id, done, "mark_done moves it");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn turn_gates_route_between_roles() {
         let (s, dir) = store("turn-gates");
-        let cols = s.snapshot().columns;
-        // Add a Review column between active and done.
-        let review = s.create_column("Needs review".into()).unwrap();
-        s.update_column(&review.id, None, Some(ColumnRole::Review)).unwrap();
+        let todo = s.snapshot().columns[0].id.clone();
+        let active = col_id(&s, ColumnRole::Active);
+        let review = col_id(&s, ColumnRole::Review);
 
         let t = s.create_task("t".into(), Some("desc".into()), Some("p1".into()), None).unwrap();
         s.link_workspace(&t.id, "ws1").unwrap(); // -> active
 
         // Turn ends: active -> review (returns the title for the toast).
         assert_eq!(s.on_turn_ended("ws1").as_deref(), Some("t"));
-        assert_eq!(task_col(&s, &t.id), review.id);
+        assert_eq!(task_col(&s, &t.id), review);
         // Repeat is a no-op (card no longer in active).
         assert!(s.on_turn_ended("ws1").is_none());
 
         // New turn (feedback): review -> active.
         assert!(s.on_turn_started("ws1").is_some());
-        assert_eq!(task_col(&s, &t.id), cols[1].id);
+        assert_eq!(task_col(&s, &t.id), active);
 
         // Manual drag wins: user parks it in Todo; a turn end must not touch it.
-        s.move_task(&t.id, &cols[0].id, 1.0).unwrap();
+        s.move_task(&t.id, &todo, 1.0).unwrap();
         assert!(s.on_turn_ended("ws1").is_none());
-        assert_eq!(task_col(&s, &t.id), cols[0].id);
+        assert_eq!(task_col(&s, &t.id), todo);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn queue_dispatch_order_and_dependencies() {
         let (s, dir) = store("queue-deps");
-        let queued = s.create_column("Queued".into()).unwrap();
-        s.update_column(&queued.id, None, Some(ColumnRole::Queued)).unwrap();
-        let done_col = s.snapshot().columns.iter().find(|c| c.role == ColumnRole::Done).unwrap().id.clone();
+        let queued = col_id(&s, ColumnRole::Queued);
 
-        // No queued-role tasks yet.
+        // No queued tasks yet.
         assert!(s.next_queued().is_none());
 
-        let a = s.create_task("a".into(), None, Some("p1".into()), Some(queued.id.clone())).unwrap();
-        let b = s.create_task("b".into(), None, Some("p1".into()), Some(queued.id.clone())).unwrap();
-        let no_project = s.create_task("np".into(), None, None, Some(queued.id.clone())).unwrap();
+        let a = s.create_task("a".into(), None, Some("p1".into()), Some(queued.clone())).unwrap();
+        let b = s.create_task("b".into(), None, Some("p1".into()), Some(queued.clone())).unwrap();
+        let no_project = s.create_task("np".into(), None, None, Some(queued.clone())).unwrap();
         // b depends on a: not dispatchable until a is done.
         {
             let mut data = s.data.lock().unwrap();
@@ -809,7 +846,7 @@ mod tests {
             data.tasks.iter_mut().find(|t| t.id == b.id).unwrap().depends_on = vec!["gone".into(), a.id.clone()];
         }
         assert_eq!(s.next_queued().unwrap().id, b.id);
-        let _ = (no_project, done_col);
+        let _ = no_project;
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -825,6 +862,10 @@ mod tests {
         s.delete_task(&parent.id).unwrap();
         assert!(s.snapshot().tasks.is_empty(), "child tombstoned with its parent");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn col_id(s: &TaskStore, role: ColumnRole) -> String {
+        s.snapshot().columns.iter().find(|c| c.role == role).unwrap().id.clone()
     }
 
     fn task_col(s: &TaskStore, id: &str) -> String {
@@ -847,7 +888,25 @@ mod tests {
         assert!(s.delete_column(&cols[0].id).is_err());
         s.move_task(&t.id, &cols[1].id, 1.0).unwrap();
         s.delete_column(&cols[0].id).unwrap();
-        assert_eq!(s.snapshot().columns.len(), 3);
+        assert_eq!(s.snapshot().columns.len(), 5, "6 minus the deleted one");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reset_columns_remaps_tasks_by_role() {
+        let (s, dir) = store("reset-columns");
+        // Custom layout: rename a column, add an extra, park tasks around.
+        let active = col_id(&s, ColumnRole::Active);
+        let extra = s.create_column("Icebox".into()).unwrap();
+        let t_active = s.create_task("working".into(), None, None, Some(active.clone())).unwrap();
+        let t_extra = s.create_task("frozen".into(), None, None, Some(extra.id.clone())).unwrap();
+
+        s.reset_columns();
+        let snap = s.snapshot();
+        assert_eq!(snap.columns.len(), 5, "back to the default scaffold");
+        // Role carried over; role-less landed in Todo (first column).
+        assert_eq!(task_col(&s, &t_active.id), col_id(&s, ColumnRole::Active));
+        assert_eq!(task_col(&s, &t_extra.id), snap.columns[0].id);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
