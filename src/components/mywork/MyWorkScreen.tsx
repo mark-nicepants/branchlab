@@ -61,6 +61,19 @@ import {
 } from "@/components/ui/context-menu";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { MarkdownEditor } from "@/components/MarkdownEditor";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -69,7 +82,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -782,29 +794,40 @@ function TaskDialog({
   const [title, setTitle] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
   const [projectId, setProjectId] = useState(task?.projectId ?? "");
-  // GitHub import (create mode): open issues of the selected project's repo.
+  // GitHub import (create mode): a searchable dropdown of the repo's open
+  // issues (already sorted newest-updated first by the backend).
+  const [issuesOpen, setIssuesOpen] = useState(false);
   const [issues, setIssues] = useState<IssueSummary[] | null>(null);
   const [loadingIssues, setLoadingIssues] = useState(false);
 
-  const importIssues = () => {
-    if (!projectId) return;
-    setLoadingIssues(true);
-    listProjectIssues(projectId)
-      .then(setIssues)
-      .catch((e) =>
-        toast.error("Could not load GitHub issues", { description: String(e) }),
-      )
-      .finally(() => setLoadingIssues(false));
+  const openIssuePicker = (open: boolean) => {
+    setIssuesOpen(open);
+    if (open && issues === null && projectId) {
+      setLoadingIssues(true);
+      listProjectIssues(projectId)
+        .then(setIssues)
+        .catch((e) => {
+          setIssuesOpen(false);
+          toast.error("Could not load GitHub issues", {
+            description: String(e),
+          });
+        })
+        .finally(() => setLoadingIssues(false));
+    }
   };
 
   const applyIssue = (issue: IssueSummary) => {
     setTitle(issue.title);
     setDescription(
-      [`GitHub issue #${issue.number} by ${issue.author}`, issue.url, "", issue.body ?? ""]
+      [
+        `GitHub issue [#${issue.number}](${issue.url}) by ${issue.author}`,
+        "",
+        issue.body ?? "",
+      ]
         .join("\n")
         .trim(),
     );
-    setIssues(null);
+    setIssuesOpen(false);
   };
 
   const save = () => {
@@ -863,57 +886,67 @@ function TaskDialog({
               </select>
             </Field>
             {state.mode === "create" && (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!projectId || loadingIssues}
-                onClick={importIssues}
-                title={
-                  projectId
-                    ? "Fill this task from an open GitHub issue"
-                    : "Select a project first"
-                }
-              >
-                {loadingIssues ? (
-                  <Loader2 className="mr-1.5 size-3.5 animate-spin" />
-                ) : (
-                  <CloudDownload className="mr-1.5 size-3.5" />
-                )}
-                Import from GitHub
-              </Button>
+              <Popover open={issuesOpen} onOpenChange={openIssuePicker}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!projectId}
+                    title={
+                      projectId
+                        ? "Fill this task from an open GitHub issue"
+                        : "Select a project first"
+                    }
+                  >
+                    <CloudDownload className="mr-1.5 size-3.5" />
+                    Import from GitHub
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-[28rem] p-0">
+                  <Command>
+                    <CommandInput placeholder="Search open issues…" />
+                    <CommandList className="max-h-72">
+                      {loadingIssues ? (
+                        <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
+                          <Loader2 className="size-3.5 animate-spin" />
+                          Loading issues…
+                        </div>
+                      ) : (
+                        <>
+                          <CommandEmpty>No matching issues.</CommandEmpty>
+                          {(issues ?? []).map((issue) => (
+                            <CommandItem
+                              key={issue.number}
+                              value={`#${issue.number} ${issue.title} ${issue.author}`}
+                              onSelect={() => applyIssue(issue)}
+                              className="gap-2"
+                            >
+                              <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                                #{issue.number}
+                              </span>
+                              <span className="min-w-0 flex-1 truncate">
+                                {issue.title}
+                              </span>
+                              <span className="shrink-0 text-xs text-muted-foreground">
+                                {issue.author}
+                              </span>
+                            </CommandItem>
+                          ))}
+                        </>
+                      )}
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
             )}
           </div>
-          {issues && (
-            <div className="max-h-48 overflow-y-auto rounded-md border border-border">
-              {issues.length === 0 && (
-                <div className="px-3 py-2 text-sm text-muted-foreground">
-                  No open issues in this repo.
-                </div>
-              )}
-              {issues.map((issue) => (
-                <button
-                  key={issue.number}
-                  onClick={() => applyIssue(issue)}
-                  className="flex w-full items-baseline gap-2 border-b border-border/50 px-3 py-2 text-left text-sm last:border-b-0 hover:bg-accent"
-                >
-                  <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                    #{issue.number}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">{issue.title}</span>
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    {issue.author}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
           <div className="flex min-h-0 flex-1 flex-col">
             <Field label="Description" className="flex min-h-0 flex-1 flex-col">
-              <Textarea
+              <MarkdownEditor
                 value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Optional — included in the session prompt."
-                className="min-h-0 flex-1 resize-none text-sm"
+                onChange={setDescription}
+                placeholder="Optional — markdown, included in the session prompt."
+                className="flex-1"
               />
             </Field>
           </div>

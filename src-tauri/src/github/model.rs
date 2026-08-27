@@ -103,6 +103,8 @@ pub struct IssueSummary {
     pub body: Option<String>,
     pub url: String,
     pub author: String,
+    /// RFC3339 — the picker sorts newest-updated first.
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

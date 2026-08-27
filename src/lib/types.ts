@@ -661,4 +661,6 @@ export interface IssueSummary {
   body: string | null;
   url: string;
   author: string;
+  /** RFC3339; the picker lists newest-updated first. */
+  updatedAt: string;
 }

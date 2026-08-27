@@ -197,6 +197,7 @@ impl GithubClient {
                 body: i.body,
                 url: i.html_url.to_string(),
                 author: i.user.login,
+                updated_at: i.updated_at.to_rfc3339(),
             })
             .collect())
     }

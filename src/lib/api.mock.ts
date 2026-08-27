@@ -565,9 +565,9 @@ export function listProjectIssues(
     setTimeout(
       () =>
         resolve([
-          { number: 42, title: "Dark mode flickers on launch", body: "Steps to reproduce: open the app at night.", url: "https://github.com/acme/repo/issues/42", author: "octocat" },
-          { number: 57, title: "Migrate settings screen to new design system", body: null, url: "https://github.com/acme/repo/issues/57", author: "hubot" },
-          { number: 61, title: "Add CSV export", body: "Requested by three customers.", url: "https://github.com/acme/repo/issues/61", author: "octocat" },
+          { number: 61, title: "Add CSV export", body: "Requested by three customers.", url: "https://github.com/acme/repo/issues/61", author: "octocat", updatedAt: "2026-08-27T09:00:00Z" },
+          { number: 42, title: "Dark mode flickers on launch", body: "Steps to reproduce:\n\n- open the app at night\n- **flicker**", url: "https://github.com/acme/repo/issues/42", author: "octocat", updatedAt: "2026-08-20T12:00:00Z" },
+          { number: 57, title: "Migrate settings screen to new design system", body: null, url: "https://github.com/acme/repo/issues/57", author: "hubot", updatedAt: "2026-08-11T08:30:00Z" },
         ]),
       600,
     ),
