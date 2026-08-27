@@ -47,7 +47,6 @@ import type {
 } from "../../lib/types";
 import { useWorkspaceData } from "../../hooks/useWorkspaceData";
 import { hasOpenOverlay } from "../session/SessionView";
-import { TaskRef } from "./TaskRef";
 import {
   AssistantTurnView,
   SystemMessageView,
@@ -627,7 +626,9 @@ function TaskCard({
     >
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1 text-sm leading-snug">
-          <TaskRef number={task.number} className="mr-1.5 align-middle" />
+          <span className="mr-1.5 align-middle font-mono text-[10px] text-muted-foreground">
+            #{task.number}
+          </span>
           {task.title}
         </div>
       </div>

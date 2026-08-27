@@ -529,6 +529,12 @@ impl Inner {
             }
             None => (registry.create_quick_chat(None)?, None),
         };
+        // Name the workspace after its task (#7 <title>) — task sessions skip
+        // the AI-titling flow, and quick chats would otherwise fall back to
+        // the generic "Quick chat" label.
+        let name = format!("#{} {}", task.number, task.title);
+        registry.rename_workspace(&ws.id, &name);
+        let ws = crate::project::Workspace { name: Some(name), ..ws };
         tasks.link_workspace(&task.id, &ws.id)?;
         let _ = self.app.emit("tasks:changed", tasks.snapshot());
 

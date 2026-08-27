@@ -33,7 +33,6 @@ import {
   probeEnvironment,
   removeWorkspace,
   renameWorkspace,
-  taskLinkWorkspace,
   taskStart,
 } from "./lib/api";
 import {
@@ -268,23 +267,15 @@ function App() {
   const startTaskSession = useCallback(
     async (task: Task) => {
       try {
-        if (task.projectId && projects.some((p) => p.id === task.projectId)) {
-          // Backend path: builds the prompt, links the card, holds delivery
-          // until provisioning finishes (same code the queue dispatcher uses).
-          openNewWorkspace(await taskStart(task.id));
-          return;
-        }
-        // Project-less tasks fall back to a quick chat (frontend-only path).
-        const prompt =
-          task.title + (task.description ? `\n\n${task.description}` : "");
-        const ws = await createQuickChat(prompt);
-        openNewWorkspace(ws);
-        await taskLinkWorkspace(task.id, ws.id);
+        // Backend path for all tasks: builds the prompt, creates a worktree
+        // workspace (or a quick chat when the task has no project), names it
+        // "#N <title>", links the card, and holds delivery until ready.
+        openNewWorkspace(await taskStart(task.id));
       } catch (e) {
         toast.error("Could not start session", { description: String(e) });
       }
     },
-    [projects, openNewWorkspace],
+    [openNewWorkspace],
   );
 
   const removeQuickChat = useCallback(
