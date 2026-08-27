@@ -546,6 +546,11 @@ export function generateSetupScripts(
   );
 }
 
+export function chatArchive(workspaceId: string): Promise<ChatSnapshot> {
+  // Reuse the standard mock transcript so the archive dialog renders rich.
+  return chatOpen(workspaceId);
+}
+
 export function taskStart(taskId: string): Promise<Workspace> {
   // Link to a canned workspace and let the board react like the backend would.
   const ws = projects[0].workspaces[1];

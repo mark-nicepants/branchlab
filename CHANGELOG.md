@@ -9,24 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- The board is now a workflow with a fixed, opinionated layout
-  (Todo / In progress / Needs review / Done): drop a card into
-  "In progress" and the agent picks it up automatically (two at a time,
-  a "queued" chip shows while it waits) — when the agent finishes a turn
-  the card lands in "Needs review" with a "Ready for review" toast.
-  Reviewing in the session (inline diff comments, or any message) sends
-  the card back to In progress; a merged PR lands it in Done. Tasks
-  without a project run as quick chats. Existing boards are migrated to
-  the standard layout automatically (cards keep their workflow stage).
-- Task-started sessions are labeled with a TASK badge on their first
-  message, and the agent receives the full task context (title, description,
-  project, task id).
-- "My work" is a task board: drag-and-drop cards tagged by project,
-  quick-add per column, a project filter, an edit dialog with a markdown
-  editor (toolbar + preview), and import-from-GitHub-issue with search.
-  Every card shows its session's live status (queued / working / needs you /
-  in review / …) — click the chip to jump into the session. Tasks are
-  stored locally and shaped for future cloud sync.
+- "My work" is now a task board with a built-in agent workflow. Four fixed
+  columns — Todo, In progress, Needs review, Done — where dragging a card
+  into "In progress" delegates it: the agent picks it up automatically (two
+  at a time; a "queued" chip shows while it waits), and when it finishes a
+  turn the card lands in "Needs review" with a "Ready for review" toast.
+  Reviewing in the session (inline diff comments, or any message) sends the
+  card back to In progress; a merged PR lands it in Done. Tasks without a
+  project run as quick chats.
+- Task cards carry their session: a live status chip (queued / working /
+  needs you / in review / …) that jumps straight into the conversation, and
+  the agent receives the full task context (title, description, project)
+  with a TASK badge on the first message.
+- Moving a card to Done with a live session offers to clean up its
+  workspace — and after cleanup the card keeps the conversation: a
+  "chat archive" chip opens the full read-only transcript for future
+  reference.
+- Tasks are quick to capture and rich to edit: per-column quick-add, a
+  project filter, an edit dialog with a markdown editor (formatting toolbar
+  + preview), and import-from-GitHub-issue with search, sorted by last
+  update.
+- Deleting a workspace that has a linked task asks whether to mark the task
+  done instead of deciding for you.
 - When a workspace's pull request is merged, a notice appears in its chat
   with a "Delete workspace" button — teardown runs, the session closes, and
   uncommitted changes still get the usual warning first.

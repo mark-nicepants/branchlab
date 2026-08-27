@@ -170,6 +170,12 @@ same change/PR. The file follows [Keep a Changelog](https://keepachangelog.com/e
   scroll jumping when a turn completes"), not the implementation ("refactor
   useChat effect deps"). One `-` bullet per change, imperative mood.
 - Pure refactors, CI, docs, or test-only changes don't need an entry.
+- **The `[Unreleased]` section describes each change as the user will FIRST
+  experience it.** When later work in the same cycle alters or removes an
+  unreleased behavior, rewrite the existing entry — never add "Changed"/
+  migration notes for intermediate states no user ever saw (e.g. a feature
+  built one way and reworked before release gets one entry describing the
+  final form).
 - On release, the `[Unreleased]` section becomes that version's release notes:
   it is renamed to `## [x.y.z] - YYYY-MM-DD` and a fresh empty `[Unreleased]`
   section is added above it (see RELEASING.md).

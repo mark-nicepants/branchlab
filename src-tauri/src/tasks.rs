@@ -63,7 +63,9 @@ pub struct Task {
     pub project_id: Option<String>,
     pub column_id: String,
     pub position: f64,
-    /// Linked session; cleared when that workspace is deleted.
+    /// Linked session. KEPT after workspace deletion — it keys the archived
+    /// chat transcript in chat.db (resolve against the registry to know
+    /// whether the session is live).
     #[serde(default)]
     pub workspace_id: Option<String>,
     /// Subtask hierarchy (v2 UI): the main board shows only parentless tasks.
@@ -296,18 +298,14 @@ impl TaskStore {
     /// Returns the task so the UI can OFFER "mark as done"; suppressed when
     /// the task already sits in the done column (e.g. merge moved it first).
     pub fn on_workspace_removed(&self, workspace_id: &str) -> Option<UnlinkedTask> {
-        let mut data = self.data.lock().unwrap();
+        // The link is KEPT: the chat.db transcript is keyed by this workspace
+        // id and survives deletion, so the card can open the archived chat.
+        let data = self.data.lock().unwrap();
         let done = role_column(&data, ColumnRole::Done);
-        let task = data
-            .tasks
-            .iter_mut()
-            .find(|t| t.deleted_at.is_none() && t.workspace_id.as_deref() == Some(workspace_id))?;
-        task.workspace_id = None;
-        task.updated_at = now_ms();
-        let offer = (done.as_deref() != Some(task.column_id.as_str()))
-            .then(|| UnlinkedTask { task_id: task.id.clone(), title: task.title.clone() });
-        self.persist(&data);
-        offer
+        let task =
+            data.tasks.iter().find(|t| t.deleted_at.is_none() && t.workspace_id.as_deref() == Some(workspace_id))?;
+        (done.as_deref() != Some(task.column_id.as_str()))
+            .then(|| UnlinkedTask { task_id: task.id.clone(), title: task.title.clone() })
     }
 
     /// Move a task to the done-role column (the "mark as done" toast action).
@@ -388,14 +386,16 @@ impl TaskStore {
     }
 
     /// Linked cards currently in the active column — the dispatch capacity
-    /// measure (each represents an agent session this machine started or
-    /// adopted).
-    pub fn active_count(&self) -> usize {
+    /// measure. `is_live` filters out archived links (workspace deleted but
+    /// the id kept for the chat archive), so dead sessions never eat a slot.
+    pub fn active_count(&self, is_live: impl Fn(&str) -> bool) -> usize {
         let data = self.data.lock().unwrap();
         let Some(active) = role_column(&data, ColumnRole::Active) else { return 0 };
         data.tasks
             .iter()
-            .filter(|t| t.deleted_at.is_none() && t.column_id == active && t.workspace_id.is_some())
+            .filter(|t| {
+                t.deleted_at.is_none() && t.column_id == active && t.workspace_id.as_deref().is_some_and(&is_live)
+            })
             .count()
     }
 }
@@ -661,10 +661,16 @@ mod tests {
         assert!(s.on_workspace_done("ws1"));
         assert_eq!(s.snapshot().tasks[0].column_id, done, "merge moves to done");
 
-        // Removal only unlinks; the task already sits in Done, so no offer.
+        // Removal keeps the link (it keys the archived chat); the task already
+        // sits in Done, so no mark-done offer.
         assert!(s.on_workspace_removed("ws1").is_none(), "already done: no mark-done offer");
-        assert_eq!(s.snapshot().tasks[0].workspace_id, None, "deletion clears the link");
-        assert!(s.on_workspace_removed("ws1").is_none(), "no linked task left");
+        assert_eq!(
+            s.snapshot().tasks[0].workspace_id.as_deref(),
+            Some("ws1"),
+            "link survives deletion for the chat archive"
+        );
+        // Archived links never eat a dispatch slot.
+        assert_eq!(s.active_count(|_| false), 0);
 
         // A task deleted mid-flight (not in Done) gets the offer instead.
         let t2 = s.create_task("mid-flight".into(), None, None, None).unwrap();
@@ -727,7 +733,7 @@ mod tests {
         assert_eq!(s.next_queued().unwrap().id, a.id);
         // Linking a removes it from the queue and counts toward capacity.
         s.link_workspace(&a.id, "ws-a").unwrap();
-        assert_eq!(s.active_count(), 1);
+        assert_eq!(s.active_count(|_| true), 1);
         // b blocked (dep on a); project-less np is next — quick-chat dispatch.
         assert_eq!(s.next_queued().unwrap().id, no_project.id);
         s.link_workspace(&no_project.id, "ws-np").unwrap();

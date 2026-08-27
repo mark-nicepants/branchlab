@@ -187,6 +187,7 @@ pub fn run() {
             github::commands::resync_github,
             chat::commands::chat_open,
             chat::commands::chat_history,
+            chat::commands::chat_archive,
             chat::commands::chat_send,
             chat::commands::chat_generate_title,
             chat::commands::chat_abort,

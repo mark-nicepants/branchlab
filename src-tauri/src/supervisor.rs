@@ -510,8 +510,12 @@ impl Inner {
         let tasks = self.app.state::<crate::tasks::TaskStore>();
         let registry = self.app.state::<Registry>();
         let task = tasks.snapshot().tasks.into_iter().find(|t| t.id == task_id).ok_or("unknown task")?;
-        if task.workspace_id.is_some() {
-            return Err("task already has a session".into());
+        // An archived link (workspace deleted, id kept for the chat archive)
+        // may be replaced by a fresh session; a live one may not.
+        if let Some(ws_id) = &task.workspace_id {
+            if registry.workspace_path(ws_id).is_some() {
+                return Err("task already has a session".into());
+            }
         }
         // Project tasks get a worktree workspace (provisioned in the
         // background); project-less tasks get a quick chat (scratch dir,
@@ -553,7 +557,8 @@ impl Inner {
     /// remains. Called from the reconcile tick.
     fn dispatch_queued(self: &Arc<Inner>) {
         let tasks = self.app.state::<crate::tasks::TaskStore>();
-        while tasks.active_count() < MAX_PARALLEL_TASKS {
+        let registry = self.app.state::<Registry>();
+        while tasks.active_count(|id| registry.workspace_path(id).is_some()) < MAX_PARALLEL_TASKS {
             let Some(task) = tasks.next_queued() else { break };
             if let Err(e) = self.start_task(&task.id) {
                 crate::logf!("task", "dispatch failed task={}: {e}", task.id);

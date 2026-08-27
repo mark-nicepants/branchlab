@@ -541,6 +541,12 @@ export function taskLinkWorkspace(
   return invoke<void>("task_link_workspace", { taskId, workspaceId });
 }
 
+/** Read-only transcript for a possibly-deleted workspace (the chat survives
+ *  workspace deletion) — powers the task card's archived-chat view. */
+export function chatArchive(workspaceId: string): Promise<ChatSnapshot> {
+  return invoke<ChatSnapshot>("chat_archive", { workspaceId });
+}
+
 /** Start a session for a board task (backend builds the prompt, links the
  *  card, and holds delivery until the workspace finishes provisioning). */
 export function taskStart(taskId: string): Promise<Workspace> {

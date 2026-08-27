@@ -41,6 +41,14 @@ pub async fn chat_open(
     chat.open(&workspace_id, &cwd, PAGE)
 }
 
+/// Read-only transcript snapshot for a workspace that may no longer exist
+/// (the chat.db conversation survives workspace deletion). No engine spawn,
+/// no registry lookup — powers the task card's archived-chat view.
+#[tauri::command]
+pub fn chat_archive(workspace_id: String, chat: State<ChatManager>) -> Result<ChatSnapshot, String> {
+    chat.snapshot(&workspace_id, None, PAGE)
+}
+
 /// Fetch a page of older history before `before_seq`.
 #[tauri::command]
 pub fn chat_history(workspace_id: String, before_seq: i64, chat: State<ChatManager>) -> Result<ChatSnapshot, String> {

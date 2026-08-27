@@ -26,6 +26,7 @@ import {
 import { toast } from "sonner";
 import {
   boardSnapshot,
+  chatArchive,
   listProjectIssues,
   taskCreate,
   taskDelete,
@@ -35,6 +36,7 @@ import {
 import { onTasksChanged } from "../../lib/events";
 import type {
   BoardColumn,
+  Entry,
   IssueSummary,
   BoardSnapshot,
   PrPayload,
@@ -45,6 +47,11 @@ import type {
 } from "../../lib/types";
 import { useWorkspaceData } from "../../hooks/useWorkspaceData";
 import { hasOpenOverlay } from "../session/SessionView";
+import {
+  AssistantTurnView,
+  SystemMessageView,
+  UserMessageView,
+} from "../ChatMessage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -79,6 +86,8 @@ interface Props {
   onOpenSession: (workspaceId: string) => void;
   /** Spawn a session for this task (App links the workspace back to it). */
   onStartTask: (task: Task) => void;
+  /** Delete a task's workspace (the done-column cleanup offer). */
+  onCleanupWorkspace: (workspaceId: string) => void;
 }
 
 /** Where a dragged card would land: before `before`, or at the end (null). */
@@ -108,10 +117,12 @@ export function MyWorkScreen({
   quickChats,
   onOpenSession,
   onStartTask,
+  onCleanupWorkspace,
 }: Props) {
   const [board, setBoard] = useState<BoardSnapshot>({ columns: [], tasks: [] });
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
+  const [archiveFor, setArchiveFor] = useState<Task | null>(null);
   const [dragTaskId, setDragTaskId] = useState<string | null>(null);
   const [dropSpot, setDropSpot] = useState<DropSpot | null>(null);
   const [focusedId, setFocusedId] = useState<string | null>(null);
@@ -170,6 +181,21 @@ export function MyWorkScreen({
 
   const moveTask = useCallback(
     (taskId: string, columnId: string, position: number) => {
+      // Landing a card with a live session in Done: promote cleaning up the
+      // workspace (the chat stays available on the card afterwards).
+      const target = board.columns.find((c) => c.id === columnId);
+      const task = board.tasks.find((t) => t.id === taskId);
+      const ws = task?.workspaceId ? allWorkspaces.get(task.workspaceId) : null;
+      if (target?.role === "done" && task && task.columnId !== columnId && ws) {
+        toast(`"${task.title}" is done`, {
+          description: "Clean up its workspace? The chat stays on the card.",
+          duration: 10_000,
+          action: {
+            label: "Delete workspace",
+            onClick: () => onCleanupWorkspace(ws.id),
+          },
+        });
+      }
       // Optimistic: the authoritative snapshot follows via tasks:changed.
       setBoard((prev) => ({
         ...prev,
@@ -181,7 +207,7 @@ export function MyWorkScreen({
         toast.error("Could not move task", { description: String(e) }),
       );
     },
-    [],
+    [board.columns, board.tasks, allWorkspaces, onCleanupWorkspace],
   );
 
 
@@ -292,6 +318,7 @@ export function MyWorkScreen({
               onMoveTask={moveTask}
               onEdit={(t) => setDialog({ mode: "edit", task: t })}
               onAdd={() => setDialog({ mode: "create", columnId: col.id })}
+              onOpenArchive={setArchiveFor}
               onFocus={setFocusedId}
               onStartTask={onStartTask}
               onOpenSession={onOpenSession}
@@ -306,6 +333,9 @@ export function MyWorkScreen({
           projects={projects}
           onClose={() => setDialog(null)}
         />
+      )}
+      {archiveFor && (
+        <ArchiveDialog task={archiveFor} onClose={() => setArchiveFor(null)} />
       )}
     </div>
   );
@@ -357,6 +387,7 @@ function BoardColumnView({
   onFocus,
   onStartTask,
   onOpenSession,
+  onOpenArchive,
 }: {
   column: BoardColumn;
   tasks: Task[];
@@ -374,6 +405,7 @@ function BoardColumnView({
   onFocus: (id: string) => void;
   onStartTask: (t: Task) => void;
   onOpenSession: (workspaceId: string) => void;
+  onOpenArchive: (t: Task) => void;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -479,6 +511,7 @@ function BoardColumnView({
               onEdit={onEdit}
               onStartTask={onStartTask}
               onOpenSession={onOpenSession}
+              onOpenArchive={onOpenArchive}
             />
           </div>
         ))}
@@ -535,6 +568,7 @@ function TaskCard({
   onEdit,
   onStartTask,
   onOpenSession,
+  onOpenArchive,
 }: {
   task: Task;
   columnRole: BoardColumn["role"];
@@ -549,6 +583,7 @@ function TaskCard({
   onEdit: (t: Task) => void;
   onStartTask: (t: Task) => void;
   onOpenSession: (workspaceId: string) => void;
+  onOpenArchive: (t: Task) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -580,7 +615,7 @@ function TaskCard({
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1 text-sm leading-snug">{task.title}</div>
       </div>
-      {(projectName || workspace || status || columnRole === "active") && (
+      {(projectName || task.workspaceId || columnRole === "active") && (
         <div className="mt-2 flex items-center gap-1.5">
           {columnRole === "active" && !task.workspaceId && (
             <span
@@ -598,6 +633,19 @@ function TaskCard({
             >
               {projectName}
             </Badge>
+          )}
+          {task.workspaceId && !workspace && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenArchive(task);
+              }}
+              className="flex items-center gap-1 rounded-full border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-accent hover:text-foreground"
+              title="The workspace is gone; open the archived conversation"
+            >
+              <MessageSquare className="size-2.5" />
+              chat archive
+            </button>
           )}
           {workspace && status && (
             <button
@@ -628,16 +676,22 @@ function TaskCard({
     <ContextMenu>
       <ContextMenuTrigger asChild>{card}</ContextMenuTrigger>
       <ContextMenuContent>
-        {!task.workspaceId && (
+        {!workspace && (
           <ContextMenuItem onClick={() => onStartTask(task)}>
             <Play className="mr-2 size-3.5" />
-            Start session
+            {task.workspaceId ? "Start new session" : "Start session"}
           </ContextMenuItem>
         )}
         {workspace && (
           <ContextMenuItem onClick={() => onOpenSession(workspace.id)}>
             <MessageSquare className="mr-2 size-3.5" />
             Open session
+          </ContextMenuItem>
+        )}
+        {task.workspaceId && !workspace && (
+          <ContextMenuItem onClick={() => onOpenArchive(task)}>
+            <MessageSquare className="mr-2 size-3.5" />
+            Open archived chat
           </ContextMenuItem>
         )}
         <ContextMenuItem onClick={() => onEdit(task)}>
@@ -839,6 +893,61 @@ function TaskDialog({
               {state.mode === "edit" ? "Save" : "Create"}
             </Button>
           </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Read-only view of a linked session whose workspace was deleted — the
+ *  transcript lives on in chat.db, keyed by the (kept) workspace id. */
+function ArchiveDialog({ task, onClose }: { task: Task; onClose: () => void }) {
+  const [entries, setEntries] = useState<Entry[] | null>(null);
+  useEffect(() => {
+    if (!task.workspaceId) return;
+    chatArchive(task.workspaceId)
+      .then((snap) => setEntries(snap.entries))
+      .catch((e) => {
+        onClose();
+        toast.error("Could not load the archived chat", {
+          description: String(e),
+        });
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task.workspaceId]);
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="flex h-[80vh] w-[min(60rem,92vw)] flex-col sm:max-w-none">
+        <div className="border-b border-border pb-4">
+          <DialogTitle className="text-xl">{task.title}</DialogTitle>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Archived conversation — the workspace was cleaned up.
+          </p>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+          {entries === null ? (
+            <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" />
+              Loading transcript…
+            </div>
+          ) : entries.length === 0 ? (
+            <div className="py-6 text-sm text-muted-foreground">
+              No messages were recorded for this session.
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3 py-2">
+              {entries.map((entry) =>
+                entry.type === "user" ? (
+                  <UserMessageView key={entry.entryId} entry={entry} />
+                ) : entry.type === "assistant" ? (
+                  <AssistantTurnView key={entry.entryId} entry={entry} />
+                ) : (
+                  <SystemMessageView key={entry.entryId} entry={entry} />
+                ),
+              )}
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>

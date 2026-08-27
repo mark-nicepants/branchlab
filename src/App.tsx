@@ -428,6 +428,7 @@ function App() {
                 quickChats={quickChats}
                 onOpenSession={(id) => router.openSession(id)}
                 onStartTask={(task) => void startTaskSession(task)}
+                onCleanupWorkspace={(id) => void deleteWorkspaceFromChat(id)}
               />
             ) : view === "automations" ? (
               <StubScreen label="Automations" />
