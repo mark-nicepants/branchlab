@@ -23,7 +23,6 @@ import {
   MoreHorizontal,
   Play,
   Plus,
-  RotateCcw,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -285,8 +284,8 @@ export function MyWorkScreen({ projects, onOpenSession, onStartTask }: Props) {
         <div className="flex-1" />
         <Button
           variant="ghost"
-          size="icon"
-          className="size-8 text-muted-foreground"
+          size="sm"
+          className="h-8 px-2 text-xs text-muted-foreground"
           title="Reset columns to the default workflow (tasks are kept)"
           onClick={() =>
             columnReset()
@@ -298,7 +297,7 @@ export function MyWorkScreen({ projects, onOpenSession, onStartTask }: Props) {
               )
           }
         >
-          <RotateCcw className="size-3.5" />
+          Reset layout
         </Button>
         <Popover open={addingColumn} onOpenChange={setAddingColumn}>
           <PopoverTrigger asChild>

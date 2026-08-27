@@ -513,11 +513,18 @@ impl Inner {
         if task.workspace_id.is_some() {
             return Err("task already has a session".into());
         }
-        let project_id = task.project_id.clone().ok_or("task has no project")?;
-        let project_name = registry.list().into_iter().find(|p| p.project.id == project_id).map(|p| p.project.name);
-
-        let ws = registry.create_workspace(&project_id, None, None)?;
-        self.app.state::<crate::setup::SetupManager>().start(&ws.id);
+        // Project tasks get a worktree workspace (provisioned in the
+        // background); project-less tasks get a quick chat (scratch dir,
+        // ready immediately).
+        let (ws, project_name) = match task.project_id.clone() {
+            Some(project_id) => {
+                let name = registry.list().into_iter().find(|p| p.project.id == project_id).map(|p| p.project.name);
+                let ws = registry.create_workspace(&project_id, None, None)?;
+                self.app.state::<crate::setup::SetupManager>().start(&ws.id);
+                (ws, name)
+            }
+            None => (registry.create_quick_chat(None)?, None),
+        };
         tasks.link_workspace(&task.id, &ws.id)?;
         let _ = self.app.emit("tasks:changed", tasks.snapshot());
 

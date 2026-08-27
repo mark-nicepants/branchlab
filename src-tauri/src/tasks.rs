@@ -360,10 +360,10 @@ impl TaskStore {
         Some(title)
     }
 
-    /// The next dispatchable card in the queued column: lowest position, has
-    /// a project, not linked yet, and every dependency already sits in the
-    /// done column (missing/tombstoned deps count as satisfied — a deleted
-    /// dep must never deadlock the queue).
+    /// The next dispatchable card in the queued column: lowest position, not
+    /// linked yet, and every dependency already sits in the done column
+    /// (missing/tombstoned deps count as satisfied — a deleted dep must never
+    /// deadlock the queue). Project-less tasks dispatch as quick chats.
     pub fn next_queued(&self) -> Option<Task> {
         let data = self.data.lock().unwrap();
         let queued = role_column(&data, ColumnRole::Queued)?;
@@ -379,7 +379,6 @@ impl TaskStore {
             .filter(|t| {
                 t.deleted_at.is_none()
                     && t.column_id == queued
-                    && t.project_id.is_some()
                     && t.workspace_id.is_none()
                     && t.depends_on.iter().all(dep_done)
             })
@@ -830,13 +829,14 @@ mod tests {
             data.tasks.iter_mut().find(|t| t.id == b.id).unwrap().depends_on = vec![a.id.clone()];
         }
 
-        // Lowest position with project and met deps: a.
+        // Lowest position with met deps: a.
         assert_eq!(s.next_queued().unwrap().id, a.id);
         // Linking a removes it from the queue and counts toward capacity.
         s.link_workspace(&a.id, "ws-a").unwrap();
         assert_eq!(s.active_count(), 1);
-        // b still blocked (a not done); np skipped (no project).
-        assert!(s.next_queued().is_none());
+        // b blocked (dep on a); project-less np is next — quick-chat dispatch.
+        assert_eq!(s.next_queued().unwrap().id, no_project.id);
+        s.link_workspace(&no_project.id, "ws-np").unwrap();
         // a lands in done -> b unblocks.
         s.mark_done(&a.id).unwrap();
         assert_eq!(s.next_queued().unwrap().id, b.id);
