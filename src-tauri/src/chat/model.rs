@@ -51,6 +51,8 @@ pub enum TurnOrigin {
     Lifecycle,
     Init,
     Autofix,
+    /// A board-task dispatch (queued card picked up, or Start on a card).
+    Task,
 }
 
 /// The turn lifecycle. `Queued -> Streaming -> (AwaitingPermission <-> Streaming)

@@ -307,6 +307,7 @@ fn origin_str(o: crate::chat::model::TurnOrigin) -> &'static str {
         Lifecycle => "lifecycle",
         Init => "init",
         Autofix => "autofix",
+        Task => "task",
     }
 }
 

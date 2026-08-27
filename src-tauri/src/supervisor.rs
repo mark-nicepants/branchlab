@@ -36,6 +36,9 @@ const PR_POLL_INTERVAL: Duration = Duration::from_secs(15);
 const BG_PR_POLL_INTERVAL: Duration = Duration::from_secs(180);
 /// Superfix attempt cap on a single failing streak.
 const MAX_SUPER_ATTEMPTS: u32 = 5;
+// ponytail: fixed task-dispatch concurrency; becomes a setting when real
+// usage wants tuning.
+const MAX_PARALLEL_TASKS: usize = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum Activity {
@@ -115,6 +118,9 @@ pub struct PrPayload {
 struct NotifyPayload {
     workspace_id: String,
     kind: &'static str,
+    /// Set for kind "task_review" — the board card's title, for the toast.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    task_title: Option<String>,
 }
 
 /// One driven worktree, read synchronously from the registry.
@@ -200,6 +206,16 @@ impl Supervisor {
             self.inner.emit_session(id);
         }
         self.reconcile_now();
+    }
+
+    /// Start a session for a board task (the card's Start button, and the
+    /// queue dispatcher). Creates the workspace, links the card (moving it to
+    /// the active column), and sends the task prompt — held by the chat
+    /// manager until provisioning finishes, so this works entirely headless.
+    pub fn start_task(&self, task_id: &str) -> Result<crate::project::Workspace, String> {
+        let ws = self.inner.start_task(task_id)?;
+        self.reconcile_now();
+        Ok(ws)
     }
 
     pub fn reconcile_now(&self) {
@@ -321,6 +337,7 @@ impl Inner {
     }
 
     async fn reconcile(inner: &Arc<Inner>) {
+        inner.dispatch_queued();
         for d in inner.snapshot_desired() {
             // Seed the runtime from the persisted PR so the UI has state before
             // the first live poll (survives restarts). Release the lock before
@@ -489,6 +506,55 @@ impl Inner {
     }
 
     /// Fold a coarse turn transition into session state + autofix progress.
+    fn start_task(&self, task_id: &str) -> Result<crate::project::Workspace, String> {
+        let tasks = self.app.state::<crate::tasks::TaskStore>();
+        let registry = self.app.state::<Registry>();
+        let task = tasks.snapshot().tasks.into_iter().find(|t| t.id == task_id).ok_or("unknown task")?;
+        if task.workspace_id.is_some() {
+            return Err("task already has a session".into());
+        }
+        let project_id = task.project_id.clone().ok_or("task has no project")?;
+        let project_name = registry.list().into_iter().find(|p| p.project.id == project_id).map(|p| p.project.name);
+
+        let ws = registry.create_workspace(&project_id, None, None)?;
+        self.app.state::<crate::setup::SetupManager>().start(&ws.id);
+        tasks.link_workspace(&task.id, &ws.id)?;
+        let _ = self.app.emit("tasks:changed", tasks.snapshot());
+
+        let (display, sent) = crate::tasks::task_prompt(&task, project_name.as_deref());
+        self.chat.send(
+            &ws.id,
+            std::path::Path::new(&ws.path),
+            display,
+            sent,
+            Vec::new(),
+            TurnOrigin::Task,
+            None,
+            None,
+            None,
+        )?;
+        crate::logf!("task", "dispatched task={} ws={} ({})", task.id, ws.id, task.title);
+        self.app.state::<crate::telemetry::Telemetry>().event(
+            "session_created",
+            "/my-work",
+            Some(serde_json::json!({ "source": "task" })),
+        );
+        Ok(ws)
+    }
+
+    /// Queue dispatch: pick up cards from the queued column while capacity
+    /// remains. Called from the reconcile tick.
+    fn dispatch_queued(self: &Arc<Inner>) {
+        let tasks = self.app.state::<crate::tasks::TaskStore>();
+        while tasks.active_count() < MAX_PARALLEL_TASKS {
+            let Some(task) = tasks.next_queued() else { break };
+            if let Err(e) = self.start_task(&task.id) {
+                crate::logf!("task", "dispatch failed task={}: {e}", task.id);
+                break;
+            }
+        }
+    }
+
     fn on_turn_event(self: &Arc<Inner>, ev: TurnEvent) {
         let is_active = self.active.lock().unwrap().as_deref() == Some(ev.workspace_id.as_str());
         let mut notify: Option<&'static str> = None;
@@ -534,12 +600,43 @@ impl Inner {
                 }
             }
         }
+        // Task-workflow gates: turn end parks the linked card in the review
+        // column; any turn start pulls it back to work. Both no-op unless the
+        // card sits in the expected role column (manual drags win).
+        {
+            use tauri::Manager as _;
+            let tasks = self.app.state::<crate::tasks::TaskStore>();
+            let moved = match ev.status {
+                TurnStatus::Completed | TurnStatus::Cancelled | TurnStatus::Failed => {
+                    let title = tasks.on_turn_ended(&ev.workspace_id);
+                    if let Some(title) = &title {
+                        let _ = self.app.emit(
+                            "workspace:notify",
+                            NotifyPayload {
+                                workspace_id: ev.workspace_id.clone(),
+                                kind: "task_review",
+                                task_title: Some(title.clone()),
+                            },
+                        );
+                    }
+                    title.is_some()
+                }
+                TurnStatus::Queued | TurnStatus::Streaming => tasks.on_turn_started(&ev.workspace_id).is_some(),
+                TurnStatus::AwaitingPermission => false,
+            };
+            if moved {
+                let _ = self.app.emit("tasks:changed", tasks.snapshot());
+            }
+        }
         self.emit_session(&ev.workspace_id);
         if pr_changed {
             self.emit_pr(&ev.workspace_id);
         }
         if let Some(kind) = notify {
-            let _ = self.app.emit("workspace:notify", NotifyPayload { workspace_id: ev.workspace_id.clone(), kind });
+            let _ = self.app.emit(
+                "workspace:notify",
+                NotifyPayload { workspace_id: ev.workspace_id.clone(), kind, task_title: None },
+            );
         }
     }
 

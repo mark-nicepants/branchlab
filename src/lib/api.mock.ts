@@ -547,6 +547,13 @@ export function generateSetupScripts(
   );
 }
 
+export function taskStart(taskId: string): Promise<Workspace> {
+  // Link to a canned workspace and let the board react like the backend would.
+  const ws = projects[0].workspaces[1];
+  void taskLinkWorkspace(taskId, ws.id);
+  return Promise.resolve(ws);
+}
+
 export function taskMarkDone(taskId: string): Promise<void> {
   const done = boardCols.find((c) => c.role === "done");
   if (done)
@@ -1425,11 +1432,11 @@ let boardCols: BoardColumn[] = [
   { id: "c3", name: "Done", role: "done", position: 3072, updatedAt: 0, deletedAt: null },
 ];
 let boardTasks: Task[] = [
-  { id: "t1", title: "Add dark-mode toggle to settings", description: null, projectId: "p1", columnId: "c1", position: 1024, workspaceId: null, createdAt: 0, updatedAt: 0, deletedAt: null },
-  { id: "t2", title: "Investigate flaky CI on main", description: "Started after the runner image bump.", projectId: "p1", columnId: "c1", position: 2048, workspaceId: null, createdAt: 0, updatedAt: 0, deletedAt: null },
-  { id: "t3", title: "Write onboarding docs", description: null, projectId: null, columnId: "c1", position: 3072, workspaceId: null, createdAt: 0, updatedAt: 0, deletedAt: null },
-  { id: "t4", title: "Refactor the review inbox polling", description: null, projectId: "p2", columnId: "c2", position: 1024, workspaceId: "p1-ws1", createdAt: 0, updatedAt: 0, deletedAt: null },
-  { id: "t5", title: "Ship v0.3.0", description: null, projectId: "p1", columnId: "c3", position: 1024, workspaceId: null, createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t1", title: "Add dark-mode toggle to settings", description: null, projectId: "p1", columnId: "c1", position: 1024, workspaceId: null, parentId: null, dependsOn: [], createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t2", title: "Investigate flaky CI on main", description: "Started after the runner image bump.", projectId: "p1", columnId: "c1", position: 2048, workspaceId: null, parentId: null, dependsOn: [], createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t3", title: "Write onboarding docs", description: null, projectId: null, columnId: "c1", position: 3072, workspaceId: null, parentId: null, dependsOn: [], createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t4", title: "Refactor the review inbox polling", description: null, projectId: "p2", columnId: "c2", position: 1024, workspaceId: "p1-ws1", parentId: null, dependsOn: [], createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t5", title: "Ship v0.3.0", description: null, projectId: "p1", columnId: "c3", position: 1024, workspaceId: null, parentId: null, dependsOn: [], createdAt: 0, updatedAt: 0, deletedAt: null },
 ];
 
 function boardSnap(): BoardSnapshot {
@@ -1464,6 +1471,8 @@ export function taskCreate(
     columnId,
     position: max + 1024,
     workspaceId: null,
+    parentId: null,
+    dependsOn: [],
     createdAt: Date.now(),
     updatedAt: Date.now(),
     deletedAt: null,

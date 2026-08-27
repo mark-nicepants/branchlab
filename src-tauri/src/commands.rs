@@ -133,6 +133,13 @@ pub async fn list_project_prs(
     client.list_open_prs(&owner, &repo).await
 }
 
+/// Start a session for a board task (Start button / queue parity): creates
+/// the workspace, links the card, and sends the task prompt (origin=task).
+#[tauri::command]
+pub async fn task_start(task_id: String, supervisor: State<'_, Supervisor>) -> Result<Workspace, String> {
+    supervisor.start_task(&task_id)
+}
+
 /// Open issues for a project's repo (the task board's GitHub import picker).
 #[tauri::command]
 pub async fn list_project_issues(

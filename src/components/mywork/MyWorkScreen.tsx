@@ -150,9 +150,12 @@ export function MyWorkScreen({ projects, onOpenSession, onStartTask }: Props) {
   );
   const visibleTasks = useMemo(
     () =>
-      projectFilter
-        ? board.tasks.filter((t) => t.projectId === projectFilter)
-        : board.tasks,
+      board.tasks.filter(
+        (t) =>
+          // Subtasks (v2) render in their parent's drill-down, never here.
+          t.parentId === null &&
+          (projectFilter === null || t.projectId === projectFilter),
+      ),
     [board.tasks, projectFilter],
   );
   /** Visible tasks per column, in board order (the keyboard grid). */
@@ -501,9 +504,13 @@ function BoardColumnView({
           <span
             className="text-[10px] uppercase tracking-wide text-muted-foreground/60"
             title={
-              column.role === "active"
-                ? "Cards land here when their session starts"
-                : "Cards land here when their PR merges or the workspace is deleted"
+              {
+                queued: "The agent picks up cards dropped here",
+                active: "Cards land here when their session starts",
+                review: "Cards land here when the agent finishes a turn",
+                done: "Cards land here when their PR merges or the workspace is deleted",
+                none: "",
+              }[column.role]
             }
           >
             {column.role}
@@ -536,16 +543,28 @@ function BoardColumnView({
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
+              disabled={column.role === "queued"}
+              onClick={() => void columnUpdate(column.id, { role: "queued" })}
+            >
+              Set as Queued (agent picks up cards here)
+            </DropdownMenuItem>
+            <DropdownMenuItem
               disabled={column.role === "active"}
               onClick={() => void columnUpdate(column.id, { role: "active" })}
             >
-              Set as Active (sessions land here)
+              Set as Active (running sessions live here)
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={column.role === "review"}
+              onClick={() => void columnUpdate(column.id, { role: "review" })}
+            >
+              Set as Review (finished turns land here)
             </DropdownMenuItem>
             <DropdownMenuItem
               disabled={column.role === "done"}
               onClick={() => void columnUpdate(column.id, { role: "done" })}
             >
-              Set as Done (merged/deleted land here)
+              Set as Done (merged work lands here)
             </DropdownMenuItem>
             <DropdownMenuItem
               disabled={column.role === "none"}

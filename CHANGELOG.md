@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The board is now a workflow: mark a column as Queued and the agent picks
+  up cards dropped there automatically (two at a time) — the session starts
+  in the background, the card moves to your Active column, and when the
+  agent finishes a turn the card lands in your Review column with a
+  "Ready for review" toast. Reviewing in the session (inline diff comments,
+  or any message) sends the card back to Active; a merged PR still lands it
+  in Done. Assign the new Queued/Review roles from any column's menu.
+- Task-started sessions are labeled with a TASK badge on their first
+  message, and the agent receives the full task context (title, description,
+  project, task id).
+
+### Added
+
 - "My work" is now a task board: custom columns (rename, reorder, add,
   delete, with configurable Active/Done roles), drag-and-drop cards tagged by
   project, quick-add per column, and a project filter. A card can start an

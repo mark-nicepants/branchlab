@@ -383,7 +383,13 @@ export type TurnStatus =
   | "cancelled"
   | "failed";
 
-export type TurnOrigin = "user" | "slash" | "lifecycle" | "init" | "autofix";
+export type TurnOrigin =
+  | "user"
+  | "slash"
+  | "lifecycle"
+  | "init"
+  | "autofix"
+  | "task";
 
 export type BlockToolStatus = "pending" | "running" | "completed" | "failed";
 
@@ -617,7 +623,7 @@ export interface ToolsStatus {
 
 // ── "My work" task board (src-tauri/src/tasks.rs) ──
 
-export type ColumnRole = "none" | "active" | "done";
+export type ColumnRole = "none" | "queued" | "active" | "review" | "done";
 
 export interface BoardColumn {
   id: string;
@@ -637,6 +643,10 @@ export interface Task {
   position: number;
   /** Linked session; cleared when that workspace is deleted. */
   workspaceId: string | null;
+  /** Subtask hierarchy (v2 UI); the main board shows only parentless tasks. */
+  parentId: string | null;
+  /** Queued dispatch waits until every dependency is in the done column. */
+  dependsOn: string[];
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;
@@ -663,4 +673,12 @@ export interface IssueSummary {
   author: string;
   /** RFC3339; the picker lists newest-updated first. */
   updatedAt: string;
+}
+
+/** `workspace:notify` — attention taps (turn done / awaiting input /
+ *  task ready for review). `taskTitle` is set for task_review. */
+export interface NotifyPayload {
+  workspaceId: string;
+  kind: "turn_done" | "awaiting_input" | "task_review";
+  taskTitle?: string | null;
 }

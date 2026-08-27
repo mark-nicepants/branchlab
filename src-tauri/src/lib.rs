@@ -147,6 +147,7 @@ pub fn run() {
             tasks::task_move,
             tasks::task_link_workspace,
             tasks::task_mark_done,
+            commands::task_start,
             tasks::column_create,
             tasks::column_update,
             tasks::column_move,

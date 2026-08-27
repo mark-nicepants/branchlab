@@ -22,6 +22,7 @@ fn parse_origin(origin: Option<String>) -> TurnOrigin {
         Some("lifecycle") => TurnOrigin::Lifecycle,
         Some("init") => TurnOrigin::Init,
         Some("autofix") => TurnOrigin::Autofix,
+        Some("task") => TurnOrigin::Task,
         _ => TurnOrigin::User,
     }
 }

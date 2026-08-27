@@ -29,7 +29,11 @@ const MIN_GAP: f64 = 1e-6;
 pub enum ColumnRole {
     #[default]
     None,
+    /// The delegation queue: the supervisor dispatches cards dropped here.
+    Queued,
     Active,
+    /// Finished turns park their card here until the user reacts.
+    Review,
     Done,
 }
 
@@ -60,6 +64,13 @@ pub struct Task {
     /// Linked session; cleared when that workspace is deleted.
     #[serde(default)]
     pub workspace_id: Option<String>,
+    /// Subtask hierarchy (v2 UI): the main board shows only parentless tasks.
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    /// Dispatch dependencies: queued tasks wait until every dep is done.
+    /// Sequential batches are chains; parallel batches have no deps.
+    #[serde(default)]
+    pub depends_on: Vec<String>,
     pub created_at: i64,
     pub updated_at: i64,
     #[serde(default)]
@@ -187,6 +198,8 @@ impl TaskStore {
             column_id,
             position,
             workspace_id: None,
+            parent_id: None,
+            depends_on: Vec::new(),
             created_at: now,
             updated_at: now,
             deleted_at: None,
@@ -219,10 +232,17 @@ impl TaskStore {
 
     pub fn delete_task(&self, id: &str) -> Result<(), String> {
         let mut data = self.data.lock().unwrap();
-        let task = live_task(&mut data, id)?;
         let now = now_ms();
-        task.deleted_at = Some(now);
-        task.updated_at = now;
+        {
+            let task = live_task(&mut data, id)?;
+            task.deleted_at = Some(now);
+            task.updated_at = now;
+        }
+        // A parent's deletion must not orphan subtasks on the board.
+        for t in data.tasks.iter_mut().filter(|t| t.deleted_at.is_none() && t.parent_id.as_deref() == Some(id)) {
+            t.deleted_at = Some(now);
+            t.updated_at = now;
+        }
         self.persist(&data);
         Ok(())
     }
@@ -319,6 +339,80 @@ impl TaskStore {
         Ok(())
     }
 
+    // ── Workflow machine hooks (called by the supervisor) ───────────────────
+
+    /// A linked session's turn finished: park the card in the review column —
+    /// but only if it currently sits in the active column, so the user's
+    /// manual placement always wins. Returns the task title on a move.
+    pub fn on_turn_ended(&self, workspace_id: &str) -> Option<String> {
+        self.move_between_roles(workspace_id, ColumnRole::Active, ColumnRole::Review)
+    }
+
+    /// A linked session started a new turn (feedback, composer message,
+    /// autofix — any): pull the card from review back to active.
+    pub fn on_turn_started(&self, workspace_id: &str) -> Option<String> {
+        self.move_between_roles(workspace_id, ColumnRole::Review, ColumnRole::Active)
+    }
+
+    fn move_between_roles(&self, workspace_id: &str, from: ColumnRole, to: ColumnRole) -> Option<String> {
+        let mut data = self.data.lock().unwrap();
+        let from_col = role_column(&data, from)?;
+        let to_col = role_column(&data, to)?;
+        let max = max_position(&data, &to_col);
+        let task = data
+            .tasks
+            .iter_mut()
+            .find(|t| t.deleted_at.is_none() && t.workspace_id.as_deref() == Some(workspace_id))?;
+        if task.column_id != from_col {
+            return None;
+        }
+        task.column_id = to_col;
+        task.position = max + STRIDE;
+        task.updated_at = now_ms();
+        let title = task.title.clone();
+        self.persist(&data);
+        Some(title)
+    }
+
+    /// The next dispatchable card in the queued column: lowest position, has
+    /// a project, not linked yet, and every dependency already sits in the
+    /// done column (missing/tombstoned deps count as satisfied — a deleted
+    /// dep must never deadlock the queue).
+    pub fn next_queued(&self) -> Option<Task> {
+        let data = self.data.lock().unwrap();
+        let queued = role_column(&data, ColumnRole::Queued)?;
+        let done = role_column(&data, ColumnRole::Done);
+        let dep_done = |dep: &String| {
+            data.tasks
+                .iter()
+                .find(|t| &t.id == dep && t.deleted_at.is_none())
+                .is_none_or(|t| Some(t.column_id.as_str()) == done.as_deref())
+        };
+        data.tasks
+            .iter()
+            .filter(|t| {
+                t.deleted_at.is_none()
+                    && t.column_id == queued
+                    && t.project_id.is_some()
+                    && t.workspace_id.is_none()
+                    && t.depends_on.iter().all(dep_done)
+            })
+            .min_by(|a, b| a.position.total_cmp(&b.position))
+            .cloned()
+    }
+
+    /// Linked cards currently in the active column — the dispatch capacity
+    /// measure (each represents an agent session this machine started or
+    /// adopted).
+    pub fn active_count(&self) -> usize {
+        let data = self.data.lock().unwrap();
+        let Some(active) = role_column(&data, ColumnRole::Active) else { return 0 };
+        data.tasks
+            .iter()
+            .filter(|t| t.deleted_at.is_none() && t.column_id == active && t.workspace_id.is_some())
+            .count()
+    }
+
     pub fn create_column(&self, name: String) -> Result<Column, String> {
         let name = name.trim().to_string();
         if name.is_empty() {
@@ -389,6 +483,24 @@ impl TaskStore {
         self.persist(&data);
         Ok(())
     }
+}
+
+/// The prompt a task-dispatched session opens with: `display` is the readable
+/// task text shown in the transcript; `sent` carries the structured context
+/// block so the agent can see every task property.
+pub fn task_prompt(task: &Task, project_name: Option<&str>) -> (String, String) {
+    let display = match &task.description {
+        Some(d) => format!("{}\n\n{}", task.title, d),
+        None => task.title.clone(),
+    };
+    let mut sent = display.clone();
+    sent.push_str("\n\n---\nTask context (from the BranchLab board):\n");
+    sent.push_str(&format!("- Title: {}\n", task.title));
+    if let Some(p) = project_name {
+        sent.push_str(&format!("- Project: {p}\n"));
+    }
+    sent.push_str(&format!("- Task id: {}\n", task.id));
+    (display, sent)
 }
 
 fn normalize(s: Option<String>) -> Option<String> {
@@ -632,6 +744,91 @@ mod tests {
             "mark_done moves it"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn turn_gates_route_between_roles() {
+        let (s, dir) = store("turn-gates");
+        let cols = s.snapshot().columns;
+        // Add a Review column between active and done.
+        let review = s.create_column("Needs review".into()).unwrap();
+        s.update_column(&review.id, None, Some(ColumnRole::Review)).unwrap();
+
+        let t = s.create_task("t".into(), Some("desc".into()), Some("p1".into()), None).unwrap();
+        s.link_workspace(&t.id, "ws1").unwrap(); // -> active
+
+        // Turn ends: active -> review (returns the title for the toast).
+        assert_eq!(s.on_turn_ended("ws1").as_deref(), Some("t"));
+        assert_eq!(task_col(&s, &t.id), review.id);
+        // Repeat is a no-op (card no longer in active).
+        assert!(s.on_turn_ended("ws1").is_none());
+
+        // New turn (feedback): review -> active.
+        assert!(s.on_turn_started("ws1").is_some());
+        assert_eq!(task_col(&s, &t.id), cols[1].id);
+
+        // Manual drag wins: user parks it in Todo; a turn end must not touch it.
+        s.move_task(&t.id, &cols[0].id, 1.0).unwrap();
+        assert!(s.on_turn_ended("ws1").is_none());
+        assert_eq!(task_col(&s, &t.id), cols[0].id);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn queue_dispatch_order_and_dependencies() {
+        let (s, dir) = store("queue-deps");
+        let queued = s.create_column("Queued".into()).unwrap();
+        s.update_column(&queued.id, None, Some(ColumnRole::Queued)).unwrap();
+        let done_col = s.snapshot().columns.iter().find(|c| c.role == ColumnRole::Done).unwrap().id.clone();
+
+        // No queued-role tasks yet.
+        assert!(s.next_queued().is_none());
+
+        let a = s.create_task("a".into(), None, Some("p1".into()), Some(queued.id.clone())).unwrap();
+        let b = s.create_task("b".into(), None, Some("p1".into()), Some(queued.id.clone())).unwrap();
+        let no_project = s.create_task("np".into(), None, None, Some(queued.id.clone())).unwrap();
+        // b depends on a: not dispatchable until a is done.
+        {
+            let mut data = s.data.lock().unwrap();
+            data.tasks.iter_mut().find(|t| t.id == b.id).unwrap().depends_on = vec![a.id.clone()];
+        }
+
+        // Lowest position with project and met deps: a.
+        assert_eq!(s.next_queued().unwrap().id, a.id);
+        // Linking a removes it from the queue and counts toward capacity.
+        s.link_workspace(&a.id, "ws-a").unwrap();
+        assert_eq!(s.active_count(), 1);
+        // b still blocked (a not done); np skipped (no project).
+        assert!(s.next_queued().is_none());
+        // a lands in done -> b unblocks.
+        s.mark_done(&a.id).unwrap();
+        assert_eq!(s.next_queued().unwrap().id, b.id);
+        // A tombstoned dep never deadlocks the queue.
+        {
+            let mut data = s.data.lock().unwrap();
+            data.tasks.iter_mut().find(|t| t.id == b.id).unwrap().depends_on = vec!["gone".into(), a.id.clone()];
+        }
+        assert_eq!(s.next_queued().unwrap().id, b.id);
+        let _ = (no_project, done_col);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parent_deletion_tombstones_children() {
+        let (s, dir) = store("parent-del");
+        let parent = s.create_task("parent".into(), None, None, None).unwrap();
+        let child = s.create_task("child".into(), None, None, None).unwrap();
+        {
+            let mut data = s.data.lock().unwrap();
+            data.tasks.iter_mut().find(|t| t.id == child.id).unwrap().parent_id = Some(parent.id.clone());
+        }
+        s.delete_task(&parent.id).unwrap();
+        assert!(s.snapshot().tasks.is_empty(), "child tombstoned with its parent");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn task_col(s: &TaskStore, id: &str) -> String {
+        s.snapshot().tasks.iter().find(|t| t.id == id).unwrap().column_id.clone()
     }
 
     #[test]

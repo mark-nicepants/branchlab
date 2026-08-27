@@ -18,6 +18,7 @@ import type {
   ChatTurnEvent,
   GitHubLoginEvent,
   GitPayload,
+  NotifyPayload,
   PrPayload,
   ReviewInboxPayload,
   SessionPayload,
@@ -89,6 +90,10 @@ export function onChatContext(cb: (p: ChatContextEvent) => void) {
 }
 export function onChatCommands(cb: (p: ChatCommandsEvent) => void) {
   return on<ChatCommandsEvent>("chat:commands", cb);
+}
+
+export function onWorkspaceNotify(cb: (p: NotifyPayload) => void) {
+  return on<NotifyPayload>("workspace:notify", cb);
 }
 
 /** The "My work" board changed (driven by api.mock's in-memory board). */

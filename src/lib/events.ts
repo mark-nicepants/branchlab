@@ -19,6 +19,7 @@ import type {
   ChatTurnEvent,
   GitHubLoginEvent,
   GitPayload,
+  NotifyPayload,
   PrPayload,
   ReviewInboxPayload,
   SessionPayload,
@@ -49,6 +50,11 @@ export function onWorkspaceSession(cb: (p: SessionPayload) => void) {
 /** The active workspace's todo list. */
 export function onWorkspaceTodos(cb: (p: TodosPayload) => void) {
   return on<TodosPayload>("workspace:todos", cb);
+}
+
+/** Attention taps: turn done, awaiting input, task ready for review. */
+export function onWorkspaceNotify(cb: (p: NotifyPayload) => void) {
+  return on<NotifyPayload>("workspace:notify", cb);
 }
 
 /** Workspace provisioning progress (setup script running / finished / failed). */

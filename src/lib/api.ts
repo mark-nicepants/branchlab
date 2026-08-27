@@ -563,6 +563,12 @@ export function columnMove(columnId: string, position: number): Promise<void> {
   return invoke<void>("column_move", { columnId, position });
 }
 
+/** Start a session for a board task (backend builds the prompt, links the
+ *  card, and holds delivery until the workspace finishes provisioning). */
+export function taskStart(taskId: string): Promise<Workspace> {
+  return invoke<Workspace>("task_start", { taskId });
+}
+
 /** Move a task to the done-role column (the "mark as done" toast action). */
 export function taskMarkDone(taskId: string): Promise<void> {
   return invoke<void>("task_mark_done", { taskId });

@@ -15,7 +15,7 @@ import { MyWorkScreen } from "./components/mywork/MyWorkScreen";
 import { SessionsSidebar } from "./components/shell/SessionsSidebar";
 import { useAppRouter } from "./hooks/useAppRouter";
 import { EmptyState } from "./components/ui/empty-state";
-import { onWorkspaceSetup } from "./lib/events";
+import { onWorkspaceNotify, onWorkspaceSetup } from "./lib/events";
 import { offerMarkTaskDone } from "./lib/taskDone";
 import { useDesktopBehaviors } from "./hooks/useDesktopBehaviors";
 import { GitHubProvider } from "./hooks/useGitHub";
@@ -34,6 +34,7 @@ import {
   removeWorkspace,
   renameWorkspace,
   taskLinkWorkspace,
+  taskStart,
 } from "./lib/api";
 import {
   type EnvReport,
@@ -146,6 +147,21 @@ function App() {
     return () => void unlisten.then((f) => f());
   }, [refreshProjects]);
 
+  // The puppeteer's tap on the shoulder: a linked task finished a turn and
+  // its card moved to the review column.
+  useEffect(() => {
+    const unlisten = onWorkspaceNotify((p) => {
+      if (p.kind !== "task_review") return;
+      toast(`Ready for review: ${p.taskTitle ?? "task"}`, {
+        action: {
+          label: "Open session",
+          onClick: () => router.openSession(p.workspaceId),
+        },
+      });
+    });
+    return () => void unlisten.then((f) => f());
+  }, [router]);
+
   const allWorkspaces = useMemo(
     () => [...projects.flatMap((p) => p.workspaces), ...quickChats],
     [projects, quickChats],
@@ -249,24 +265,17 @@ function App() {
    *  a structured context block so the agent can see every task property. */
   const startTaskSession = useCallback(
     async (task: Task) => {
-      const project = projects.find((p) => p.id === task.projectId);
-      const prompt = [
-        task.title,
-        task.description ?? "",
-        "---",
-        "Task context (from the BranchLab board):",
-        `- Title: ${task.title}`,
-        project ? `- Project: ${project.name}` : null,
-        task.description ? `- Description: included above` : null,
-        `- Created: ${new Date(task.createdAt).toISOString()}`,
-        `- Task id: ${task.id}`,
-      ]
-        .filter((l): l is string => l !== null && l !== "")
-        .join("\n");
       try {
-        const ws = project
-          ? await createWorkspace(project.id, undefined, prompt)
-          : await createQuickChat(prompt);
+        if (task.projectId && projects.some((p) => p.id === task.projectId)) {
+          // Backend path: builds the prompt, links the card, holds delivery
+          // until provisioning finishes (same code the queue dispatcher uses).
+          openNewWorkspace(await taskStart(task.id));
+          return;
+        }
+        // Project-less tasks fall back to a quick chat (frontend-only path).
+        const prompt =
+          task.title + (task.description ? `\n\n${task.description}` : "");
+        const ws = await createQuickChat(prompt);
         openNewWorkspace(ws);
         await taskLinkWorkspace(task.id, ws.id);
       } catch (e) {
