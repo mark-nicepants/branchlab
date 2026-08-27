@@ -47,6 +47,7 @@ import type {
 } from "../../lib/types";
 import { useWorkspaceData } from "../../hooks/useWorkspaceData";
 import { hasOpenOverlay } from "../session/SessionView";
+import { TaskRef } from "./TaskRef";
 import {
   AssistantTurnView,
   SystemMessageView,
@@ -88,6 +89,9 @@ interface Props {
   onStartTask: (task: Task) => void;
   /** Delete a task's workspace (the done-column cleanup offer). */
   onCleanupWorkspace: (workspaceId: string) => void;
+  /** Focus this card on mount (the session header's task chip jump). */
+  focusTaskId: string | null;
+  onFocusTaskHandled: () => void;
 }
 
 /** Where a dragged card would land: before `before`, or at the end (null). */
@@ -118,6 +122,8 @@ export function MyWorkScreen({
   onOpenSession,
   onStartTask,
   onCleanupWorkspace,
+  focusTaskId,
+  onFocusTaskHandled,
 }: Props) {
   const [board, setBoard] = useState<BoardSnapshot>({ columns: [], tasks: [] });
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
@@ -127,6 +133,13 @@ export function MyWorkScreen({
   const [dropSpot, setDropSpot] = useState<DropSpot | null>(null);
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const { sessionByWorkspace, prByWorkspace } = useWorkspaceData();
+
+  // Arriving from a session's task chip: focus + reveal that card.
+  useEffect(() => {
+    if (!focusTaskId) return;
+    setFocusedId(focusTaskId);
+    onFocusTaskHandled();
+  }, [focusTaskId, onFocusTaskHandled]);
 
   useEffect(() => {
     let live = true;
@@ -613,7 +626,10 @@ function TaskCard({
       )}
     >
       <div className="flex items-start gap-2">
-        <div className="min-w-0 flex-1 text-sm leading-snug">{task.title}</div>
+        <div className="min-w-0 flex-1 text-sm leading-snug">
+          <TaskRef number={task.number} className="mr-1.5 align-middle" />
+          {task.title}
+        </div>
       </div>
       {(projectName || task.workspaceId || columnRole === "active") && (
         <div className="mt-2 flex items-center gap-1.5">
@@ -792,7 +808,7 @@ function TaskDialog({
         {/* A real header band: larger title, breathing room, hairline below. */}
         <div className="border-b border-border pb-4">
           <DialogTitle className="text-xl">
-            {state.mode === "edit" ? "Edit task" : "New task"}
+            {state.mode === "edit" ? `Task #${state.task.number}` : "New task"}
           </DialogTitle>
         </div>
         <div className="flex min-h-0 flex-1 flex-col gap-5 pt-2">

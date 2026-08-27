@@ -34,6 +34,8 @@ import { Chat, type WorkspaceAction } from "../Chat";
 import { CommitButton } from "../CommitButton";
 import { ChangesPanel } from "../layout/ChangesPanel";
 import { usePreferences } from "../PreferencesProvider";
+import { useTaskFor } from "../../hooks/useTaskFor";
+import { TaskRef } from "../mywork/TaskRef";
 import { PrPipeline } from "./PrPipeline";
 
 interface Props {
@@ -48,6 +50,8 @@ interface Props {
   onManageModels: () => void;
   /** Delete this workspace (from the chat's "PR merged" notice). */
   onDeleteWorkspace: (workspaceId: string) => void;
+  /** Jump to the linked board task (the header's task chip). */
+  onOpenTask: (taskId: string) => void;
 }
 
 /** Right-panel content mode. */
@@ -82,6 +86,7 @@ export function SessionView({
   sidebarCollapsed = false,
   onManageModels,
   onDeleteWorkspace,
+  onOpenTask,
 }: Props) {
   const { prefs, setPref } = usePreferences();
   const { diffStats, prByWorkspace } = useWorkspaceData();
@@ -92,6 +97,9 @@ export function SessionView({
   const isQuickChat = workspace.kind === "QuickChat";
   const isWorktree = workspace.kind === "Worktree";
   const changedCount = diffStats[workspace.id]?.files ?? 0;
+
+  // The board task driving this session, if any (renders the header chip).
+  const linkedTask = useTaskFor(workspace.id);
 
   // Chat store lives here (not in <Chat>) so the changes panel can read turn
   // state ("Last turn" scoping) and send batched review comments.
@@ -358,6 +366,15 @@ export function SessionView({
           >
             {workspaceLabel(workspace)}
           </span>
+          {linkedTask && (
+            <button
+              onClick={() => onOpenTask(linkedTask.id)}
+              className="ml-1 flex shrink-0 items-center rounded-full border border-border px-1.5 py-0.5 hover:bg-accent"
+              title={`Open task #${linkedTask.number}: ${linkedTask.title}`}
+            >
+              <TaskRef number={linkedTask.number} />
+            </button>
+          )}
         </div>
 
         <div className="flex shrink-0 items-center gap-1">

@@ -56,6 +56,10 @@ pub struct Column {
 #[serde(rename_all = "camelCase")]
 pub struct Task {
     pub id: String,
+    /// Human reference (#7) — incremental per board, assigned at creation.
+    /// ponytail: per-device counter; a future cloud sync needs a merge rule.
+    #[serde(default)]
+    pub number: u64,
     pub title: String,
     #[serde(default)]
     pub description: Option<String>,
@@ -86,6 +90,9 @@ pub struct Task {
 struct BoardData {
     columns: Vec<Column>,
     tasks: Vec<Task>,
+    /// Next task number to hand out (backfilled from existing tasks on load).
+    #[serde(default)]
+    next_task_number: u64,
 }
 
 /// What the frontend sees: live records only, sorted by position.
@@ -136,6 +143,7 @@ impl TaskStore {
         let mut data: BoardData =
             std::fs::read_to_string(&file).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
         canonicalize(&mut data);
+        backfill_numbers(&mut data);
         let store = Self { data: Mutex::new(data), file };
         store.persist(&store.data.lock().unwrap());
         store
@@ -178,8 +186,11 @@ impl TaskStore {
         };
         let position = max_position(&data, &column_id) + STRIDE;
         let now = now_ms();
+        let number = data.next_task_number.max(1);
+        data.next_task_number = number + 1;
         let task = Task {
             id: new_id(),
+            number,
             title,
             description: normalize(description),
             project_id: normalize(project_id),
@@ -455,6 +466,20 @@ fn seed_default_columns(data: &mut BoardData) {
     }
 }
 
+/// Assign numbers to tasks created before numbering existed (oldest first)
+/// and make sure the counter is ahead of every number ever handed out
+/// (tombstones included — numbers are never reused).
+fn backfill_numbers(data: &mut BoardData) {
+    let mut max = data.tasks.iter().map(|t| t.number).max().unwrap_or(0);
+    let mut unnumbered: Vec<usize> = (0..data.tasks.len()).filter(|&i| data.tasks[i].number == 0).collect();
+    unnumbered.sort_by_key(|&i| data.tasks[i].created_at);
+    for i in unnumbered {
+        max += 1;
+        data.tasks[i].number = max;
+    }
+    data.next_task_number = data.next_task_number.max(max + 1);
+}
+
 /// The prompt a task-dispatched session opens with: `display` is the readable
 /// task text shown in the transcript; `sent` carries the structured context
 /// block so the agent can see every task property.
@@ -465,11 +490,14 @@ pub fn task_prompt(task: &Task, project_name: Option<&str>) -> (String, String) 
     };
     let mut sent = display.clone();
     sent.push_str("\n\n---\nTask context (from the BranchLab board):\n");
-    sent.push_str(&format!("- Title: {}\n", task.title));
+    sent.push_str(&format!("- Task: #{} {}\n", task.number, task.title));
     if let Some(p) = project_name {
         sent.push_str(&format!("- Project: {p}\n"));
     }
     sent.push_str(&format!("- Task id: {}\n", task.id));
+    sent.push_str("Refer to this task as #");
+    sent.push_str(&task.number.to_string());
+    sent.push_str(" when summarizing.\n");
     (display, sent)
 }
 
@@ -747,6 +775,31 @@ mod tests {
         }
         assert_eq!(s.next_queued().unwrap().id, b.id);
         let _ = no_project;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn numbers_are_incremental_and_backfilled() {
+        let (s, dir) = store("numbers");
+        let a = s.create_task("a".into(), None, None, None).unwrap();
+        let b = s.create_task("b".into(), None, None, None).unwrap();
+        assert_eq!((a.number, b.number), (1, 2));
+        s.delete_task(&b.id).unwrap();
+        // Numbers are never reused, even after tombstoning.
+        assert_eq!(s.create_task("c".into(), None, None, None).unwrap().number, 3);
+
+        // Pre-numbering rows (number=0) get backfilled oldest-first on load.
+        {
+            let mut data = s.data.lock().unwrap();
+            data.tasks.iter_mut().for_each(|t| t.number = 0);
+            data.next_task_number = 0;
+            s.persist(&data);
+        }
+        let s2 = TaskStore::load(dir.join("tasks.json"));
+        let snap = s2.snapshot();
+        let a2 = snap.tasks.iter().find(|t| t.id == a.id).unwrap();
+        assert!(a2.number > 0);
+        assert_eq!(s2.create_task("d".into(), None, None, None).unwrap().number, 4);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

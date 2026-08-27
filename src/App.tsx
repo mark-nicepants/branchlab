@@ -72,6 +72,8 @@ function App() {
     "general" | "scripts"
   >("general");
   const [reloadNonce, setReloadNonce] = useState(0);
+  // Card to focus when My work opens via a session's task chip.
+  const [focusTaskId, setFocusTaskId] = useState<string | null>(null);
 
   useDesktopBehaviors();
 
@@ -415,6 +417,10 @@ function App() {
                 sidebarCollapsed={sidebarCollapsed}
                 onManageModels={() => router.openSettings("models")}
                 onDeleteWorkspace={(id) => void deleteWorkspaceFromChat(id)}
+                onOpenTask={(taskId) => {
+                  setFocusTaskId(taskId);
+                  router.navigate("my-work");
+                }}
               />
             ) : view === "search" ? (
               <SearchScreen
@@ -429,6 +435,8 @@ function App() {
                 onOpenSession={(id) => router.openSession(id)}
                 onStartTask={(task) => void startTaskSession(task)}
                 onCleanupWorkspace={(id) => void deleteWorkspaceFromChat(id)}
+                focusTaskId={focusTaskId}
+                onFocusTaskHandled={() => setFocusTaskId(null)}
               />
             ) : view === "automations" ? (
               <StubScreen label="Automations" />

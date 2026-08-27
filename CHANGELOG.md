@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   needs you / in review / …) that jumps straight into the conversation, and
   the agent receives the full task context (title, description, project)
   with a TASK badge on the first message.
+- Every task has a number (#1, #2, …) shown on its card and dialog — the
+  agent is told to reference it, and a task chip in the session header jumps
+  back to the exact card on the board.
 - Moving a card to Done with a live session offers to clean up its
   workspace — and after cleanup the card keeps the conversation: a
   "chat archive" chip opens the full read-only transcript for future

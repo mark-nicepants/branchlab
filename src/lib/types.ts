@@ -636,6 +636,8 @@ export interface BoardColumn {
 
 export interface Task {
   id: string;
+  /** Human reference (#7): incremental, never reused. */
+  number: number;
   title: string;
   description: string | null;
   projectId: string | null;
