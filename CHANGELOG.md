@@ -21,16 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Task-started sessions are labeled with a TASK badge on their first
   message, and the agent receives the full task context (title, description,
   project, task id).
-
-### Added
-
-- "My work" is now a task board: custom columns (rename, reorder, add,
-  delete, with configurable Active/Done roles), drag-and-drop cards tagged by
-  project, quick-add per column, and a project filter. A card can start an
-  agent session (its text becomes the first prompt) and then tracks it
-  automatically — into the Active column when the session starts, into Done
-  when its PR merges or the workspace is deleted. Tasks are stored locally
-  and shaped for future cloud sync.
+- "My work" is a task board: drag-and-drop cards tagged by project,
+  quick-add per column, a project filter, an edit dialog with a markdown
+  editor (toolbar + preview), and import-from-GitHub-issue with search.
+  Every card shows its session's live status (queued / working / needs you /
+  in review / …) — click the chip to jump into the session. Tasks are
+  stored locally and shaped for future cloud sync.
 - When a workspace's pull request is merged, a notice appears in its chat
   with a "Delete workspace" button — teardown runs, the session closes, and
   uncommitted changes still get the usual warning first.
