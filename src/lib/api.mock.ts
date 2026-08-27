@@ -9,6 +9,8 @@ import type {
   BoardSnapshot,
   ColumnRole,
   Task,
+  UnlinkedTask,
+  IssueSummary,
   ChatAttachment,
   ChatSnapshot,
   ConfigFile,
@@ -545,12 +547,53 @@ export function generateSetupScripts(
   );
 }
 
-export function removeWorkspace(workspaceId: string): Promise<void> {
+export function taskMarkDone(taskId: string): Promise<void> {
+  const done = boardCols.find((c) => c.role === "done");
+  if (done)
+    boardTasks = boardTasks.map((t) =>
+      t.id === taskId ? { ...t, columnId: done.id } : t,
+    );
+  emitBoard();
+  return Promise.resolve();
+}
+
+export function listProjectIssues(
+  projectId: string,
+): Promise<IssueSummary[]> {
+  console.log("list issues", projectId);
+  return new Promise((resolve) =>
+    setTimeout(
+      () =>
+        resolve([
+          { number: 42, title: "Dark mode flickers on launch", body: "Steps to reproduce: open the app at night.", url: "https://github.com/acme/repo/issues/42", author: "octocat" },
+          { number: 57, title: "Migrate settings screen to new design system", body: null, url: "https://github.com/acme/repo/issues/57", author: "hubot" },
+          { number: 61, title: "Add CSV export", body: "Requested by three customers.", url: "https://github.com/acme/repo/issues/61", author: "octocat" },
+        ]),
+      600,
+    ),
+  );
+}
+
+export function removeWorkspace(
+  workspaceId: string,
+): Promise<UnlinkedTask | null> {
   for (const p of projects) {
     p.workspaces = p.workspaces.filter((w) => w.id !== workspaceId);
   }
   quickChats = quickChats.filter((w) => w.id !== workspaceId);
-  return Promise.resolve();
+  // Mirror the backend: unlink a linked board card and offer "mark done"
+  // unless it already sits in the done column.
+  const done = boardCols.find((c) => c.role === "done");
+  const linked = boardTasks.find((t) => t.workspaceId === workspaceId);
+  if (linked) {
+    boardTasks = boardTasks.map((t) =>
+      t.id === linked.id ? { ...t, workspaceId: null } : t,
+    );
+    emitBoard();
+    if (linked.columnId !== done?.id)
+      return Promise.resolve({ taskId: linked.id, title: linked.title });
+  }
+  return Promise.resolve(null);
 }
 
 export function listWorkspaces(): Promise<Workspace[]> {

@@ -75,6 +75,7 @@ import { toast } from "sonner";
 import { useWorkspaceData } from "../../hooks/useWorkspaceData";
 import { openExternal, removeProject, removeWorkspace } from "../../lib/api";
 import { onWorkspaceSetup } from "../../lib/events";
+import { offerMarkTaskDone } from "../../lib/taskDone";
 import {
   workspaceLabel,
   type PipelinePhase,
@@ -214,9 +215,10 @@ export function SessionsSidebar({
   async function deleteWorkspace(w: Workspace) {
     setDeleting(w.id, true);
     try {
-      await removeWorkspace(w.id, false);
+      const unlinked = await removeWorkspace(w.id, false);
       onProjectsChanged();
       toast.success(`Deleted workspace ${workspaceLabel(w)}`);
+      offerMarkTaskDone(unlinked);
     } catch (e) {
       const uncommitted = String(e).includes("uncommitted changes");
       toast.error(
@@ -232,7 +234,10 @@ export function SessionsSidebar({
             onClick: () => {
               setDeleting(w.id, true);
               void removeWorkspace(w.id, true)
-                .then(onProjectsChanged)
+                .then((unlinked) => {
+                  onProjectsChanged();
+                  offerMarkTaskDone(unlinked);
+                })
                 .catch((e2) =>
                   toast.error("Could not delete workspace", {
                     description: String(e2),

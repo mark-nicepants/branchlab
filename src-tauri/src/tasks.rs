@@ -81,6 +81,15 @@ pub struct BoardSnapshot {
     pub tasks: Vec<Task>,
 }
 
+/// A task whose workspace link was just severed by a deletion — the UI
+/// offers to mark it done instead of the store deciding.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnlinkedTask {
+    pub task_id: String,
+    pub title: String,
+}
+
 /// Partial task update (None = leave unchanged; `Some(None)` isn't needed —
 /// clearing project/description passes an empty string, normalized below).
 #[derive(Debug, Default, Deserialize)]
@@ -257,16 +266,6 @@ impl TaskStore {
     /// The linked session finished its arc (PR merged). Move to the done
     /// column. Quiet no-op when nothing is linked.
     pub fn on_workspace_done(&self, workspace_id: &str) -> bool {
-        self.finish_linked(workspace_id, false)
-    }
-
-    /// The linked workspace was deleted: move to done AND clear the link
-    /// (the id would dangle).
-    pub fn on_workspace_removed(&self, workspace_id: &str) -> bool {
-        self.finish_linked(workspace_id, true)
-    }
-
-    fn finish_linked(&self, workspace_id: &str, clear_link: bool) -> bool {
         let mut data = self.data.lock().unwrap();
         let done = role_column(&data, ColumnRole::Done);
         let max = done.as_ref().map(|c| max_position(&data, c)).unwrap_or(0.0);
@@ -281,12 +280,43 @@ impl TaskStore {
                 task.position = max + STRIDE;
             }
         }
-        if clear_link {
-            task.workspace_id = None;
-        }
         task.updated_at = now_ms();
         self.persist(&data);
         true
+    }
+
+    /// The linked workspace was deleted: only clear the link (the id would
+    /// dangle) — deletion is not proof the work landed, so nothing moves.
+    /// Returns the task so the UI can OFFER "mark as done"; suppressed when
+    /// the task already sits in the done column (e.g. merge moved it first).
+    pub fn on_workspace_removed(&self, workspace_id: &str) -> Option<UnlinkedTask> {
+        let mut data = self.data.lock().unwrap();
+        let done = role_column(&data, ColumnRole::Done);
+        let task = data
+            .tasks
+            .iter_mut()
+            .find(|t| t.deleted_at.is_none() && t.workspace_id.as_deref() == Some(workspace_id))?;
+        task.workspace_id = None;
+        task.updated_at = now_ms();
+        let offer = (done.as_deref() != Some(task.column_id.as_str()))
+            .then(|| UnlinkedTask { task_id: task.id.clone(), title: task.title.clone() });
+        self.persist(&data);
+        offer
+    }
+
+    /// Move a task to the done-role column (the "mark as done" toast action).
+    pub fn mark_done(&self, id: &str) -> Result<(), String> {
+        let mut data = self.data.lock().unwrap();
+        let done = role_column(&data, ColumnRole::Done).ok_or("no done column")?;
+        let max = max_position(&data, &done);
+        let task = live_task(&mut data, id)?;
+        if task.column_id != done {
+            task.column_id = done;
+            task.position = max + STRIDE;
+        }
+        task.updated_at = now_ms();
+        self.persist(&data);
+        Ok(())
     }
 
     pub fn create_column(&self, name: String) -> Result<Column, String> {
@@ -472,6 +502,13 @@ pub fn task_link_workspace(
 }
 
 #[tauri::command]
+pub fn task_mark_done(task_id: String, app: AppHandle, tasks: State<TaskStore>) -> Result<(), String> {
+    tasks.mark_done(&task_id)?;
+    emit_changed(&app, &tasks);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn column_create(name: String, app: AppHandle, tasks: State<TaskStore>) -> Result<Column, String> {
     let col = tasks.create_column(name)?;
     emit_changed(&app, &tasks);
@@ -575,9 +612,25 @@ mod tests {
         assert!(s.on_workspace_done("ws1"));
         assert_eq!(s.snapshot().tasks[0].column_id, cols[2].id, "merge moves to done");
 
-        assert!(s.on_workspace_removed("ws1"));
+        // Removal only unlinks; the task already sits in Done, so no offer.
+        assert!(s.on_workspace_removed("ws1").is_none(), "already done: no mark-done offer");
         assert_eq!(s.snapshot().tasks[0].workspace_id, None, "deletion clears the link");
-        assert!(!s.on_workspace_removed("ws1"), "no linked task left");
+        assert!(s.on_workspace_removed("ws1").is_none(), "no linked task left");
+
+        // A task deleted mid-flight (not in Done) gets the offer instead.
+        let t2 = s.create_task("mid-flight".into(), None, None, None).unwrap();
+        s.link_workspace(&t2.id, "ws2").unwrap();
+        let offer = s.on_workspace_removed("ws2").expect("offer to mark done");
+        assert_eq!(offer.title, "mid-flight");
+        let snap = s.snapshot();
+        let t2s = snap.tasks.iter().find(|t| t.id == t2.id).unwrap();
+        assert_eq!(t2s.column_id, cols[1].id, "stays in the active column until the user decides");
+        s.mark_done(&t2.id).unwrap();
+        assert_eq!(
+            s.snapshot().tasks.iter().find(|t| t.id == t2.id).unwrap().column_id,
+            cols[2].id,
+            "mark_done moves it"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

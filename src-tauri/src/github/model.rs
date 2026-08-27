@@ -97,6 +97,16 @@ pub struct ReviewItem {
 /// A PR selectable in the "create workspace from PR" picker.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct IssueSummary {
+    pub number: i64,
+    pub title: String,
+    pub body: Option<String>,
+    pub url: String,
+    pub author: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PrSummary {
     pub number: i64,
     pub title: String,

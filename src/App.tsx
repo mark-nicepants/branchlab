@@ -16,6 +16,7 @@ import { SessionsSidebar } from "./components/shell/SessionsSidebar";
 import { useAppRouter } from "./hooks/useAppRouter";
 import { EmptyState } from "./components/ui/empty-state";
 import { onWorkspaceSetup } from "./lib/events";
+import { offerMarkTaskDone } from "./lib/taskDone";
 import { useDesktopBehaviors } from "./hooks/useDesktopBehaviors";
 import { GitHubProvider } from "./hooks/useGitHub";
 import { useShortcuts } from "./hooks/useShortcuts";
@@ -38,6 +39,7 @@ import {
   type EnvReport,
   type ProjectView,
   type Task,
+  type UnlinkedTask,
   type Workspace,
 } from "./lib/types";
 
@@ -278,9 +280,10 @@ function App() {
     async (id: string) => {
       try {
         // Force: the scratch dir is app-managed and has no git state to lose.
-        await removeWorkspace(id, true);
+        const unlinked = await removeWorkspace(id, true);
         router.closeSession(id);
         await refreshProjects();
+        offerMarkTaskDone(unlinked);
       } catch (e) {
         toast.error("Could not delete quick chat", { description: String(e) });
       }
@@ -292,14 +295,14 @@ function App() {
   // sidebar's delete flow, plus closing the session view being deleted.
   const deleteWorkspaceFromChat = useCallback(
     async (id: string) => {
-      const finish = () => {
+      const finish = (unlinked: UnlinkedTask | null) => {
         router.closeSession(id);
         void refreshProjects();
         toast.success("Workspace deleted");
+        offerMarkTaskDone(unlinked);
       };
       try {
-        await removeWorkspace(id, false);
-        finish();
+        finish(await removeWorkspace(id, false));
       } catch (e) {
         const uncommitted = String(e).includes("uncommitted changes");
         toast.error(

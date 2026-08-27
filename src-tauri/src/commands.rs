@@ -133,6 +133,20 @@ pub async fn list_project_prs(
     client.list_open_prs(&owner, &repo).await
 }
 
+/// Open issues for a project's repo (the task board's GitHub import picker).
+#[tauri::command]
+pub async fn list_project_issues(
+    project_id: String,
+    registry: State<'_, Registry>,
+    github: State<'_, crate::github::GithubManager>,
+) -> Result<Vec<crate::github::model::IssueSummary>, String> {
+    let root = registry.repo_root(&project_id).ok_or("unknown project")?;
+    let override_id = registry.project_account_id(&project_id);
+    let (account, owner, repo) = github.resolve_account(&root, override_id.as_deref())?;
+    let client = github.client_for(&account.id)?;
+    client.list_open_issues(&owner, &repo).await
+}
+
 /// Check a PR out into a fresh worktree and register it as a workspace.
 #[tauri::command]
 pub async fn create_workspace_from_pr(
@@ -179,7 +193,7 @@ pub async fn remove_workspace(
     servers: State<'_, ServerManager>,
     watcher: State<'_, GitWatcher>,
     tasks: State<'_, crate::tasks::TaskStore>,
-) -> Result<(), String> {
+) -> Result<Option<crate::tasks::UnlinkedTask>, String> {
     let setup = setup.inner().clone();
     let ws_id = workspace_id.clone();
     // Blocking script wait (≤30s) off the async pool's core threads.
@@ -187,12 +201,13 @@ pub async fn remove_workspace(
     servers.stop(&workspace_id);
     watcher.unwatch(&workspace_id);
     registry.remove_workspace(&workspace_id, force)?;
-    // Auto-track: a "My work" card linked to this session moves to its done
-    // column and drops the (now dangling) link.
-    if tasks.on_workspace_removed(&workspace_id) {
+    // A linked "My work" card only loses its link here — moving it to Done is
+    // the user's call, so return the task and let the UI offer it.
+    let unlinked = tasks.on_workspace_removed(&workspace_id);
+    if unlinked.is_some() {
         let _ = app.emit("tasks:changed", tasks.snapshot());
     }
-    Ok(())
+    Ok(unlinked)
 }
 
 #[tauri::command]

@@ -16,6 +16,7 @@ import {
 } from "react";
 import {
   CircleDot,
+  CloudDownload,
   GripVertical,
   Loader2,
   MessageSquare,
@@ -30,6 +31,7 @@ import {
   columnDelete,
   columnMove,
   columnUpdate,
+  listProjectIssues,
   taskCreate,
   taskDelete,
   taskMove,
@@ -38,6 +40,7 @@ import {
 import { onTasksChanged } from "../../lib/events";
 import type {
   BoardColumn,
+  IssueSummary,
   BoardSnapshot,
   PrPayload,
   ProjectView,
@@ -779,6 +782,30 @@ function TaskDialog({
   const [title, setTitle] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
   const [projectId, setProjectId] = useState(task?.projectId ?? "");
+  // GitHub import (create mode): open issues of the selected project's repo.
+  const [issues, setIssues] = useState<IssueSummary[] | null>(null);
+  const [loadingIssues, setLoadingIssues] = useState(false);
+
+  const importIssues = () => {
+    if (!projectId) return;
+    setLoadingIssues(true);
+    listProjectIssues(projectId)
+      .then(setIssues)
+      .catch((e) =>
+        toast.error("Could not load GitHub issues", { description: String(e) }),
+      )
+      .finally(() => setLoadingIssues(false));
+  };
+
+  const applyIssue = (issue: IssueSummary) => {
+    setTitle(issue.title);
+    setDescription(
+      [`GitHub issue #${issue.number} by ${issue.author}`, issue.url, "", issue.body ?? ""]
+        .join("\n")
+        .trim(),
+    );
+    setIssues(null);
+  };
 
   const save = () => {
     if (!title.trim()) return;
@@ -804,10 +831,13 @@ function TaskDialog({
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="flex h-[80vh] w-[min(60rem,92vw)] flex-col sm:max-w-none">
-        <DialogTitle>
-          {state.mode === "edit" ? "Edit task" : "New task"}
-        </DialogTitle>
-        <div className="flex min-h-0 flex-1 flex-col gap-4">
+        {/* A real header band: larger title, breathing room, hairline below. */}
+        <div className="border-b border-border pb-4">
+          <DialogTitle className="text-xl">
+            {state.mode === "edit" ? "Edit task" : "New task"}
+          </DialogTitle>
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col gap-5 pt-2">
           <Field label="Title">
             <Input
               autoFocus
@@ -817,20 +847,66 @@ function TaskDialog({
               placeholder="What needs doing?"
             />
           </Field>
-          <Field label="Project">
-            <select
-              value={projectId}
-              onChange={(e) => setProjectId(e.target.value)}
-              className="h-9 w-72 rounded-md border border-input bg-transparent px-3 text-sm"
-            >
-              <option value="">No project (starts a quick chat)</option>
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
+          <div className="flex items-end gap-3">
+            <Field label="Project">
+              <select
+                value={projectId}
+                onChange={(e) => setProjectId(e.target.value)}
+                className="h-9 w-72 rounded-md border border-input bg-transparent px-3 text-sm"
+              >
+                <option value="">No project (starts a quick chat)</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            {state.mode === "create" && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!projectId || loadingIssues}
+                onClick={importIssues}
+                title={
+                  projectId
+                    ? "Fill this task from an open GitHub issue"
+                    : "Select a project first"
+                }
+              >
+                {loadingIssues ? (
+                  <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                ) : (
+                  <CloudDownload className="mr-1.5 size-3.5" />
+                )}
+                Import from GitHub
+              </Button>
+            )}
+          </div>
+          {issues && (
+            <div className="max-h-48 overflow-y-auto rounded-md border border-border">
+              {issues.length === 0 && (
+                <div className="px-3 py-2 text-sm text-muted-foreground">
+                  No open issues in this repo.
+                </div>
+              )}
+              {issues.map((issue) => (
+                <button
+                  key={issue.number}
+                  onClick={() => applyIssue(issue)}
+                  className="flex w-full items-baseline gap-2 border-b border-border/50 px-3 py-2 text-left text-sm last:border-b-0 hover:bg-accent"
+                >
+                  <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                    #{issue.number}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{issue.title}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {issue.author}
+                  </span>
+                </button>
               ))}
-            </select>
-          </Field>
+            </div>
+          )}
           <div className="flex min-h-0 flex-1 flex-col">
             <Field label="Description" className="flex min-h-0 flex-1 flex-col">
               <Textarea

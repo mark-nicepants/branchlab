@@ -12,7 +12,7 @@ use std::time::Duration;
 use octocrab::Octocrab;
 use serde::Deserialize;
 
-use crate::github::model::{PrSummary, ReviewItem, ReviewReason};
+use crate::github::model::{IssueSummary, PrSummary, ReviewItem, ReviewReason};
 
 /// Hard ceiling on any single API request.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -180,6 +180,27 @@ fn parse_pr_status(pr: &serde_json::Value) -> crate::git::PrStatus {
 impl GithubClient {
     /// Open PRs for one repo, bucketed for the "create workspace from PR"
     /// picker: `mine` (authored by you), `review_requested`, `assigned`.
+    /// Open issues (PRs excluded), newest first — feeds the task board's
+    /// "import from GitHub" picker.
+    pub async fn list_open_issues(&self, owner: &str, repo: &str) -> Result<Vec<IssueSummary>, String> {
+        let page =
+            Self::timed(self.crab.issues(owner, repo).list().state(octocrab::params::State::Open).per_page(50).send())
+                .await?;
+        Ok(page
+            .items
+            .into_iter()
+            // The issues endpoint also returns PRs; keep real issues only.
+            .filter(|i| i.pull_request.is_none())
+            .map(|i| IssueSummary {
+                number: i.number as i64,
+                title: i.title,
+                body: i.body,
+                url: i.html_url.to_string(),
+                author: i.user.login,
+            })
+            .collect())
+    }
+
     pub async fn list_open_prs(&self, owner: &str, repo: &str) -> Result<Vec<PrSummary>, String> {
         let base = format!("repo:{owner}/{repo} is:open is:pr");
         let body = serde_json::json!({

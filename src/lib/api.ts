@@ -9,6 +9,8 @@ import type {
   BoardSnapshot,
   ColumnRole,
   Task,
+  UnlinkedTask,
+  IssueSummary,
   AutofixMode,
   PrSummary,
   ReviewInboxItem,
@@ -131,12 +133,16 @@ export function retrySetup(workspaceId: string): Promise<void> {
 }
 
 /** Remove a worktree workspace (stops its server first; runs the project's
- *  teardown script, so this can take up to ~30s). */
+ *  teardown script, so this can take up to ~30s). Resolves to the task that
+ *  was linked to it, if any — the UI offers to mark it done. */
 export function removeWorkspace(
   workspaceId: string,
   force: boolean,
-): Promise<void> {
-  return invoke<void>("remove_workspace", { workspaceId, force });
+): Promise<UnlinkedTask | null> {
+  return invoke<UnlinkedTask | null>("remove_workspace", {
+    workspaceId,
+    force,
+  });
 }
 
 export function listWorkspaces(): Promise<Workspace[]> {
@@ -555,6 +561,18 @@ export function columnUpdate(
 
 export function columnMove(columnId: string, position: number): Promise<void> {
   return invoke<void>("column_move", { columnId, position });
+}
+
+/** Move a task to the done-role column (the "mark as done" toast action). */
+export function taskMarkDone(taskId: string): Promise<void> {
+  return invoke<void>("task_mark_done", { taskId });
+}
+
+/** Open GitHub issues for a project's repo (task-board import picker). */
+export function listProjectIssues(
+  projectId: string,
+): Promise<IssueSummary[]> {
+  return invoke<IssueSummary[]>("list_project_issues", { projectId });
 }
 
 /** Fails while the column still contains tasks. */

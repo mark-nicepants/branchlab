@@ -647,3 +647,18 @@ export interface BoardSnapshot {
   columns: BoardColumn[];
   tasks: Task[];
 }
+
+/** A task whose workspace link was severed by a deletion — offer "mark done". */
+export interface UnlinkedTask {
+  taskId: string;
+  title: string;
+}
+
+/** An open GitHub issue (the task board's import picker). */
+export interface IssueSummary {
+  number: number;
+  title: string;
+  body: string | null;
+  url: string;
+  author: string;
+}
