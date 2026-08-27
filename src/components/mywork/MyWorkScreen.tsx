@@ -3,10 +3,21 @@
 // mutation comes back authoritatively via the `tasks:changed` event; drags
 // apply optimistically in between. Ordering uses fractional positions — the
 // frontend computes midpoints, the backend renumbers when gaps exhaust.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+//
+// HTML5 drag-and-drop requires `dragDropEnabled: false` on the Tauri window
+// (tauri.conf.json) — with it on, WKWebView's native file-drop interception
+// swallows every dragover/drop inside the webview.
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   CircleDot,
   GripVertical,
+  Loader2,
   MessageSquare,
   MoreHorizontal,
   Play,
@@ -28,10 +39,14 @@ import { onTasksChanged } from "../../lib/events";
 import type {
   BoardColumn,
   BoardSnapshot,
+  PrPayload,
   ProjectView,
+  SessionPayload,
   Task,
   Workspace,
 } from "../../lib/types";
+import { useWorkspaceData } from "../../hooks/useWorkspaceData";
+import { hasOpenOverlay } from "../session/SessionView";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -41,11 +56,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -65,6 +76,17 @@ interface Props {
   onStartTask: (task: Task) => void;
 }
 
+/** Where a dragged card would land: before `before`, or at the end (null). */
+interface DropSpot {
+  columnId: string;
+  before: string | null;
+}
+
+/** Create-or-edit dialog state. */
+type DialogState =
+  | { mode: "create"; columnId: string }
+  | { mode: "edit"; task: Task };
+
 /** Fractional index for inserting before `next` in a sorted sibling list. */
 function positionBefore(sorted: Task[], next: Task | null): number {
   if (!next) {
@@ -79,9 +101,11 @@ function positionBefore(sorted: Task[], next: Task | null): number {
 export function MyWorkScreen({ projects, onOpenSession, onStartTask }: Props) {
   const [board, setBoard] = useState<BoardSnapshot>({ columns: [], tasks: [] });
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
-  const [editing, setEditing] = useState<Task | null>(null);
+  const [dialog, setDialog] = useState<DialogState | null>(null);
   const [dragTaskId, setDragTaskId] = useState<string | null>(null);
-  const [dropColumn, setDropColumn] = useState<string | null>(null);
+  const [dropSpot, setDropSpot] = useState<DropSpot | null>(null);
+  const [focusedId, setFocusedId] = useState<string | null>(null);
+  const { sessionByWorkspace, prByWorkspace } = useWorkspaceData();
 
   useEffect(() => {
     let live = true;
@@ -106,8 +130,7 @@ export function MyWorkScreen({ projects, onOpenSession, onStartTask }: Props) {
   );
   // Filter chips: only projects that actually have cards.
   const filterProjects = useMemo(
-    () =>
-      projects.filter((p) => board.tasks.some((t) => t.projectId === p.id)),
+    () => projects.filter((p) => board.tasks.some((t) => t.projectId === p.id)),
     [projects, board.tasks],
   );
   const visibleTasks = useMemo(
@@ -116,6 +139,14 @@ export function MyWorkScreen({ projects, onOpenSession, onStartTask }: Props) {
         ? board.tasks.filter((t) => t.projectId === projectFilter)
         : board.tasks,
     [board.tasks, projectFilter],
+  );
+  /** Visible tasks per column, in board order (the keyboard grid). */
+  const grid = useMemo(
+    () =>
+      board.columns.map((c) =>
+        visibleTasks.filter((t) => t.columnId === c.id),
+      ),
+    [board.columns, visibleTasks],
   );
 
   const moveTask = useCallback(
@@ -141,6 +172,66 @@ export function MyWorkScreen({ projects, onOpenSession, onStartTask }: Props) {
         toast.error("Could not add column", { description: String(e) }),
       );
   }, []);
+
+  // ── Keyboard: N = new task; arrows move card focus; Space/Enter opens. ──
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        hasOpenOverlay() ||
+        dialog !== null ||
+        target?.closest("input, textarea, [contenteditable=true]")
+      ) {
+        return;
+      }
+      if (e.key === "n" || e.key === "N") {
+        e.preventDefault();
+        const first = board.columns[0];
+        if (first) setDialog({ mode: "create", columnId: first.id });
+        return;
+      }
+      const nav = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
+      const isOpenKey = e.key === " " || e.key === "Enter";
+      if (!nav.includes(e.key) && !isOpenKey) return;
+
+      let ci = grid.findIndex((col) => col.some((t) => t.id === focusedId));
+      let ri = ci >= 0 ? grid[ci].findIndex((t) => t.id === focusedId) : -1;
+
+      if (isOpenKey) {
+        if (ci >= 0) {
+          e.preventDefault();
+          setDialog({ mode: "edit", task: grid[ci][ri] });
+        }
+        return;
+      }
+      e.preventDefault();
+      if (ci < 0) {
+        // Nothing focused: land on the first card of the first non-empty column.
+        ci = grid.findIndex((col) => col.length > 0);
+        if (ci < 0) return;
+        setFocusedId(grid[ci][0].id);
+        return;
+      }
+      if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+        ri = Math.min(
+          Math.max(ri + (e.key === "ArrowDown" ? 1 : -1), 0),
+          grid[ci].length - 1,
+        );
+      } else {
+        // Left/right: nearest non-empty column in that direction, same row.
+        const dir = e.key === "ArrowRight" ? 1 : -1;
+        let next = ci + dir;
+        while (next >= 0 && next < grid.length && grid[next].length === 0)
+          next += dir;
+        if (next < 0 || next >= grid.length) return;
+        ci = next;
+        ri = Math.min(ri, grid[ci].length - 1);
+      }
+      setFocusedId(grid[ci][ri].id);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [grid, focusedId, dialog, board.columns]);
 
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
@@ -172,24 +263,29 @@ export function MyWorkScreen({ projects, onOpenSession, onStartTask }: Props) {
         </Button>
       </div>
 
-      <div className="flex-1 overflow-x-auto px-6 pb-6">
-        <div className="flex h-full items-start gap-4">
-          {board.columns.map((col) => (
+      <div className="min-h-0 flex-1 overflow-x-auto px-6 pb-6">
+        <div className="flex h-full items-stretch gap-4">
+          {board.columns.map((col, i) => (
             <BoardColumnView
               key={col.id}
               column={col}
               columns={board.columns}
-              tasks={visibleTasks.filter((t) => t.columnId === col.id)}
+              tasks={grid[i]}
               projectNames={projectNames}
               workspaces={allWorkspaces}
+              sessions={sessionByWorkspace}
+              prs={prByWorkspace}
               dragTaskId={dragTaskId}
-              isDropTarget={dropColumn === col.id}
-              onDragStateChange={(taskId, over) => {
+              dropSpot={dropSpot?.columnId === col.id ? dropSpot : null}
+              focusedId={focusedId}
+              onDragStateChange={(taskId, spot) => {
                 if (taskId !== undefined) setDragTaskId(taskId);
-                if (over !== undefined) setDropColumn(over);
+                if (spot !== undefined) setDropSpot(spot);
               }}
               onMoveTask={moveTask}
-              onEdit={setEditing}
+              onEdit={(t) => setDialog({ mode: "edit", task: t })}
+              onAdd={() => setDialog({ mode: "create", columnId: col.id })}
+              onFocus={setFocusedId}
               onStartTask={onStartTask}
               onOpenSession={onOpenSession}
             />
@@ -197,11 +293,11 @@ export function MyWorkScreen({ projects, onOpenSession, onStartTask }: Props) {
         </div>
       </div>
 
-      {editing && (
-        <EditTaskDialog
-          task={editing}
+      {dialog && (
+        <TaskDialog
+          state={dialog}
           projects={projects}
-          onClose={() => setEditing(null)}
+          onClose={() => setDialog(null)}
         />
       )}
     </div>
@@ -232,17 +328,27 @@ function FilterChip({
   );
 }
 
+/** A 2px insertion line shown at the drop position while dragging. */
+function DropLine() {
+  return <div className="h-0.5 shrink-0 rounded-full bg-primary" />;
+}
+
 function BoardColumnView({
   column,
   columns,
   tasks,
   projectNames,
   workspaces,
+  sessions,
+  prs,
   dragTaskId,
-  isDropTarget,
+  dropSpot,
+  focusedId,
   onDragStateChange,
   onMoveTask,
   onEdit,
+  onAdd,
+  onFocus,
   onStartTask,
   onOpenSession,
 }: {
@@ -251,17 +357,21 @@ function BoardColumnView({
   tasks: Task[];
   projectNames: Map<string, string>;
   workspaces: Map<string, Workspace>;
+  sessions: Record<string, SessionPayload>;
+  prs: Record<string, PrPayload>;
   dragTaskId: string | null;
-  isDropTarget: boolean;
-  onDragStateChange: (taskId?: string | null, over?: string | null) => void;
+  dropSpot: DropSpot | null;
+  focusedId: string | null;
+  onDragStateChange: (taskId?: string | null, spot?: DropSpot | null) => void;
   onMoveTask: (taskId: string, columnId: string, position: number) => void;
   onEdit: (t: Task) => void;
+  onAdd: () => void;
+  onFocus: (id: string) => void;
   onStartTask: (t: Task) => void;
   onOpenSession: (workspaceId: string) => void;
 }) {
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState(column.name);
-  const [quickAdd, setQuickAdd] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
 
   const submitRename = () => {
@@ -273,19 +383,12 @@ function BoardColumnView({
       );
   };
 
-  const submitQuickAdd = () => {
-    const title = quickAdd.trim();
-    if (!title) return;
-    setQuickAdd("");
-    taskCreate(title, { columnId: column.id }).catch((e) =>
-      toast.error("Could not add task", { description: String(e) }),
-    );
-  };
-
-  /** Which card the pointer is above (drop inserts before it). */
-  const dropTargetFor = (clientY: number): Task | null => {
-    const cards = listRef.current?.querySelectorAll<HTMLElement>("[data-task-id]");
+  /** The card the pointer is above (insert before it; null = end). */
+  const dropBefore = (clientY: number): Task | null => {
+    const cards =
+      listRef.current?.querySelectorAll<HTMLElement>("[data-task-id]");
     for (const el of cards ?? []) {
+      if (el.dataset.taskId === dragTaskId) continue;
       const r = el.getBoundingClientRect();
       if (clientY < r.top + r.height / 2) {
         const id = el.dataset.taskId;
@@ -298,13 +401,18 @@ function BoardColumnView({
   return (
     <div
       className={cn(
-        "flex max-h-full w-[280px] shrink-0 flex-col rounded-lg border bg-card/50",
-        isDropTarget ? "border-primary/50 ring-1 ring-primary/30" : "border-border",
+        "group/column flex h-full w-[280px] shrink-0 flex-col rounded-lg border bg-card/50",
+        dropSpot ? "border-primary/50" : "border-border",
       )}
       onDragOver={(e) => {
         if (!dragTaskId) return;
         e.preventDefault();
-        onDragStateChange(undefined, column.id);
+        e.dataTransfer.dropEffect = "move";
+        const before = dropBefore(e.clientY);
+        onDragStateChange(undefined, {
+          columnId: column.id,
+          before: before?.id ?? null,
+        });
       }}
       onDragLeave={(e) => {
         if (e.currentTarget.contains(e.relatedTarget as Node)) return;
@@ -313,14 +421,16 @@ function BoardColumnView({
       onDrop={(e) => {
         e.preventDefault();
         const taskId = e.dataTransfer.getData("text/plain") || dragTaskId;
+        const before = dropBefore(e.clientY);
         onDragStateChange(null, null);
-        if (!taskId) return;
-        const before = dropTargetFor(e.clientY);
-        if (before?.id === taskId) return;
+        if (!taskId || before?.id === taskId) return;
         onMoveTask(
           taskId,
           column.id,
-          positionBefore(tasks.filter((t) => t.id !== taskId), before),
+          positionBefore(
+            tasks.filter((t) => t.id !== taskId),
+            before,
+          ),
         );
       }}
     >
@@ -384,7 +494,10 @@ function BoardColumnView({
             {column.role}
           </span>
         )}
-        <Badge variant="secondary" className="h-5 min-w-5 justify-center px-1 text-[11px]">
+        <Badge
+          variant="secondary"
+          className="h-5 min-w-5 justify-center px-1 text-[11px]"
+        >
           {tasks.length}
         </Badge>
         <DropdownMenu>
@@ -443,41 +556,84 @@ function BoardColumnView({
         </DropdownMenu>
       </div>
 
-      <div ref={listRef} className="flex flex-col gap-2 overflow-y-auto px-2 pb-2">
+      <div
+        ref={listRef}
+        className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2"
+      >
         {tasks.map((task) => (
-          <TaskCard
-            key={task.id}
-            task={task}
-            projectName={task.projectId ? projectNames.get(task.projectId) : undefined}
-            workspace={task.workspaceId ? workspaces.get(task.workspaceId) : undefined}
-            dragging={dragTaskId === task.id}
-            onDragStateChange={onDragStateChange}
-            onEdit={onEdit}
-            onStartTask={onStartTask}
-            onOpenSession={onOpenSession}
-          />
+          <div key={task.id} className="flex shrink-0 flex-col gap-2">
+            {dropSpot?.before === task.id && <DropLine />}
+            <TaskCard
+              task={task}
+              projectName={
+                task.projectId ? projectNames.get(task.projectId) : undefined
+              }
+              workspace={
+                task.workspaceId ? workspaces.get(task.workspaceId) : undefined
+              }
+              session={
+                task.workspaceId ? sessions[task.workspaceId] : undefined
+              }
+              pr={task.workspaceId ? prs[task.workspaceId] : undefined}
+              dragging={dragTaskId === task.id}
+              focused={focusedId === task.id}
+              onDragStateChange={onDragStateChange}
+              onFocus={onFocus}
+              onEdit={onEdit}
+              onStartTask={onStartTask}
+              onOpenSession={onOpenSession}
+            />
+          </div>
         ))}
-      </div>
+        {dropSpot && dropSpot.before === null && <DropLine />}
 
-      <div className="p-2 pt-0">
-        <Input
-          value={quickAdd}
-          onChange={(e) => setQuickAdd(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && submitQuickAdd()}
-          placeholder="Add a task…"
-          className="h-8 border-dashed bg-transparent text-sm"
-        />
+        {/* Hover affordance: appears under the last card, outlines on its own
+            hover, and opens the create dialog (title pre-focused). */}
+        <button
+          onClick={onAdd}
+          className="mx-auto mt-1 flex items-center gap-1 rounded-md border border-transparent px-3 py-1.5 text-xs text-muted-foreground opacity-0 transition-all hover:border-border hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover/column:opacity-100"
+        >
+          <Plus className="size-3.5" />
+          Add task
+        </button>
       </div>
     </div>
   );
+}
+
+/** Minimal live status for a card's linked session. */
+function sessionStatus(
+  workspace: Workspace | undefined,
+  session: SessionPayload | undefined,
+  pr: PrPayload | undefined,
+): { label: string; spin?: boolean; className: string } | null {
+  if (!workspace) return null;
+  if (workspace.setup === "provisioning")
+    return { label: "setting up", spin: true, className: "text-muted-foreground" };
+  if (workspace.setup === "failed")
+    return { label: "setup failed", className: "text-destructive" };
+  if (session?.activity === "working")
+    return { label: "working", spin: true, className: "text-primary" };
+  if (session?.awaitingInput || session?.needsAttention)
+    return { label: "needs you", className: "text-warning" };
+  if (pr?.status?.state === "OPEN")
+    return {
+      label: pr.status.rollup === "pending" ? "checks running" : "in review",
+      className: "text-muted-foreground",
+    };
+  return { label: "idle", className: "text-muted-foreground" };
 }
 
 function TaskCard({
   task,
   projectName,
   workspace,
+  session,
+  pr,
   dragging,
+  focused,
   onDragStateChange,
+  onFocus,
   onEdit,
   onStartTask,
   onOpenSession,
@@ -485,14 +641,25 @@ function TaskCard({
   task: Task;
   projectName?: string;
   workspace?: Workspace;
+  session?: SessionPayload;
+  pr?: PrPayload;
   dragging: boolean;
-  onDragStateChange: (taskId?: string | null, over?: string | null) => void;
+  focused: boolean;
+  onDragStateChange: (taskId?: string | null, spot?: DropSpot | null) => void;
+  onFocus: (id: string) => void;
   onEdit: (t: Task) => void;
   onStartTask: (t: Task) => void;
   onOpenSession: (workspaceId: string) => void;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focused) ref.current?.scrollIntoView({ block: "nearest" });
+  }, [focused]);
+  const status = sessionStatus(workspace, session, pr);
+
   const card = (
     <div
+      ref={ref}
       data-task-id={task.id}
       draggable
       onDragStart={(e) => {
@@ -501,31 +668,59 @@ function TaskCard({
         onDragStateChange(task.id, undefined);
       }}
       onDragEnd={() => onDragStateChange(null, null)}
-      onClick={() => onEdit(task)}
+      onClick={() => {
+        onFocus(task.id);
+        onEdit(task);
+      }}
       className={cn(
-        "cursor-pointer rounded-md border border-border bg-card px-3 py-2.5 shadow-sm transition-opacity hover:border-border/80 hover:bg-accent/40",
+        "group/card cursor-pointer rounded-md border bg-card px-3 py-2.5 shadow-sm transition-opacity hover:bg-accent/40",
+        focused ? "border-primary/60 ring-1 ring-primary/40" : "border-border hover:border-border/80",
         dragging && "opacity-40",
       )}
     >
-      <div className="text-sm leading-snug">{task.title}</div>
-      {(projectName || workspace) && (
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1 text-sm leading-snug">{task.title}</div>
+        {!task.workspaceId && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onStartTask(task);
+            }}
+            title="Start a session for this task"
+            className="rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover/card:opacity-100"
+          >
+            <Play className="size-3.5" />
+          </button>
+        )}
+      </div>
+      {(projectName || workspace || status) && (
         <div className="mt-2 flex items-center gap-1.5">
           {projectName && (
-            <Badge variant="secondary" className="max-w-36 truncate px-1.5 text-[10px]">
+            <Badge
+              variant="secondary"
+              className="max-w-36 truncate px-1.5 text-[10px]"
+            >
               {projectName}
             </Badge>
           )}
-          {workspace && (
+          {workspace && status && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 onOpenSession(workspace.id);
               }}
-              className="flex items-center gap-1 rounded-full border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-accent hover:text-foreground"
+              className={cn(
+                "flex items-center gap-1 rounded-full border border-border px-1.5 py-0.5 text-[10px] hover:bg-accent",
+                status.className,
+              )}
               title="Open the linked session"
             >
-              <MessageSquare className="size-2.5" />
-              session
+              {status.spin ? (
+                <Loader2 className="size-2.5 animate-spin" />
+              ) : (
+                <MessageSquare className="size-2.5" />
+              )}
+              {status.label}
             </button>
           )}
         </div>
@@ -569,26 +764,37 @@ function TaskCard({
   );
 }
 
-function EditTaskDialog({
-  task,
+/** Create + edit dialog. Settings-dialog sized — the space grows into
+ *  richer task detail over time. */
+function TaskDialog({
+  state,
   projects,
   onClose,
 }: {
-  task: Task;
+  state: DialogState;
   projects: ProjectView[];
   onClose: () => void;
 }) {
-  const [title, setTitle] = useState(task.title);
-  const [description, setDescription] = useState(task.description ?? "");
-  const [projectId, setProjectId] = useState(task.projectId ?? "");
+  const task = state.mode === "edit" ? state.task : null;
+  const [title, setTitle] = useState(task?.title ?? "");
+  const [description, setDescription] = useState(task?.description ?? "");
+  const [projectId, setProjectId] = useState(task?.projectId ?? "");
 
   const save = () => {
     if (!title.trim()) return;
-    taskUpdate(task.id, {
-      title: title.trim(),
-      description,
-      projectId,
-    })
+    const done =
+      state.mode === "edit"
+        ? taskUpdate(state.task.id, {
+            title: title.trim(),
+            description,
+            projectId,
+          })
+        : taskCreate(title.trim(), {
+            description: description || undefined,
+            projectId: projectId || undefined,
+            columnId: state.columnId,
+          });
+    done
       .then(onClose)
       .catch((e) =>
         toast.error("Could not save task", { description: String(e) }),
@@ -597,30 +803,25 @@ function EditTaskDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-md">
-        <DialogTitle>Edit task</DialogTitle>
-        <div className="flex flex-col gap-4">
+      <DialogContent className="flex h-[80vh] w-[min(60rem,92vw)] flex-col sm:max-w-none">
+        <DialogTitle>
+          {state.mode === "edit" ? "Edit task" : "New task"}
+        </DialogTitle>
+        <div className="flex min-h-0 flex-1 flex-col gap-4">
           <Field label="Title">
             <Input
               autoFocus
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && save()}
-            />
-          </Field>
-          <Field label="Description">
-            <Textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Optional — included in the session prompt."
-              className="min-h-[80px] text-sm"
+              placeholder="What needs doing?"
             />
           </Field>
           <Field label="Project">
             <select
               value={projectId}
               onChange={(e) => setProjectId(e.target.value)}
-              className="h-9 rounded-md border border-input bg-transparent px-3 text-sm"
+              className="h-9 w-72 rounded-md border border-input bg-transparent px-3 text-sm"
             >
               <option value="">No project (starts a quick chat)</option>
               {projects.map((p) => (
@@ -630,12 +831,22 @@ function EditTaskDialog({
               ))}
             </select>
           </Field>
+          <div className="flex min-h-0 flex-1 flex-col">
+            <Field label="Description" className="flex min-h-0 flex-1 flex-col">
+              <Textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Optional — included in the session prompt."
+                className="min-h-0 flex-1 resize-none text-sm"
+              />
+            </Field>
+          </div>
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={onClose}>
               Cancel
             </Button>
             <Button onClick={save} disabled={!title.trim()}>
-              Save
+              {state.mode === "edit" ? "Save" : "Create"}
             </Button>
           </div>
         </div>

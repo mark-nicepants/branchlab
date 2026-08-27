@@ -62,8 +62,9 @@ const MIN_CHAT_PX = 360;
 
 /** True while any popup layer is open (dialog, dropdown, select, popover,
  *  context menu…) — those own the Esc key. Radix portals its poppers into
- *  `[data-radix-popper-content-wrapper]`; dialogs carry our shadcn data-slot. */
-function hasOpenOverlay(): boolean {
+ *  `[data-radix-popper-content-wrapper]`; dialogs carry our shadcn data-slot.
+ *  Exported: the My work board's keyboard controls need the same gate. */
+export function hasOpenOverlay(): boolean {
   return !!document.querySelector(
     '[data-slot="dialog-content"][data-state="open"], [data-radix-popper-content-wrapper]',
   );

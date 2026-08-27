@@ -242,17 +242,29 @@ function App() {
   );
 
   /** "Start session" on a board card: spawn a workspace (or quick chat when
-   *  the task has no project) with the task text as the prompt, then link it
-   *  back so the card auto-tracks the session's lifecycle. */
+   *  the task has no project) with the full task as the prompt, then link it
+   *  back so the card auto-tracks the session's lifecycle. The prompt carries
+   *  a structured context block so the agent can see every task property. */
   const startTaskSession = useCallback(
     async (task: Task) => {
-      const prompt =
-        task.title + (task.description ? `\n\n${task.description}` : "");
+      const project = projects.find((p) => p.id === task.projectId);
+      const prompt = [
+        task.title,
+        task.description ?? "",
+        "---",
+        "Task context (from the BranchLab board):",
+        `- Title: ${task.title}`,
+        project ? `- Project: ${project.name}` : null,
+        task.description ? `- Description: included above` : null,
+        `- Created: ${new Date(task.createdAt).toISOString()}`,
+        `- Task id: ${task.id}`,
+      ]
+        .filter((l): l is string => l !== null && l !== "")
+        .join("\n");
       try {
-        const ws =
-          task.projectId && projects.some((p) => p.id === task.projectId)
-            ? await createWorkspace(task.projectId, undefined, prompt)
-            : await createQuickChat(prompt);
+        const ws = project
+          ? await createWorkspace(project.id, undefined, prompt)
+          : await createQuickChat(prompt);
         openNewWorkspace(ws);
         await taskLinkWorkspace(task.id, ws.id);
       } catch (e) {

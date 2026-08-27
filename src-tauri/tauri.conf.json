@@ -24,7 +24,8 @@
           "x": 12,
           "y": 24
         },
-        "visible": false
+        "visible": false,
+        "dragDropEnabled": false
       }
     ],
     "security": {
