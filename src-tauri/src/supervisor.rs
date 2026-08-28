@@ -523,7 +523,8 @@ impl Inner {
         let (ws, project_name) = match task.project_id.clone() {
             Some(project_id) => {
                 let name = registry.list().into_iter().find(|p| p.project.id == project_id).map(|p| p.project.name);
-                let ws = registry.create_workspace(&project_id, None, None)?;
+                let branch = crate::tasks::task_branch(&task);
+                let ws = registry.create_workspace_named(&project_id, None, None, Some(branch))?;
                 self.app.state::<crate::setup::SetupManager>().start(&ws.id);
                 (ws, name)
             }
@@ -538,7 +539,7 @@ impl Inner {
         tasks.link_workspace(&task.id, &ws.id)?;
         let _ = self.app.emit("tasks:changed", tasks.snapshot());
 
-        let (mut display, mut sent) = crate::tasks::task_prompt(&task, project_name.as_deref());
+        let (mut display, mut sent) = tasks.kickoff_prompt(&task, project_name.as_deref());
         // Extra instructions from a /start comment ride the kickoff prompt.
         if let Some(extra) = extra.map(str::trim).filter(|e| !e.is_empty()) {
             display = format!("{display}\n\n{extra}");

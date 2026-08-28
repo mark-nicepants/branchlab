@@ -6,6 +6,7 @@ mod env;
 mod git;
 mod github;
 mod logx;
+mod mcp;
 mod path;
 mod project;
 mod server;
@@ -23,6 +24,11 @@ use tauri::Manager;
 use watcher::GitWatcher;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// `branchlab mcp-tasks`: the read-only board MCP server (stdio).
+pub fn run_mcp_tasks() {
+    mcp::run_stdio();
+}
+
 pub fn run() {
     logx::mark_boot();
     // Repair PATH first: a Finder/Dock-launched .app gets a minimal PATH that
@@ -105,6 +111,9 @@ pub fn run() {
             // The "My work" task board (local-first; tasks.json is shaped as
             // a future cloud-sync unit — see tasks.rs).
             app.manage(tasks::TaskStore::load(dir.join("tasks.json")));
+            // Expose the board to agent sessions: register the `mcp-tasks`
+            // process mode as an opencode MCP server (idempotent).
+            mcp::register_in_opencode_config(&dir);
 
             // The window starts hidden to avoid a white flash; the frontend
             // shows it after first paint. This is a safety net so a failed

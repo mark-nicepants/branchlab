@@ -352,7 +352,40 @@ impl TaskStore {
             task.position = position;
             task.updated_at = now_ms();
             if moved {
-                record(&mut data, id, "moved", "user", col_name);
+                record(&mut data, id, "moved", "user", col_name.clone());
+            }
+        }
+        // Delegating a parent delegates the batch: its not-yet-started
+        // children follow into the active column (deps still gate dispatch,
+        // so sequential chains drain in order). Children already in review
+        // or done are left where they are.
+        let target_role = data.columns.iter().find(|c| c.id == column_id).map(|c| c.role);
+        if target_role == Some(ColumnRole::Active) {
+            let skip: std::collections::HashSet<String> = data
+                .columns
+                .iter()
+                .filter(|c| matches!(c.role, ColumnRole::Active | ColumnRole::Review | ColumnRole::Done))
+                .map(|c| c.id.clone())
+                .collect();
+            let mut kids: Vec<usize> = (0..data.tasks.len())
+                .filter(|&i| {
+                    let c = &data.tasks[i];
+                    c.deleted_at.is_none() && c.parent_id.as_deref() == Some(id) && !skip.contains(&c.column_id)
+                })
+                .collect();
+            kids.sort_by_key(|&i| data.tasks[i].number);
+            if !kids.is_empty() {
+                let mut pos = max_position(&data, column_id);
+                let now = now_ms();
+                let n = kids.len();
+                for i in kids {
+                    pos += STRIDE;
+                    let c = &mut data.tasks[i];
+                    c.column_id = column_id.to_string();
+                    c.position = pos;
+                    c.updated_at = now;
+                }
+                record(&mut data, id, "moved", "user", format!("{col_name} — queued {n} subtasks"));
             }
         }
         renumber_if_cramped(&mut data, column_id);
@@ -493,6 +526,57 @@ impl TaskStore {
         let entry = data.activity.last().cloned().expect("just pushed");
         self.persist(&data);
         Ok(entry)
+    }
+
+    /// The kickoff prompt for a task session. Subtasks additionally carry
+    /// the parent's goal and the sibling map so the agent scopes its work to
+    /// THIS subtask instead of rediscovering the whole batch.
+    pub fn kickoff_prompt(&self, task: &Task, project_name: Option<&str>) -> (String, String) {
+        let (display, mut sent) = task_prompt(task, project_name);
+        let data = self.data.lock().unwrap();
+        if let Some(pid) = &task.parent_id {
+            if let Some(parent) = data.tasks.iter().find(|t| &t.id == pid && t.deleted_at.is_none()) {
+                sent.push_str(&format!("\nThis is a SUBTASK of #{} {}.", parent.number, parent.title));
+                if let Some(d) = &parent.description {
+                    let d: String = d.chars().take(600).collect();
+                    sent.push_str(&format!("\nParent goal: {d}\n"));
+                } else {
+                    sent.push('\n');
+                }
+                let state_of = |t: &Task| -> &'static str {
+                    match data.columns.iter().find(|c| c.id == t.column_id).map(|c| c.role) {
+                        Some(ColumnRole::Done) => "done",
+                        Some(ColumnRole::Review) => "in review",
+                        Some(ColumnRole::Active) if t.workspace_id.is_some() => "in progress",
+                        Some(ColumnRole::Active) => "queued",
+                        _ => "todo",
+                    }
+                };
+                let mut siblings: Vec<&Task> = data
+                    .tasks
+                    .iter()
+                    .filter(|t| t.deleted_at.is_none() && t.parent_id.as_deref() == Some(pid.as_str()))
+                    .collect();
+                siblings.sort_by_key(|t| t.number);
+                sent.push_str("Sibling subtasks:\n");
+                for s in siblings {
+                    let marker = if s.id == task.id { " <- YOU are this one" } else { "" };
+                    sent.push_str(&format!("- #{} {} ({}){}\n", s.number, s.title, state_of(s), marker));
+                }
+                sent.push_str("Scope your work to YOUR subtask only — siblings are handled in their own sessions.\n");
+            }
+        }
+        if !task.depends_on.is_empty() {
+            let deps: Vec<String> = task
+                .depends_on
+                .iter()
+                .filter_map(|d| data.tasks.iter().find(|t| &t.id == d).map(|t| format!("#{}", t.number)))
+                .collect();
+            if !deps.is_empty() {
+                sent.push_str(&format!("Completed prerequisite tasks: {}.\n", deps.join(", ")));
+            }
+        }
+        (display, sent)
     }
 
     // ── Workflow machine hooks (called by the supervisor) ───────────────────
@@ -649,6 +733,27 @@ fn backfill_numbers(data: &mut BoardData) {
 /// The prompt a task-dispatched session opens with: `display` is the readable
 /// task text shown in the transcript; `sent` carries the structured context
 /// block so the agent can see every task property.
+/// Branch name for a task session: `task/<number>-<title-slug>`.
+pub fn task_branch(task: &Task) -> String {
+    let slug: String = task
+        .title
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .take(6)
+        .collect::<Vec<_>>()
+        .join("-");
+    let slug: String = slug.chars().take(40).collect();
+    if slug.is_empty() {
+        format!("task/{}", task.number)
+    } else {
+        format!("task/{}-{}", task.number, slug.trim_end_matches('-'))
+    }
+}
+
 pub fn task_prompt(task: &Task, project_name: Option<&str>) -> (String, String) {
     let display = match &task.description {
         Some(d) => format!("{}\n\n{}", task.title, d),
@@ -664,6 +769,10 @@ pub fn task_prompt(task: &Task, project_name: Option<&str>) -> (String, String) 
     sent.push_str("Refer to this task as #");
     sent.push_str(&task.number.to_string());
     sent.push_str(" when summarizing.\n");
+    sent.push_str(
+        "Board tools are available over MCP: branchlab_list_tasks and branchlab_get_task \
+         fetch live details (description, state, comments) for any task #number.\n",
+    );
     (display, sent)
 }
 
@@ -1008,6 +1117,55 @@ mod tests {
         assert!(s.add_comment(&t.id, "comment", "   ").is_err(), "empty comment refused");
         assert!(s.activity("nope").is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parent_to_active_queues_children_and_kickoff_carries_context() {
+        let (s, dir) = store("cascade");
+        let active = col_id(&s, ColumnRole::Active);
+        let parent = s
+            .create_task("Client batch".into(), Some("Fix the pilot feedback".into()), Some("p1".into()), None, None)
+            .unwrap();
+        let c1 = s.create_task("Research the codebase".into(), None, None, None, Some(parent.id.clone())).unwrap();
+        let c2 = s.create_task("Fix rounding".into(), None, None, None, Some(parent.id.clone())).unwrap();
+        s.mark_done(&c2.id).unwrap(); // done children must not be pulled back
+        s.move_task(&parent.id, &active, 1024.0).unwrap();
+        let snap = s.snapshot();
+        let col = |id: &str| snap.tasks.iter().find(|t| t.id == id).unwrap().column_id.clone();
+        assert_eq!(col(&c1.id), active, "todo child follows the parent");
+        assert_ne!(col(&c2.id), active, "done child stays done");
+        assert_eq!(s.next_queued().unwrap().id, c1.id, "child dispatches, parent never does");
+
+        let c1 = snap.tasks.iter().find(|t| t.id == c1.id).unwrap();
+        let (_, sent) = s.kickoff_prompt(c1, Some("proj"));
+        assert!(sent.contains("SUBTASK of #1 Client batch"), "parent ref present: {sent}");
+        assert!(sent.contains("Parent goal: Fix the pilot feedback"));
+        assert!(sent.contains("<- YOU are this one"));
+        assert!(sent.contains("#3 Fix rounding (done)"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn task_branches_are_slugged() {
+        let t = |number: u64, title: &str| Task {
+            id: "x".into(),
+            number,
+            title: title.into(),
+            description: None,
+            project_id: None,
+            column_id: "c".into(),
+            position: 0.0,
+            workspace_id: None,
+            parent_id: None,
+            depends_on: Vec::new(),
+            estimate: None,
+            created_at: 0,
+            updated_at: 0,
+            deleted_at: None,
+        };
+        assert_eq!(task_branch(&t(6, "Research the codebase")), "task/6-research-the-codebase");
+        assert_eq!(task_branch(&t(9, "Fix: rounding (v2)!")), "task/9-fix-rounding-v2");
+        assert_eq!(task_branch(&t(3, "***")), "task/3");
     }
 
     #[test]

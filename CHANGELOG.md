@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Agent sessions can see the board: BranchLab registers a built-in MCP
+  server with opencode, so any session can call `branchlab_list_tasks` and
+  `branchlab_get_task` to pull live task details — description, state,
+  subtasks, blockers, and the activity feed including your comments.
+- Task sessions know their place: a subtask's kickoff prompt carries the
+  parent's goal and the sibling map (so the agent scopes its work instead of
+  rediscovering the whole batch), and task worktrees get real branch names
+  (`task/6-research-the-codebase`) instead of random codenames.
+- Dragging a parent task to "In progress" delegates the whole batch: its
+  not-yet-started subtasks queue up behind it and dispatch in dependency
+  order under the parallel-session cap.
 - Tasks can have subtasks: open a task and add them one by one (or paste a
   whole list to split it into subtasks). A "Suggest plan" button asks the AI
   to order them — which subtask is blocked by which, shown as "after #N"

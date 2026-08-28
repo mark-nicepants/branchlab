@@ -573,6 +573,19 @@ impl Registry {
         base: Option<String>,
         init_prompt: Option<String>,
     ) -> Result<Workspace, String> {
+        self.create_workspace_named(project_id, base, init_prompt, None)
+    }
+
+    /// Like `create_workspace`, but with a caller-chosen branch name (task
+    /// sessions use `task/<n>-<slug>` instead of a codename). Deduped against
+    /// existing branches with a numeric suffix.
+    pub fn create_workspace_named(
+        &self,
+        project_id: &str,
+        base: Option<String>,
+        init_prompt: Option<String>,
+        branch: Option<String>,
+    ) -> Result<Workspace, String> {
         let root = self.repo_root(project_id).ok_or("unknown project")?;
         let base = match base {
             Some(b) if !b.is_empty() => b,
@@ -580,7 +593,25 @@ impl Registry {
         };
 
         let existing = git::list_branches(&root).unwrap_or_default();
-        let branch = unique_codename(&existing);
+        // Branch names may carry a slash (task/6-fix); the DIRECTORY name is
+        // sanitized separately below like every other workspace.
+        let clean = |b: String| -> String {
+            b.chars().map(|c| if c.is_alphanumeric() || "-_/".contains(c) { c } else { '-' }).collect()
+        };
+        let branch = match branch.map(clean).filter(|b| !b.trim_matches('-').is_empty()) {
+            Some(wanted) if !existing.contains(&wanted) => wanted,
+            Some(wanted) => {
+                let mut n = 2;
+                loop {
+                    let candidate = format!("{wanted}-{n}");
+                    if !existing.contains(&candidate) {
+                        break candidate;
+                    }
+                    n += 1;
+                }
+            }
+            None => unique_codename(&existing),
+        };
         let dir = self.worktrees_dir.join(project_id).join(git::sanitize_branch(&branch));
         let path = dir.to_string_lossy().into_owned();
 
