@@ -2744,6 +2744,8 @@ function activityText(entry: ActivityEntry): React.ReactNode {
       return "moved back to In progress";
     case "moved":
       return `moved to ${entry.body}`;
+    case "turn":
+      return entry.body;
     case "done":
       return entry.body ? `done — ${entry.body}` : "moved to Done";
     default:
@@ -2827,11 +2829,20 @@ function ActivityFeed({
         {entries.map((entry) =>
           entry.kind === "comment" || entry.kind === "command" ? (
             <div key={entry.id} className="relative flex gap-3 py-2">
-              <span className="relative mt-1.5 flex size-[15px] shrink-0 items-center justify-center rounded-full bg-primary text-[8.5px] font-bold text-primary-foreground">
-                M
-              </span>
+              {entry.actor === "user" ? (
+                <span className="relative mt-1.5 flex size-[15px] shrink-0 items-center justify-center rounded-full bg-primary text-[8.5px] font-bold text-primary-foreground">
+                  M
+                </span>
+              ) : (
+                <span className="relative mt-1.5 flex size-[15px] shrink-0 items-center justify-center rounded-full border border-border bg-accent">
+                  <Sparkles className="size-2.5 text-muted-foreground" />
+                </span>
+              )}
               <div className="min-w-0 flex-1 rounded-lg border border-border bg-accent/40 px-3 py-2">
                 <div className="pb-1 text-[10.5px] text-muted-foreground">
+                  {entry.actor !== "user" && (
+                    <span className="pr-1.5 font-medium">agent</span>
+                  )}
                   {formatWhen(entry.createdAt)}
                 </div>
                 {entry.kind === "command" ? (

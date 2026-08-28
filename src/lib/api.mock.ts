@@ -1693,6 +1693,22 @@ let mockActivity: ActivityEntry[] = [
   { id: activityId(), taskId: "t6", kind: "comment", body: "Rounding fix looks right — also check the leave-request edge case before we open the PR.", actor: "user", createdAt: activityNow - 30 * 60_000 },
   { id: activityId(), taskId: "t4", kind: "created", body: "", actor: "user", createdAt: activityNow - 3 * 24 * HOUR },
   { id: activityId(), taskId: "t4", kind: "session", body: "", actor: "agent", createdAt: activityNow - 5 * HOUR },
+  {
+    id: activityId(),
+    taskId: "t8",
+    kind: "turn",
+    body: "Reworked the empty states across the four board screens",
+    actor: "agent",
+    createdAt: activityNow - 3600_000,
+  },
+  {
+    id: activityId(),
+    taskId: "t9",
+    kind: "comment",
+    body: "Research from #8: the empty-state copy lives in src/i18n/en.json under boards.*",
+    actor: "agent",
+    createdAt: activityNow - 3500_000,
+  },
 ];
 
 export function taskActivity(taskId: string): Promise<ActivityEntry[]> {

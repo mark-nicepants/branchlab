@@ -1,3 +1,4 @@
+mod bridge;
 mod chat;
 mod commands;
 mod config;
@@ -114,6 +115,9 @@ pub fn run() {
             // Expose the board to agent sessions: register the `mcp-tasks`
             // process mode as an opencode MCP server (idempotent).
             mcp::register_in_opencode_config(&dir);
+            // …and the write path: agents comment / file tasks through the
+            // running app (never a second tasks.json writer).
+            bridge::start(app.handle().clone(), &dir);
 
             // The window starts hidden to avoid a white flash; the frontend
             // shows it after first paint. This is a safety net so a failed

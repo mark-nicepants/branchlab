@@ -9,10 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Agent sessions can see the board: BranchLab registers a built-in MCP
-  server with opencode, so any session can call `branchlab_list_tasks` and
-  `branchlab_get_task` to pull live task details — description, state,
-  subtasks, blockers, and the activity feed including your comments.
+- Agent sessions can see AND write to the board: BranchLab registers a
+  built-in MCP server with opencode, so any session can pull live task
+  details (`branchlab_list_tasks`, `branchlab_get_task` — description,
+  state, subtasks, blockers, the activity feed including your comments),
+  post findings to another task's feed (`branchlab_comment_task` — the
+  receiving task's future session gets them in its kickoff), and file
+  follow-up tasks it discovers (`branchlab_create_task`, marked as
+  agent-filed). Writes go through the running app, never a second writer.
+- Every finished agent turn drops a one-line AI summary of what was done
+  into the task's activity feed — review the board without opening each
+  session.
 - Task sessions know their place: a subtask's kickoff prompt carries the
   parent's goal and the sibling map (so the agent scopes its work instead of
   rediscovering the whole batch), and task worktrees get real branch names

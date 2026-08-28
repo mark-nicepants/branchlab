@@ -67,6 +67,33 @@ fn tool_defs() -> Value {
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
         },
         {
+            "name": "comment_task",
+            "description": "Post a note to a BranchLab task's activity feed. The user sees it, and the note rides that task's future session kickoffs — use it to hand findings or context from this session to another task (e.g. research results the implementing task will need).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "number": { "type": "integer", "description": "The task number (the N in #N)" },
+                    "body": { "type": "string", "description": "The note (plain text; keep it self-contained)" }
+                },
+                "required": ["number", "body"],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "create_task",
+            "description": "File a new task on the BranchLab board — follow-up work or a bug you discovered while working. It lands in Todo for the user to triage. Pass parentNumber to file it as a subtask of an existing task.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "title": { "type": "string", "description": "Short imperative title" },
+                    "description": { "type": "string", "description": "Details: what, where, why (quote evidence)" },
+                    "parentNumber": { "type": "integer", "description": "Optional: file as a subtask of this task" }
+                },
+                "required": ["title"],
+                "additionalProperties": false
+            }
+        },
+        {
             "name": "get_task",
             "description": "Full detail for one BranchLab task by #number: description, state, estimate, parent, subtasks, blockers, and its activity feed (events + user comments).",
             "inputSchema": {
@@ -209,6 +236,29 @@ fn call_tool(msg: &Value, data_dir: Option<&Path>) -> Result<Value, (i64, String
                 }
             }
             out
+        }
+        "comment_task" => {
+            let number = args.get("number").and_then(|n| n.as_u64()).ok_or((-32602, "number required".to_string()))?;
+            let body = args.get("body").and_then(|b| b.as_str()).ok_or((-32602, "body required".to_string()))?;
+            let dir = data_dir.ok_or((-32603, "BL_DATA_DIR is not set".to_string()))?;
+            crate::bridge::call(dir, json!({ "op": "comment", "number": number, "body": body }))
+                .map_err(|e| (-32603, e))?;
+            format!("Posted to #{number}.")
+        }
+        "create_task" => {
+            let title = args.get("title").and_then(|t| t.as_str()).ok_or((-32602, "title required".to_string()))?;
+            let dir = data_dir.ok_or((-32603, "BL_DATA_DIR is not set".to_string()))?;
+            let result = crate::bridge::call(
+                dir,
+                json!({
+                    "op": "create",
+                    "title": title,
+                    "description": args.get("description").and_then(|d| d.as_str()),
+                    "parentNumber": args.get("parentNumber").and_then(|n| n.as_u64()),
+                }),
+            )
+            .map_err(|e| (-32603, e))?;
+            format!("Filed {}.", result.get("created").and_then(|c| c.as_str()).unwrap_or("the task"))
         }
         other => return Err((-32602, format!("unknown tool: {other}"))),
     };

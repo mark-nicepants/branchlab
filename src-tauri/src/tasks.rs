@@ -512,6 +512,29 @@ impl TaskStore {
         self.data.lock().unwrap().activity.iter().filter(|a| a.task_id == task_id).cloned().collect()
     }
 
+    /// `create_task` for the agent bridge: same semantics, but the "created"
+    /// feed event carries actor "agent" so provenance is visible.
+    pub fn create_task_from_agent(
+        &self,
+        title: String,
+        description: Option<String>,
+        parent_id: Option<String>,
+    ) -> Result<Task, String> {
+        let task = self.create_task(title, description, None, None, parent_id)?;
+        let mut data = self.data.lock().unwrap();
+        if let Some(a) = data.activity.iter_mut().rev().find(|a| a.task_id == task.id && a.kind == "created") {
+            a.actor = "agent".into();
+        }
+        self.persist(&data);
+        drop(data);
+        Ok(task)
+    }
+
+    /// Look a live task up by its human #number.
+    pub fn find_by_number(&self, number: u64) -> Option<Task> {
+        self.data.lock().unwrap().tasks.iter().find(|t| t.number == number && t.deleted_at.is_none()).cloned()
+    }
+
     /// Record a board event from the command layer (e.g. AI intake).
     pub fn record_event(&self, task_id: &str, kind: &str, actor: &str, body: &str) {
         let mut data = self.data.lock().unwrap();
@@ -520,7 +543,7 @@ impl TaskStore {
     }
 
     /// Append a user comment ("comment") or a slash command ("command").
-    pub fn add_comment(&self, task_id: &str, kind: &str, body: &str) -> Result<ActivityEntry, String> {
+    pub fn add_comment(&self, task_id: &str, kind: &str, actor: &str, body: &str) -> Result<ActivityEntry, String> {
         let body = body.trim();
         if body.is_empty() {
             return Err("empty comment".into());
@@ -529,7 +552,7 @@ impl TaskStore {
         if !data.tasks.iter().any(|t| t.id == task_id && t.deleted_at.is_none()) {
             return Err("unknown task".into());
         }
-        record(&mut data, task_id, kind, "user", body);
+        record(&mut data, task_id, kind, actor, body);
         let entry = data.activity.last().cloned().expect("just pushed");
         self.persist(&data);
         Ok(entry)
@@ -583,6 +606,16 @@ impl TaskStore {
                 sent.push_str(&format!("Completed prerequisite tasks: {}.\n", deps.join(", ")));
             }
         }
+        // Notes handed to this task (user comments, or findings another
+        // session posted via branchlab_comment_task) ride the kickoff.
+        let notes: Vec<&ActivityEntry> =
+            data.activity.iter().filter(|a| a.task_id == task.id && a.kind == "comment").collect();
+        if !notes.is_empty() {
+            sent.push_str("Notes on this task:\n");
+            for n in notes.iter().rev().take(6).rev() {
+                sent.push_str(&format!("- {}: {}\n", n.actor, n.body));
+            }
+        }
         (display, sent)
     }
 
@@ -591,17 +624,17 @@ impl TaskStore {
     /// A linked session's turn finished: park the card in the review column —
     /// but only if it currently sits in the active column, so the user's
     /// manual placement always wins. Returns the task title on a move.
-    pub fn on_turn_ended(&self, workspace_id: &str) -> Option<String> {
+    pub fn on_turn_ended(&self, workspace_id: &str) -> Option<(String, String)> {
         self.move_between_roles(workspace_id, ColumnRole::Active, ColumnRole::Review)
     }
 
     /// A linked session started a new turn (feedback, composer message,
     /// autofix — any): pull the card from review back to active.
-    pub fn on_turn_started(&self, workspace_id: &str) -> Option<String> {
+    pub fn on_turn_started(&self, workspace_id: &str) -> Option<(String, String)> {
         self.move_between_roles(workspace_id, ColumnRole::Review, ColumnRole::Active)
     }
 
-    fn move_between_roles(&self, workspace_id: &str, from: ColumnRole, to: ColumnRole) -> Option<String> {
+    fn move_between_roles(&self, workspace_id: &str, from: ColumnRole, to: ColumnRole) -> Option<(String, String)> {
         let mut data = self.data.lock().unwrap();
         let from_col = role_column(&data, from)?;
         let to_col = role_column(&data, to)?;
@@ -619,7 +652,7 @@ impl TaskStore {
         let (id, title) = (task.id.clone(), task.title.clone());
         record(&mut data, &id, if to == ColumnRole::Review { "review" } else { "resumed" }, "agent", "");
         self.persist(&data);
-        Some(title)
+        Some((id, title))
     }
 
     /// The next dispatchable card: an UNLINKED card in the active column is
@@ -778,7 +811,10 @@ pub fn task_prompt(task: &Task, project_name: Option<&str>) -> (String, String) 
     sent.push_str(" when summarizing.\n");
     sent.push_str(
         "Board tools are available over MCP: branchlab_list_tasks and branchlab_get_task \
-         fetch live details (description, state, comments) for any task #number.\n",
+         fetch live details (description, state, comments) for any task #number. You can also WRITE to the \
+         board: branchlab_comment_task posts a note to a task's feed — use it to hand findings or context to \
+         another task (its future session will see them) — and branchlab_create_task files follow-up work you \
+         discover.\n",
     );
     (display, sent)
 }
@@ -1018,7 +1054,7 @@ mod tests {
         s.link_workspace(&t.id, "ws1").unwrap(); // -> active
 
         // Turn ends: active -> review (returns the title for the toast).
-        assert_eq!(s.on_turn_ended("ws1").as_deref(), Some("t"));
+        assert_eq!(s.on_turn_ended("ws1").map(|(_, title)| title).as_deref(), Some("t"));
         assert_eq!(task_col(&s, &t.id), review);
         // Repeat is a no-op (card no longer in active).
         assert!(s.on_turn_ended("ws1").is_none());
@@ -1115,13 +1151,13 @@ mod tests {
         s.move_task(&t.id, &active, 100.0).unwrap();
         s.link_workspace(&t.id, "ws1").unwrap();
         s.on_turn_ended("ws1").unwrap();
-        s.add_comment(&t.id, "comment", "  looks good  ").unwrap();
+        s.add_comment(&t.id, "comment", "user", "  looks good  ").unwrap();
         s.mark_done(&t.id).unwrap();
         let kinds: Vec<String> = s.activity(&t.id).iter().map(|a| a.kind.clone()).collect();
         assert_eq!(kinds, ["created", "moved", "session", "review", "comment", "done"]);
         let feed = s.activity(&t.id);
         assert_eq!(feed[4].body, "looks good", "comments are trimmed");
-        assert!(s.add_comment(&t.id, "comment", "   ").is_err(), "empty comment refused");
+        assert!(s.add_comment(&t.id, "comment", "user", "   ").is_err(), "empty comment refused");
         assert!(s.activity("nope").is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1173,6 +1209,25 @@ mod tests {
         assert_eq!(task_branch(&t(6, "Research the codebase")), "task/6-research-the-codebase");
         assert_eq!(task_branch(&t(9, "Fix: rounding (v2)!")), "task/9-fix-rounding-v2");
         assert_eq!(task_branch(&t(3, "***")), "task/3");
+    }
+
+    #[test]
+    fn agent_writes_carry_provenance() {
+        let (s, dir) = store("agent-writes");
+        let t = s.create_task("host".into(), None, None, None, None).unwrap();
+        assert_eq!(s.find_by_number(t.number).unwrap().id, t.id);
+        assert!(s.find_by_number(999).is_none());
+
+        s.add_comment(&t.id, "comment", "agent", "findings from #6").unwrap();
+        let feed = s.activity(&t.id);
+        assert_eq!(feed.last().unwrap().actor, "agent");
+
+        let filed = s.create_task_from_agent("follow-up".into(), Some("bug".into()), Some(t.id.clone())).unwrap();
+        assert_eq!(filed.parent_id.as_deref(), Some(t.id.as_str()));
+        let created = s.activity(&filed.id);
+        assert_eq!(created[0].kind, "created");
+        assert_eq!(created[0].actor, "agent", "agent-filed tasks say so");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -506,6 +506,59 @@ impl Inner {
     }
 
     /// Fold a coarse turn transition into session state + autofix progress.
+    /// Compress the finished turn into one feed line: last assistant message
+    /// (+ touched files) -> one_shot -> "turn" activity entry. Best-effort —
+    /// falls back to the message's first line, gives up silently on none.
+    fn spawn_turn_summary(self: &Arc<Inner>, workspace_id: String, task_id: String) {
+        let inner = Arc::clone(self);
+        tauri::async_runtime::spawn(async move {
+            use tauri::Manager as _;
+            let Ok(snap) = inner.chat.snapshot(&workspace_id, None, 12) else { return };
+            let last = snap.entries.iter().rev().find_map(|e| match e {
+                crate::chat::model::Entry::Assistant(a) => Some(a),
+                _ => None,
+            });
+            let Some(turn) = last else { return };
+            let text = turn
+                .blocks
+                .iter()
+                .rev()
+                .find_map(|b| match b {
+                    crate::chat::model::Block::Text { text, .. } if !text.trim().is_empty() => Some(text.clone()),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            if text.trim().is_empty() {
+                return;
+            }
+            let files = turn.summary.files_edited.join(", ");
+            let registry = inner.app.state::<Registry>();
+            let Some(path) = registry.workspace_path(&workspace_id) else { return };
+            let prompt = format!(
+                "Compress this agent report into ONE line (max 120 chars, plain text, no markdown, \
+                 start with a verb) describing what was done:\n\n{}\n\nFiles touched: {}\n\nReply with ONLY the line.",
+                text.chars().take(4000).collect::<String>(),
+                if files.is_empty() { "none" } else { &files },
+            );
+            let line = inner
+                .chat
+                .one_shot(&workspace_id, std::path::Path::new(&path), prompt)
+                .await
+                .map(|l| l.trim().trim_matches('"').to_string())
+                .filter(|l| !l.is_empty() && l.len() <= 220)
+                .unwrap_or_else(|| {
+                    let first = text.lines().find(|l| !l.trim().is_empty()).unwrap_or_default().trim();
+                    first.chars().take(140).collect()
+                });
+            if line.is_empty() {
+                return;
+            }
+            let tasks = inner.app.state::<crate::tasks::TaskStore>();
+            tasks.record_event(&task_id, "turn", "agent", &line);
+            let _ = inner.app.emit("tasks:changed", tasks.snapshot());
+        });
+    }
+
     fn start_task(&self, task_id: &str, extra: Option<&str>) -> Result<crate::project::Workspace, String> {
         let tasks = self.app.state::<crate::tasks::TaskStore>();
         let registry = self.app.state::<Registry>();
@@ -632,8 +685,8 @@ impl Inner {
             let tasks = self.app.state::<crate::tasks::TaskStore>();
             let moved = match ev.status {
                 TurnStatus::Completed | TurnStatus::Cancelled | TurnStatus::Failed => {
-                    let title = tasks.on_turn_ended(&ev.workspace_id);
-                    if let Some(title) = &title {
+                    let moved = tasks.on_turn_ended(&ev.workspace_id);
+                    if let Some((task_id, title)) = &moved {
                         let _ = self.app.emit(
                             "workspace:notify",
                             NotifyPayload {
@@ -642,8 +695,12 @@ impl Inner {
                                 task_title: Some(title.clone()),
                             },
                         );
+                        // A one-line "what changed" summary lands in the
+                        // task's activity feed (AI-compressed off the turn's
+                        // final message; deterministic fallback).
+                        self.spawn_turn_summary(ev.workspace_id.clone(), task_id.clone());
                     }
-                    title.is_some()
+                    moved.is_some()
                 }
                 TurnStatus::Queued | TurnStatus::Streaming => tasks.on_turn_started(&ev.workspace_id).is_some(),
                 TurnStatus::AwaitingPermission => false,

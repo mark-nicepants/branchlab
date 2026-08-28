@@ -200,9 +200,9 @@ pub async fn task_comment(
                 return Err(format!("unknown command /{other} — try /start, /send, /stop or /done"));
             }
         }
-        tasks.add_comment(&task_id, "command", &body)?
+        tasks.add_comment(&task_id, "command", "user", &body)?
     } else {
-        tasks.add_comment(&task_id, "comment", &body)?
+        tasks.add_comment(&task_id, "comment", "user", &body)?
     };
     crate::tasks::emit_changed(&app, &tasks);
     Ok(entry)
