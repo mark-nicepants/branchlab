@@ -599,8 +599,10 @@ export function MyWorkScreen({
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-x-auto px-6 pb-6">
-        <div className="flex h-full items-stretch gap-4">
+      {/* Horizontal padding lives on the inner track: end-padding on a
+          scroll container is swallowed at the scroll edge. */}
+      <div className="min-h-0 flex-1 overflow-x-auto pb-6">
+        <div className="flex h-full w-max min-w-full items-stretch gap-4 px-6">
           {board.columns.map((col, i) => (
             <BoardColumnView
               key={col.id}
