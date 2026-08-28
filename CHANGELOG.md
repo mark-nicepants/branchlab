@@ -51,9 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "chat archive" chip opens the full read-only transcript for future
   reference.
 - Tasks are quick to capture and rich to edit: per-column quick-add, a
-  project filter, an edit dialog with a markdown editor (formatting toolbar
-  + preview), and import-from-GitHub-issue with search, sorted by last
-  update.
+  project filter behind the board's filter icon, an edit dialog with a
+  markdown editor (formatting toolbar + preview), and
+  import-from-GitHub-issue with search, sorted by last update.
 - Deleting a workspace that has a linked task asks whether to mark the task
   done instead of deciding for you.
 - When a workspace's pull request is merged, a notice appears in its chat

@@ -26,6 +26,7 @@ import {
   Clock,
   CloudDownload,
   GitPullRequest,
+  ListFilter,
   Loader2,
   Lock,
   MessageSquare,
@@ -81,6 +82,14 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
   Command,
@@ -513,11 +522,12 @@ export function MyWorkScreen({
 
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
-      {/* Traffic-light clearance + title row (drag region like Home). */}
-      <div data-tauri-drag-region className="h-10 shrink-0" />
+      {/* One compact title row doubling as the traffic-light drag region. */}
       {drillParent ? (
-        // Drill-down breadcrumb replaces the title + filter row.
-        <div className="flex items-center gap-2 px-6 pb-4">
+        <div
+          data-tauri-drag-region
+          className="flex h-14 shrink-0 items-center gap-2 px-6 pt-2"
+        >
           <Button
             variant="ghost"
             size="sm"
@@ -534,32 +544,58 @@ export function MyWorkScreen({
             </span>
             {drillParent.title}
           </h1>
-          <div className="flex-1" />
+          <div data-tauri-drag-region className="flex-1" />
           <span className="shrink-0 text-xs text-muted-foreground">
             {drillDone} of {drillChildren.length} done
           </span>
         </div>
       ) : (
-        <div className="flex items-center gap-3 px-6 pb-4">
+        <div
+          data-tauri-drag-region
+          className="flex h-14 shrink-0 items-center gap-3 px-6 pt-2"
+        >
           <h1 className="text-lg font-semibold">My work</h1>
-          <div className="flex items-center gap-1.5">
-            <FilterChip
-              label="All"
-              active={projectFilter === null}
-              onClick={() => setProjectFilter(null)}
-            />
-            {filterProjects.map((p) => (
-              <FilterChip
-                key={p.id}
-                label={p.name}
-                active={projectFilter === p.id}
-                onClick={() =>
-                  setProjectFilter((cur) => (cur === p.id ? null : p.id))
+          <div data-tauri-drag-region className="flex-1" />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className={cn(
+                  "gap-1.5 px-2",
+                  projectFilter !== null
+                    ? "text-primary hover:text-primary"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                title="Filter tasks"
+              >
+                <ListFilter className="size-4" />
+                {projectFilter !== null && (
+                  <span className="max-w-40 truncate text-xs">
+                    {projectNames.get(projectFilter) ?? "Project"}
+                  </span>
+                )}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuLabel>Project</DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={projectFilter ?? "all"}
+                onValueChange={(v) =>
+                  setProjectFilter(v === "all" ? null : v)
                 }
-              />
-            ))}
-          </div>
-          <div className="flex-1" />
+              >
+                <DropdownMenuRadioItem value="all">
+                  All projects
+                </DropdownMenuRadioItem>
+                {filterProjects.map((p) => (
+                  <DropdownMenuRadioItem key={p.id} value={p.id}>
+                    <span className="truncate">{p.name}</span>
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       )}
 
@@ -629,29 +665,6 @@ export function MyWorkScreen({
   );
 }
 
-function FilterChip({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "max-w-48 truncate rounded-full border px-2.5 py-0.5 text-xs transition-colors",
-        active
-          ? "border-primary/50 bg-primary/10 text-foreground"
-          : "border-border text-muted-foreground hover:bg-accent",
-      )}
-    >
-      {label}
-    </button>
-  );
-}
 
 /** A 2px insertion line shown at the drop position while dragging. */
 function DropLine() {
