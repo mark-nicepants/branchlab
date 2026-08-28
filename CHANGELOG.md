@@ -104,6 +104,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The "Ready for review" toast no longer stacks duplicates, and stays
+  quiet when you're already looking at that session.
 - Streamed agent thoughts and prose no longer garble mid-turn (doubled
   words, a later thought overwriting an earlier one, thoughts missing from
   a finished turn until the session was reopened): every streaming update

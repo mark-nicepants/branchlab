@@ -2,7 +2,7 @@ import { cn } from "@/lib/utils";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { PanelLeft, Search } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { HomeScreen } from "./components/home/HomeScreen";
 import { CreateFromPrModal } from "./components/CreateFromPrModal";
@@ -149,19 +149,29 @@ function App() {
   }, [refreshProjects]);
 
   // The puppeteer's tap on the shoulder: a linked task finished a turn and
-  // its card moved to the review column.
+  // its card moved to the review column. Suppressed while that session is
+  // already on screen; the stable toast id makes re-delivery replace instead
+  // of stack; refs keep the subscription stable across renders (a `router`
+  // dep would churn it every render — its object identity isn't stable —
+  // and overlapping subscriptions double the toast).
+  const onScreenSessionRef = useRef<string | null>(null);
+  onScreenSessionRef.current = view === "session" ? selectedId : null;
+  const openSessionByIdRef = useRef(router.openSession);
+  openSessionByIdRef.current = router.openSession;
   useEffect(() => {
     const unlisten = onWorkspaceNotify((p) => {
       if (p.kind !== "task_review") return;
+      if (onScreenSessionRef.current === p.workspaceId) return;
       toast(`Ready for review: ${p.taskTitle ?? "task"}`, {
+        id: `task-review-${p.workspaceId}`,
         action: {
           label: "Open session",
-          onClick: () => router.openSession(p.workspaceId),
+          onClick: () => openSessionByIdRef.current(p.workspaceId),
         },
       });
     });
     return () => void unlisten.then((f) => f());
-  }, [router]);
+  }, []);
 
   const allWorkspaces = useMemo(
     () => [...projects.flatMap((p) => p.workspaces), ...quickChats],
