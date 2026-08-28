@@ -21,7 +21,10 @@ import {
   useState,
 } from "react";
 import {
+  ArrowRight,
   ChevronLeft,
+  Circle,
+  CircleCheck,
   CircleDot,
   Clock,
   CloudDownload,
@@ -30,10 +33,13 @@ import {
   Loader2,
   Lock,
   MessageSquare,
+  PanelTop,
   Pencil,
   Play,
   Plus,
   Sparkles,
+  Triangle,
+  Undo2,
   X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -43,6 +49,8 @@ import {
   boardSnapshot,
   chatArchive,
   listProjectIssues,
+  taskActivity,
+  taskComment,
   taskCreate,
   taskDelete,
   taskMove,
@@ -50,8 +58,9 @@ import {
   taskUpdate,
 } from "../../lib/api";
 import { onTasksChanged } from "../../lib/events";
-import { formatEstimate, nearestTshirt, TSHIRT_SIZES } from "../../lib/types";
+import { formatEstimate, TSHIRT_SIZES } from "../../lib/types";
 import type {
+  ActivityEntry,
   BoardColumn,
   ColumnRole,
   DiffStat,
@@ -90,7 +99,12 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Command,
   CommandEmpty,
@@ -104,8 +118,8 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { MarkdownEditor } from "@/components/MarkdownEditor";
-import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -266,7 +280,9 @@ export function MyWorkScreen({
     estimateUnit: "points",
   });
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
+  const [filterOpen, setFilterOpen] = useState(false);
   const [dialog, setDialog] = useState<DialogState | null>(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [archiveFor, setArchiveFor] = useState<Task | null>(null);
   const [dragTaskId, setDragTaskId] = useState<string | null>(null);
   const [dropSpot, setDropSpot] = useState<DropSpot | null>(null);
@@ -469,6 +485,17 @@ export function MyWorkScreen({
           });
         return;
       }
+      if (e.key === "?") {
+        e.preventDefault();
+        setShortcutsOpen(true);
+        return;
+      }
+      if ((e.key === "f" || e.key === "F") && !drillParentId) {
+        // The filter dropdown only exists on the main board's header.
+        e.preventDefault();
+        setFilterOpen(true);
+        return;
+      }
       const nav = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
       const isOpenKey = e.key === " " || e.key === "Enter";
       if (!nav.includes(e.key) && !isOpenKey) return;
@@ -556,7 +583,7 @@ export function MyWorkScreen({
         >
           <h1 className="text-lg font-semibold">My work</h1>
           <div data-tauri-drag-region className="flex-1" />
-          <DropdownMenu>
+          <DropdownMenu open={filterOpen} onOpenChange={setFilterOpen}>
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
@@ -643,6 +670,9 @@ export function MyWorkScreen({
         <TaskCreateDialog
           state={dialog}
           projects={projects}
+          ctx={boardCtx}
+          columns={board.columns}
+          boardUnit={board.estimateUnit}
           onClose={() => setDialog(null)}
         />
       )}
@@ -653,12 +683,19 @@ export function MyWorkScreen({
           ctx={boardCtx}
           boardUnit={board.estimateUnit}
           projects={projects}
+          columns={board.columns}
           workspaces={allWorkspaces}
           sessions={sessionByWorkspace}
           prs={prByWorkspace}
+          diffStats={diffStats}
           onOpenSession={onOpenSession}
+          onStartTask={onStartTask}
+          onShowShortcuts={() => setShortcutsOpen(true)}
           onClose={() => setDialog(null)}
         />
+      )}
+      {shortcutsOpen && (
+        <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />
       )}
       {archiveFor && (
         <ArchiveDialog task={archiveFor} onClose={() => setArchiveFor(null)} />
@@ -1248,36 +1285,60 @@ function TaskCard({
   );
 }
 
-/** Create dialog. Settings-dialog sized — the space grows into richer task
- *  detail over time. Editing an existing task opens TaskEditDialog instead. */
+/** Which picker popover is open (create-dialog chips + edit-dialog rail). */
+type PickerId =
+  | "status"
+  | "project"
+  | "estimate"
+  | "blockedBy"
+  | "blocks"
+  | "import";
+
+/** Linear-style create dialog: borderless title/description, a chip per
+ *  property (each with a key), ⌘↵ to submit, "Create more" to keep going.
+ *  Editing an existing task opens TaskEditDialog instead. */
 function TaskCreateDialog({
   state,
   projects,
+  ctx,
+  columns,
+  boardUnit,
   onClose,
 }: {
   state: Extract<DialogState, { mode: "create" }>;
   projects: ProjectView[];
+  ctx: BoardCtx;
+  columns: BoardColumn[];
+  boardUnit: EstimateUnit;
   onClose: () => void;
 }) {
+  const isSubtask = !!state.parentId;
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [projectId, setProjectId] = useState("");
+  const [columnId, setColumnId] = useState(state.columnId);
+  const [estimate, setEstimate] = useState<number | null>(null);
+  const [dependsOn, setDependsOn] = useState<string[]>([]);
+  const [createMore, setCreateMore] = useState(false);
+  const [picker, setPicker] = useState<PickerId | null>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
+
   // GitHub import: a searchable dropdown of the repo's open issues
   // (already sorted newest-updated first by the backend).
-  const [issuesOpen, setIssuesOpen] = useState(false);
   const [issues, setIssues] = useState<IssueSummary[] | null>(null);
   const [loadingIssues, setLoadingIssues] = useState(false);
   /** GitHub Projects estimate carried from the imported issue, if any. */
   const [importEstimate, setImportEstimate] = useState<number | null>(null);
 
-  const openIssuePicker = (open: boolean) => {
-    setIssuesOpen(open);
-    if (open && issues === null && projectId) {
+  const openIssuePicker = () => {
+    if (!projectId) return;
+    setPicker("import");
+    if (issues === null) {
       setLoadingIssues(true);
       listProjectIssues(projectId)
         .then(setIssues)
         .catch((e) => {
-          setIssuesOpen(false);
+          setPicker(null);
           toast.error("Could not load GitHub issues", {
             description: String(e),
           });
@@ -1298,160 +1359,357 @@ function TaskCreateDialog({
         .trim(),
     );
     setImportEstimate(issue.estimate);
-    setIssuesOpen(false);
+    setPicker(null);
   };
+
+  // Effective project (subtasks inherit the parent's) drives the estimate
+  // unit and the breadcrumb/chip label.
+  const parent = state.parentId ? ctx.taskById.get(state.parentId) : undefined;
+  const effProjectId = isSubtask ? (parent?.projectId ?? "") : projectId;
+  const projectName = effProjectId
+    ? projects.find((p) => p.id === effProjectId)?.name
+    : null;
+  const unit =
+    projects.find((p) => p.id === effProjectId)?.estimate_unit ?? boardUnit;
+  /** Explicit estimate wins over one carried from an imported issue. */
+  const effEstimate = estimate ?? importEstimate;
+
+  const column = columns.find((c) => c.id === columnId) ?? columns[0];
+  // Blocked-by candidates: siblings for a subtask, top-level tasks otherwise
+  // (matching the peers rule used when editing), excluding done cards.
+  const candidates = [...ctx.taskById.values()]
+    .filter(
+      (t) =>
+        t.parentId === (state.parentId ?? null) &&
+        ctx.roleById.get(t.columnId) !== "done",
+    )
+    .sort(byNumber);
+  const selectedDeps = new Set(dependsOn);
 
   const save = () => {
     if (!title.trim()) return;
     taskCreate(title.trim(), {
       description: description || undefined,
       // Subtasks inherit the parent's project server-side.
-      projectId: state.parentId ? undefined : projectId || undefined,
-      columnId: state.columnId,
+      projectId: isSubtask ? undefined : projectId || undefined,
+      columnId,
       parentId: state.parentId ?? undefined,
     })
-      .then((created) =>
-        // taskCreate has no estimate arg — the imported issue's GitHub
-        // Projects estimate lands via a follow-up patch.
-        importEstimate !== null
-          ? taskUpdate(created.id, { estimate: importEstimate })
-          : undefined,
-      )
-      .then(onClose)
+      .then((created) => {
+        // taskCreate has no estimate/dependsOn args — they land via a
+        // follow-up patch (as the imported-issue estimate always has).
+        const patch: { estimate?: number; dependsOn?: string[] } = {};
+        if (effEstimate !== null) patch.estimate = effEstimate;
+        if (dependsOn.length) patch.dependsOn = dependsOn;
+        return Object.keys(patch).length
+          ? taskUpdate(created.id, patch)
+          : undefined;
+      })
+      .then(() => {
+        if (!createMore) {
+          onClose();
+          return;
+        }
+        // Keep project + column for rapid entry; reset the rest.
+        setTitle("");
+        setDescription("");
+        setEstimate(null);
+        setImportEstimate(null);
+        setDependsOn([]);
+        titleRef.current?.focus();
+      })
       .catch((e) =>
         toast.error("Could not save task", { description: String(e) }),
       );
   };
 
+  // ⌘↵ submits from anywhere; the chip keys only fire outside text fields.
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      save();
+      return;
+    }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest("input, textarea, [contenteditable=true]")) return;
+    const open = (id: PickerId) => {
+      e.preventDefault();
+      setPicker(id);
+    };
+    switch (e.key) {
+      case "s":
+      case "S":
+        open("status");
+        break;
+      case "p":
+      case "P":
+        if (!isSubtask) open("project");
+        break;
+      case "e":
+      case "E":
+        open("estimate");
+        break;
+      case "b":
+      case "B":
+        open("blockedBy");
+        break;
+      case "i":
+      case "I":
+        if (!isSubtask && projectId) {
+          e.preventDefault();
+          openIssuePicker();
+        }
+        break;
+    }
+  };
+
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="flex h-[80vh] w-[min(60rem,92vw)] flex-col sm:max-w-none">
-        {/* A real header band: larger title, breathing room, hairline below. */}
-        <div className="border-b border-border pb-4">
-          <DialogTitle className="text-xl">
-            {state.parentId ? "New subtask" : "New task"}
-          </DialogTitle>
+      <DialogContent
+        onKeyDown={onKeyDown}
+        className="flex w-[min(44rem,92vw)] flex-col gap-1 sm:max-w-none"
+      >
+        <DialogTitle className="sr-only">
+          {isSubtask ? "New subtask" : "New task"}
+        </DialogTitle>
+        {/* Breadcrumb: project chip (reflects the selection) › New task */}
+        <div className="mb-2 flex items-center gap-2 pr-8 text-[11.5px] text-muted-foreground">
+          <span className="flex max-w-56 items-center rounded-md border border-border bg-accent/50 px-2 py-0.5">
+            <span className="truncate">{projectName ?? "No project"}</span>
+          </span>
+          <span className="text-border">›</span>
+          <span>
+            {isSubtask ? `New subtask of #${parent?.number}` : "New task"}
+          </span>
         </div>
-        <div className="flex min-h-0 flex-1 flex-col gap-5 pt-2">
-          <Field label="Title">
-            <Input
-              autoFocus
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && save()}
-              placeholder="What needs doing?"
-            />
-          </Field>
-          {state.parentId ? (
-            <p className="text-xs text-muted-foreground">
-              Inherits the parent task's project.
-            </p>
-          ) : (
-            <div className="flex items-end gap-3">
-              <Field label="Project">
-                <select
-                  value={projectId}
-                  onChange={(e) => setProjectId(e.target.value)}
-                  className="h-9 w-72 rounded-md border border-input bg-transparent px-3 text-sm"
-                >
-                  <option value="">No project (starts a quick chat)</option>
-                  {projects.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Popover open={issuesOpen} onOpenChange={openIssuePicker}>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={!projectId}
-                    title={
-                      projectId
-                        ? "Fill this task from an open GitHub issue"
-                        : "Select a project first"
-                    }
-                  >
-                    <CloudDownload className="mr-1.5 size-3.5" />
-                    Import from GitHub
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent align="start" className="w-[28rem] p-0">
-                  <Command>
-                    <CommandInput placeholder="Search open issues…" />
-                    <CommandList className="max-h-72">
-                      {loadingIssues ? (
-                        <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
-                          <Loader2 className="size-3.5 animate-spin" />
-                          Loading issues…
-                        </div>
-                      ) : (
-                        <>
-                          <CommandEmpty>No matching issues.</CommandEmpty>
-                          {(issues ?? []).map((issue) => (
-                            <CommandItem
-                              key={issue.number}
-                              value={`#${issue.number} ${issue.title} ${issue.author}`}
-                              onSelect={() => applyIssue(issue)}
-                              className="gap-2"
-                            >
-                              <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                                #{issue.number}
-                              </span>
-                              <span className="min-w-0 flex-1 truncate">
-                                {issue.title}
-                              </span>
-                              <span className="shrink-0 text-xs text-muted-foreground">
-                                {issue.author}
-                              </span>
-                            </CommandItem>
-                          ))}
-                        </>
-                      )}
-                    </CommandList>
-                  </Command>
-                </PopoverContent>
-              </Popover>
-            </div>
-          )}
-          <div className="flex min-h-0 flex-1 flex-col">
-            <Field label="Description" className="flex min-h-0 flex-1 flex-col">
-              <MarkdownEditor
-                value={description}
-                onChange={setDescription}
-                placeholder="Optional — markdown, included in the session prompt."
-                className="flex-1"
+
+        <input
+          ref={titleRef}
+          autoFocus
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) {
+              e.preventDefault();
+              save();
+            }
+          }}
+          placeholder="Task title"
+          className="w-full bg-transparent text-lg font-semibold outline-none placeholder:text-muted-foreground/60"
+        />
+        <textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="Add a description… (markdown)"
+          className="min-h-16 w-full resize-none bg-transparent pb-4 text-sm outline-none placeholder:text-muted-foreground/60"
+        />
+
+        {/* Property chips — click or key opens the same command pickers the
+            edit dialog's rail uses. */}
+        <div className="flex flex-wrap items-center gap-1.5 pb-3">
+          <Popover
+            open={picker === "status"}
+            onOpenChange={(o) => setPicker(o ? "status" : null)}
+          >
+            <PopoverTrigger asChild>
+              <CreateChip
+                set
+                kbd="S"
+                icon={<StateIcon state={roleToState(column?.role ?? "none")} />}
+              >
+                {column?.name ?? "Column"}
+              </CreateChip>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-56 p-0">
+              <ColumnPicker
+                columns={columns}
+                onSelect={(c) => {
+                  setColumnId(c.id);
+                  setPicker(null);
+                }}
               />
-            </Field>
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button onClick={save} disabled={!title.trim()}>
-              Create
-            </Button>
-          </div>
+            </PopoverContent>
+          </Popover>
+
+          {!isSubtask && (
+            <Popover
+              open={picker === "project"}
+              onOpenChange={(o) => setPicker(o ? "project" : null)}
+            >
+              <PopoverTrigger asChild>
+                <CreateChip
+                  set={!!projectId}
+                  kbd="P"
+                  icon={<PanelTop className="size-3" />}
+                >
+                  {projectName ?? "No project"}
+                </CreateChip>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-72 p-0">
+                <ProjectPicker
+                  projects={projects}
+                  onSelect={(id) => {
+                    setProjectId(id);
+                    // The issue cache belongs to the previous project.
+                    setIssues(null);
+                    setImportEstimate(null);
+                    setPicker(null);
+                  }}
+                />
+              </PopoverContent>
+            </Popover>
+          )}
+
+          <Popover
+            open={picker === "estimate"}
+            onOpenChange={(o) => setPicker(o ? "estimate" : null)}
+          >
+            <PopoverTrigger asChild>
+              <CreateChip
+                set={effEstimate !== null}
+                kbd="E"
+                icon={<Triangle className="size-3" />}
+              >
+                {effEstimate !== null
+                  ? estimateLabel(effEstimate, unit)
+                  : "Estimate"}
+              </CreateChip>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-56 p-0">
+              <EstimatePicker
+                unit={unit}
+                onSelect={(v) => {
+                  setEstimate(v < 0 ? null : v);
+                  if (v < 0) setImportEstimate(null);
+                  setPicker(null);
+                }}
+              />
+            </PopoverContent>
+          </Popover>
+
+          <Popover
+            open={picker === "blockedBy"}
+            onOpenChange={(o) => setPicker(o ? "blockedBy" : null)}
+          >
+            <PopoverTrigger asChild>
+              <CreateChip
+                set={dependsOn.length > 0}
+                kbd="B"
+                icon={<Lock className="size-3" />}
+              >
+                {dependsOn.length
+                  ? `Blocked by ${dependsOn
+                      .map((id) => `#${ctx.taskById.get(id)?.number}`)
+                      .join(" ")}`
+                  : "Blocked by"}
+              </CreateChip>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-72 p-0">
+              <DepPickerContent
+                candidates={candidates}
+                selected={selectedDeps}
+                onSelect={(t) =>
+                  // Toggle; the popover stays open for multi-select.
+                  setDependsOn((prev) =>
+                    prev.includes(t.id)
+                      ? prev.filter((id) => id !== t.id)
+                      : [...prev, t.id],
+                  )
+                }
+              />
+            </PopoverContent>
+          </Popover>
+
+          {!isSubtask && (
+            <Popover
+              open={picker === "import"}
+              onOpenChange={(o) => (o ? openIssuePicker() : setPicker(null))}
+            >
+              <PopoverTrigger asChild>
+                <CreateChip
+                  kbd="I"
+                  icon={<CloudDownload className="size-3" />}
+                  disabled={!projectId}
+                  title={
+                    projectId
+                      ? "Fill this task from an open GitHub issue"
+                      : "Select a project first"
+                  }
+                >
+                  Import issue
+                </CreateChip>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-[28rem] p-0">
+                <Command>
+                  <CommandInput placeholder="Search open issues…" />
+                  <CommandList className="max-h-72">
+                    {loadingIssues ? (
+                      <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
+                        <Loader2 className="size-3.5 animate-spin" />
+                        Loading issues…
+                      </div>
+                    ) : (
+                      <>
+                        <CommandEmpty>No matching issues.</CommandEmpty>
+                        {(issues ?? []).map((issue) => (
+                          <CommandItem
+                            key={issue.number}
+                            value={`#${issue.number} ${issue.title} ${issue.author}`}
+                            onSelect={() => applyIssue(issue)}
+                            className="gap-2"
+                          >
+                            <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                              #{issue.number}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate">
+                              {issue.title}
+                            </span>
+                            <span className="shrink-0 text-xs text-muted-foreground">
+                              {issue.author}
+                            </span>
+                          </CommandItem>
+                        ))}
+                      </>
+                    )}
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
+          )}
+        </div>
+
+        <div className="-mx-4 flex items-center justify-end gap-4 border-t border-border px-4 pt-3">
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Switch checked={createMore} onCheckedChange={setCreateMore} />
+            Create more
+          </label>
+          <Button size="sm" onClick={save} disabled={!title.trim()}>
+            Create task
+            <span className="ml-1 font-mono text-[10px] opacity-70">⌘↵</span>
+          </Button>
         </div>
       </DialogContent>
     </Dialog>
   );
 }
 
-/** Edit dialog: opens in VIEW mode — big title (click to rename), rendered
- *  markdown description (pencil / double-click to edit), always-live project
- *  select, and the subtasks section. Every field commits independently. */
+/** Edit dialog → the task view: a main column (title, markdown description,
+ *  subtasks, activity feed + comment composer) and a Linear-style properties
+ *  rail where every row has a key. Every field commits independently. */
 function TaskEditDialog({
   task,
   ctx,
   boardUnit,
   projects,
+  columns,
   workspaces,
   sessions,
   prs,
+  diffStats,
   onOpenSession,
+  onStartTask,
+  onShowShortcuts,
   onClose,
 }: {
   task: Task;
@@ -1459,16 +1717,22 @@ function TaskEditDialog({
   /** Board-global estimate unit (the task's project can override it). */
   boardUnit: EstimateUnit;
   projects: ProjectView[];
+  columns: BoardColumn[];
   workspaces: Map<string, Workspace>;
   sessions: Record<string, SessionPayload>;
   prs: Record<string, PrPayload>;
+  diffStats: Record<string, DiffStat>;
   onOpenSession: (workspaceId: string) => void;
+  onStartTask: (t: Task) => void;
+  onShowShortcuts: () => void;
   onClose: () => void;
 }) {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [editingDesc, setEditingDesc] = useState(false);
   const [descDraft, setDescDraft] = useState("");
+  const [picker, setPicker] = useState<PickerId | null>(null);
+  const addInputRef = useRef<HTMLInputElement>(null);
 
   const fail = (e: unknown) =>
     toast.error("Could not save task", { description: String(e) });
@@ -1488,27 +1752,137 @@ function TaskEditDialog({
     if (descDraft === (task.description ?? "")) return;
     taskUpdate(task.id, { description: descDraft }).catch(fail);
   };
-  // Effective estimate unit: the project's override, else the board global.
-  // Subtasks inherit the parent's project, so this holds for them too.
-  const unit =
-    projects.find((p) => p.id === task.projectId)?.estimate_unit ?? boardUnit;
   const startDescEdit = () => {
     setDescDraft(task.description ?? "");
     setEditingDesc(true);
   };
+  // Effective estimate unit: the project's override, else the board global.
+  // Subtasks inherit the parent's project, so this holds for them too.
+  const unit =
+    projects.find((p) => p.id === task.projectId)?.estimate_unit ?? boardUnit;
+
+  const isParent = (ctx.childrenByParent.get(task.id)?.length ?? 0) > 0;
+  const role = ctx.roleById.get(task.columnId) ?? "none";
+  const state = deriveState(task, role);
+  const column = columns.find((c) => c.id === task.columnId);
+  const project = projects.find((p) => p.id === task.projectId);
+  const workspace = task.workspaceId
+    ? workspaces.get(task.workspaceId)
+    : undefined;
+  const session = task.workspaceId ? sessions[task.workspaceId] : undefined;
+  const pr = task.workspaceId ? prs[task.workspaceId] : undefined;
+  const diffStat = task.workspaceId ? diffStats[task.workspaceId] : undefined;
+
+  const peers = depCandidates(task, ctx);
+  const blockedBy = task.dependsOn
+    .map((id) => ctx.taskById.get(id))
+    .filter((t): t is Task => t !== undefined);
+  const blocks = [...ctx.taskById.values()]
+    .filter((t) => t.dependsOn.includes(task.id))
+    .sort(byNumber);
+
+  /** Status change = move to the end of the chosen column. */
+  const setStatus = (columnId: string) => {
+    setPicker(null);
+    if (columnId === task.columnId) return;
+    const end =
+      Math.max(
+        0,
+        ...[...ctx.taskById.values()]
+          .filter((t) => t.columnId === columnId)
+          .map((t) => t.position),
+      ) + 1024;
+    taskMove(task.id, columnId, end).catch((e) =>
+      toast.error("Could not move task", { description: String(e) }),
+    );
+  };
+
+  const openOrStartSession = () => {
+    if (workspace) onOpenSession(workspace.id);
+    else if (!isParent) {
+      onClose();
+      onStartTask(task);
+    }
+  };
+
+  // Single-key shortcuts, Linear-style: only when no text field has focus.
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest("input, textarea, [contenteditable=true]")) return;
+    const open = (id: PickerId) => {
+      e.preventDefault();
+      setPicker(id);
+    };
+    switch (e.key) {
+      case "s":
+        open("status");
+        break;
+      case "p":
+        open("project");
+        break;
+      case "e":
+        open("estimate");
+        break;
+      case "b":
+        open("blockedBy");
+        break;
+      case "B":
+        open("blocks");
+        break;
+      case "a":
+        if (task.parentId === null) {
+          e.preventDefault();
+          addInputRef.current?.focus();
+        }
+        break;
+      case "o":
+        e.preventDefault();
+        openOrStartSession();
+        break;
+      case "?":
+        e.preventDefault();
+        onShowShortcuts();
+        break;
+    }
+  };
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="flex h-[80vh] w-[min(60rem,92vw)] flex-col sm:max-w-none">
-        <div className="border-b border-border pb-4">
-          <div className="font-mono text-xs text-muted-foreground">
-            Task #{task.number}
+      <DialogContent
+        showCloseButton={false}
+        onKeyDown={onKeyDown}
+        className="flex h-[85vh] w-[min(64rem,94vw)] flex-row gap-0 overflow-hidden p-0 sm:max-w-none"
+      >
+        {/* ── Main column ── */}
+        <div className="flex min-w-0 flex-1 flex-col gap-5 overflow-y-auto px-6 py-5">
+          {/* Eyebrow: project chip › task ref, with the dialog's close X. */}
+          <div className="flex shrink-0 items-center gap-2 text-[11.5px] text-muted-foreground">
+            <span className="flex max-w-48 items-center rounded-md border border-border bg-accent/50 px-2 py-0.5">
+              <span className="truncate">{project?.name ?? "No project"}</span>
+            </span>
+            <span className="text-border">›</span>
+            <span className="font-mono">Task #{task.number}</span>
+            <div className="flex-1" />
+            <span className="text-[10.5px] text-muted-foreground/60">
+              esc to close
+            </span>
+            <DialogClose asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="text-muted-foreground"
+              >
+                <X className="size-3.5" />
+                <span className="sr-only">Close</span>
+              </Button>
+            </DialogClose>
           </div>
+
+          {/* Title (click to rename) */}
           {editingTitle ? (
             <>
-              <DialogTitle className="sr-only">
-                Task #{task.number}
-              </DialogTitle>
+              <DialogTitle className="sr-only">Task #{task.number}</DialogTitle>
               <Input
                 autoFocus
                 value={titleDraft}
@@ -1523,39 +1897,20 @@ function TaskEditDialog({
                     setEditingTitle(false);
                   }
                 }}
-                className="mt-0.5 h-auto rounded-none border-transparent bg-transparent px-0 py-0.5 text-xl font-semibold shadow-none focus-visible:ring-0 md:text-xl dark:bg-transparent"
+                className="h-auto rounded-none border-transparent bg-transparent px-0 py-0.5 text-xl font-semibold shadow-none focus-visible:ring-0 md:text-xl dark:bg-transparent"
               />
             </>
           ) : (
             <DialogTitle
-              className="mt-0.5 cursor-text py-0.5 text-xl"
+              className="cursor-text py-0.5 text-xl"
               onClick={startTitleEdit}
               title="Click to rename"
             >
               {task.title}
             </DialogTitle>
           )}
-        </div>
-        <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto pr-1 pt-2">
-          <Field label="Project">
-            <select
-              value={task.projectId ?? ""}
-              onChange={(e) =>
-                taskUpdate(task.id, { projectId: e.target.value }).catch(fail)
-              }
-              className="h-9 w-72 rounded-md border border-input bg-transparent px-3 text-sm"
-            >
-              <option value="">No project (starts a quick chat)</option>
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </Field>
 
-          <TaskMetaRow task={task} ctx={ctx} unit={unit} />
-
+          {/* Description (hover pencil / double-click to edit) */}
           <div className="group/desc flex flex-col gap-1.5">
             <div className="flex items-center gap-1.5">
               <span className="text-xs font-medium text-muted-foreground">
@@ -1614,33 +1969,348 @@ function TaskEditDialog({
               sessions={sessions}
               prs={prs}
               onOpenSession={onOpenSession}
+              addInputRef={addInputRef}
             />
           )}
+
+          <ActivityFeed task={task} />
+        </div>
+
+        {/* ── Properties rail ── */}
+        <div className="flex w-60 shrink-0 flex-col gap-4 overflow-y-auto border-l border-border bg-muted/20 px-3.5 py-5">
+          <div className="flex flex-col gap-0.5">
+            <span className="mb-1.5 px-1.5 text-[10.5px] font-semibold tracking-wide text-muted-foreground">
+              PROPERTIES
+            </span>
+
+            <Popover
+              open={picker === "status"}
+              onOpenChange={(o) => setPicker(o ? "status" : null)}
+            >
+              <PopoverTrigger asChild>
+                <RailRow icon={<StateIcon state={state} />} kbd="S">
+                  {column?.name ?? "—"}
+                </RailRow>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-56 p-0">
+                <ColumnPicker columns={columns} onSelect={(c) => setStatus(c.id)} />
+              </PopoverContent>
+            </Popover>
+
+            <Popover
+              open={picker === "project"}
+              onOpenChange={(o) => setPicker(o ? "project" : null)}
+            >
+              <PopoverTrigger asChild>
+                <RailRow
+                  icon={<PanelTop className="size-[13px]" />}
+                  kbd="P"
+                  muted={!task.projectId}
+                >
+                  {project?.name ?? "No project"}
+                </RailRow>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-72 p-0">
+                <ProjectPicker
+                  projects={projects}
+                  onSelect={(id) => {
+                    setPicker(null);
+                    taskUpdate(task.id, { projectId: id }).catch(fail);
+                  }}
+                />
+              </PopoverContent>
+            </Popover>
+
+            <Popover
+              open={picker === "estimate"}
+              onOpenChange={(o) => setPicker(o ? "estimate" : null)}
+            >
+              <PopoverTrigger asChild>
+                <RailRow
+                  icon={<Triangle className="size-[13px]" />}
+                  kbd="E"
+                  muted={task.estimate === null}
+                >
+                  {task.estimate !== null
+                    ? estimateLabel(task.estimate, unit)
+                    : "Estimate —"}
+                </RailRow>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-56 p-0">
+                <EstimatePicker
+                  unit={unit}
+                  onSelect={(v) => {
+                    setPicker(null);
+                    taskUpdate(task.id, { estimate: v }).catch(fail);
+                  }}
+                />
+              </PopoverContent>
+            </Popover>
+
+            <div className="flex flex-col gap-1">
+              <Popover
+                open={picker === "blockedBy"}
+                onOpenChange={(o) => setPicker(o ? "blockedBy" : null)}
+              >
+                <PopoverTrigger asChild>
+                  <RailRow
+                    icon={<Lock className="size-[13px]" />}
+                    kbd="B"
+                    muted={blockedBy.length === 0}
+                  >
+                    Blocked by{blockedBy.length === 0 && " —"}
+                  </RailRow>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-72 p-0">
+                  <DepPickerContent
+                    candidates={peers.filter(
+                      (t) => !task.dependsOn.includes(t.id),
+                    )}
+                    onSelect={(dep) => {
+                      setPicker(null);
+                      taskUpdate(task.id, {
+                        dependsOn: [...task.dependsOn, dep.id],
+                      }).catch(fail);
+                    }}
+                  />
+                </PopoverContent>
+              </Popover>
+              {blockedBy.length > 0 && (
+                <div className="flex flex-wrap gap-1 pb-1 pl-7">
+                  {blockedBy.map((dep) => (
+                    <DepEditChip
+                      key={dep.id}
+                      task={dep}
+                      onRemove={() =>
+                        taskUpdate(task.id, {
+                          dependsOn: task.dependsOn.filter(
+                            (id) => id !== dep.id,
+                          ),
+                        }).catch(fail)
+                      }
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <Popover
+                open={picker === "blocks"}
+                onOpenChange={(o) => setPicker(o ? "blocks" : null)}
+              >
+                <PopoverTrigger asChild>
+                  <RailRow
+                    icon={<Lock className="size-[13px] rotate-180" />}
+                    kbd="⇧B"
+                    muted={blocks.length === 0}
+                  >
+                    Blocks{blocks.length === 0 && " —"}
+                  </RailRow>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-72 p-0">
+                  <DepPickerContent
+                    candidates={peers.filter(
+                      (t) => !t.dependsOn.includes(task.id),
+                    )}
+                    onSelect={(other) => {
+                      setPicker(null);
+                      taskUpdate(other.id, {
+                        dependsOn: [...other.dependsOn, task.id],
+                      }).catch(fail);
+                    }}
+                  />
+                </PopoverContent>
+              </Popover>
+              {blocks.length > 0 && (
+                <div className="flex flex-wrap gap-1 pb-1 pl-7">
+                  {blocks.map((other) => (
+                    <DepEditChip
+                      key={other.id}
+                      task={other}
+                      onRemove={() =>
+                        taskUpdate(other.id, {
+                          dependsOn: other.dependsOn.filter(
+                            (id) => id !== task.id,
+                          ),
+                        }).catch(fail)
+                      }
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {(workspace || !isParent) && (
+            <>
+              <div className="h-px shrink-0 bg-border" />
+              <div className="flex flex-col gap-1.5">
+                <span className="mb-0.5 px-1.5 text-[10.5px] font-semibold tracking-wide text-muted-foreground">
+                  SESSION
+                </span>
+                {workspace ? (
+                  <>
+                    <div className="px-1.5">
+                      <StatusChip
+                        state={state}
+                        workspace={workspace}
+                        session={session}
+                        pr={pr}
+                        onOpenSession={onOpenSession}
+                      />
+                    </div>
+                    <RailRow
+                      icon={<MessageSquare className="size-[13px]" />}
+                      kbd="O"
+                      onClick={() => onOpenSession(workspace.id)}
+                    >
+                      Open session
+                    </RailRow>
+                    {diffStat && diffStat.files > 0 && (
+                      <div className="flex items-center gap-1.5 px-1.5 text-xs text-muted-foreground">
+                        <span className="text-additions">
+                          +{diffStat.insertions}
+                        </span>
+                        <span className="text-deletions">
+                          −{diffStat.deletions}
+                        </span>
+                        uncommitted
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <RailRow
+                    icon={<Play className="size-[13px]" />}
+                    kbd="O"
+                    onClick={openOrStartSession}
+                  >
+                    {task.workspaceId ? "Start new session" : "Start session"}
+                  </RailRow>
+                )}
+              </div>
+            </>
+          )}
+
+          <div className="flex-1" />
+          <button
+            onClick={onShowShortcuts}
+            className="flex items-center gap-1.5 px-1.5 text-[10.5px] text-muted-foreground/70 transition-colors hover:text-foreground"
+          >
+            <Kbd>?</Kbd> all shortcuts
+          </button>
         </div>
       </DialogContent>
     </Dialog>
   );
 }
 
-/** Compact metadata row (interim — a popup redesign comes later): the size
- *  estimate plus both directions of the blocked-by relation. Every field
- *  commits independently; the board snapshot renders the result back live. */
-function TaskMetaRow({
-  task,
-  ctx,
-  unit,
-}: {
-  task: Task;
-  ctx: BoardCtx;
-  unit: EstimateUnit;
-}) {
-  const fail = (e: unknown) =>
-    toast.error("Could not save task", { description: String(e) });
+// ── Shared pickers + rail/chip primitives (edit rail ⇄ create chips) ──
 
-  // Dependency candidates: peers only — siblings for a subtask, other
-  // top-level tasks otherwise — excluding itself and done-column tasks.
-  const live = [...ctx.taskById.values()];
-  const peers = live
+/** Tiny keyboard-shortcut chip (matches the mock's kbd styling). */
+function Kbd({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <kbd
+      className={cn(
+        "shrink-0 rounded border border-border px-1 font-mono text-[9.5px] leading-4 text-muted-foreground",
+        className,
+      )}
+    >
+      {children}
+    </kbd>
+  );
+}
+
+/** One properties-rail row: icon + value + right-aligned key hint. */
+function RailRow({
+  icon,
+  kbd,
+  muted,
+  className,
+  children,
+  ...props
+}: React.ComponentProps<"button"> & {
+  icon: React.ReactNode;
+  kbd?: string;
+  muted?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      {...props}
+      className={cn(
+        "flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-xs transition-colors hover:bg-accent/50",
+        muted ? "text-muted-foreground" : "text-foreground",
+        className,
+      )}
+    >
+      <span className="flex size-[13px] shrink-0 items-center justify-center text-muted-foreground">
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1 truncate">{children}</span>
+      {kbd && <Kbd>{kbd}</Kbd>}
+    </button>
+  );
+}
+
+/** Create-dialog property chip: icon + value (or label) + key hint. Chips
+ *  with a value render filled; unset ones are border-only and muted. */
+function CreateChip({
+  icon,
+  kbd,
+  set,
+  className,
+  children,
+  ...props
+}: React.ComponentProps<"button"> & {
+  icon: React.ReactNode;
+  kbd: string;
+  set?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      {...props}
+      className={cn(
+        "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11.5px] transition-colors disabled:pointer-events-none disabled:opacity-50",
+        set
+          ? "border-border bg-accent text-foreground"
+          : "border-border text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+        className,
+      )}
+    >
+      <span className="flex size-3.5 shrink-0 items-center justify-center text-muted-foreground">
+        {icon}
+      </span>
+      <span className="max-w-56 truncate">{children}</span>
+      <Kbd>{kbd}</Kbd>
+    </button>
+  );
+}
+
+/** Column-role → card-state glyph when there's no task context (pickers). */
+function roleToState(role: ColumnRole): CardState {
+  return role === "done"
+    ? "done"
+    : role === "review"
+      ? "review"
+      : role === "active"
+        ? "working"
+        : role === "queued"
+          ? "queued"
+          : "todo";
+}
+
+/** Dependency candidates: peers only — siblings for a subtask, other
+ *  top-level tasks otherwise — excluding itself and done-column tasks. */
+function depCandidates(task: Task, ctx: BoardCtx): Task[] {
+  return [...ctx.taskById.values()]
     .filter(
       (t) =>
         t.id !== task.id &&
@@ -1648,145 +2318,143 @@ function TaskMetaRow({
         ctx.roleById.get(t.columnId) !== "done",
     )
     .sort(byNumber);
-  const blockedBy = task.dependsOn
-    .map((id) => ctx.taskById.get(id))
-    .filter((t): t is Task => t !== undefined);
-  const blocks = live.filter((t) => t.dependsOn.includes(task.id)).sort(byNumber);
+}
 
+/** "8 points" / "4h" / "M" — display for a set estimate. */
+function estimateLabel(value: number, unit: EstimateUnit): string {
+  if (unit === "tshirt") return formatEstimate(value, unit);
+  return unit === "hours"
+    ? `${formatEstimate(value, unit)}h`
+    : `${formatEstimate(value, unit)} points`;
+}
+
+/** Column list picker (the status/column property). */
+function ColumnPicker({
+  columns,
+  onSelect,
+}: {
+  columns: BoardColumn[];
+  onSelect: (c: BoardColumn) => void;
+}) {
   return (
-    <div className="flex flex-wrap items-start gap-8">
-      <Field label="Estimate">
-        <EstimateInput task={task} unit={unit} onError={fail} />
-      </Field>
-      <Field label="Blocked by">
-        <div className="flex min-h-8 flex-wrap items-center gap-1.5">
-          {blockedBy.map((dep) => (
-            <DepEditChip
-              key={dep.id}
-              task={dep}
-              onRemove={() =>
-                taskUpdate(task.id, {
-                  dependsOn: task.dependsOn.filter((id) => id !== dep.id),
-                }).catch(fail)
-              }
-            />
-          ))}
-          <DepPicker
-            candidates={peers.filter((t) => !task.dependsOn.includes(t.id))}
-            onSelect={(dep) =>
-              taskUpdate(task.id, {
-                dependsOn: [...task.dependsOn, dep.id],
-              }).catch(fail)
-            }
-          />
-        </div>
-      </Field>
-      <Field label="Blocks">
-        <div className="flex min-h-8 flex-wrap items-center gap-1.5">
-          {blocks.map((other) => (
-            <DepEditChip
-              key={other.id}
-              task={other}
-              onRemove={() =>
-                taskUpdate(other.id, {
-                  dependsOn: other.dependsOn.filter((id) => id !== task.id),
-                }).catch(fail)
-              }
-            />
-          ))}
-          <DepPicker
-            candidates={peers.filter((t) => !t.dependsOn.includes(task.id))}
-            onSelect={(other) =>
-              taskUpdate(other.id, {
-                dependsOn: [...other.dependsOn, task.id],
-              }).catch(fail)
-            }
-          />
-        </div>
-      </Field>
-    </div>
+    <Command>
+      <CommandList>
+        {columns.map((c) => (
+          <CommandItem
+            key={c.id}
+            value={c.name}
+            onSelect={() => onSelect(c)}
+            className="gap-2"
+          >
+            <StateIcon state={roleToState(c.role)} />
+            {c.name}
+          </CommandItem>
+        ))}
+      </CommandList>
+    </Command>
   );
 }
 
-/** Unit-aware estimate input: a number field (commits on blur/Enter) for
- *  points/hours, a size select for t-shirt. Clearing commits the negative
- *  unset sentinel. */
-function EstimateInput({
-  task,
-  unit,
-  onError,
+/** Project picker ("" = no project → quick chat). */
+function ProjectPicker({
+  projects,
+  onSelect,
 }: {
-  task: Task;
-  unit: EstimateUnit;
-  onError: (e: unknown) => void;
+  projects: ProjectView[];
+  onSelect: (id: string) => void;
 }) {
-  const [draft, setDraft] = useState(task.estimate?.toString() ?? "");
-  // Re-sync when another commit (or Suggest plan) changes the live value.
-  useEffect(() => setDraft(task.estimate?.toString() ?? ""), [task.estimate]);
-
-  const commit = () => {
-    const trimmed = draft.trim();
-    if (trimmed === "") {
-      if (task.estimate !== null)
-        taskUpdate(task.id, { estimate: -1 }).catch(onError);
-      return;
-    }
-    const value = Number(trimmed);
-    if (!Number.isFinite(value) || value < 0) {
-      setDraft(task.estimate?.toString() ?? "");
-      return;
-    }
-    if (value !== task.estimate)
-      taskUpdate(task.id, { estimate: value }).catch(onError);
-  };
-
-  if (unit === "tshirt") {
-    // Non-exact stored numbers (e.g. an imported GitHub estimate) snap to
-    // the nearest size for display; picking a size stores its exact value.
-    const current =
-      task.estimate === null ? "" : String(nearestTshirt(task.estimate).value);
-    return (
-      <select
-        value={current}
-        onChange={(e) => {
-          const v = e.target.value;
-          if (v === "") {
-            if (task.estimate !== null)
-              taskUpdate(task.id, { estimate: -1 }).catch(onError);
-            return;
-          }
-          if (v !== current)
-            taskUpdate(task.id, { estimate: Number(v) }).catch(onError);
-        }}
-        className="h-8 w-24 rounded-md border border-input bg-transparent px-2 text-sm"
-      >
-        <option value="">–</option>
-        {TSHIRT_SIZES.map((s) => (
-          <option key={s.label} value={s.value}>
-            {s.label}
-          </option>
-        ))}
-      </select>
-    );
-  }
-
   return (
-    <div className="relative w-24">
-      <Input
-        type="number"
-        min={0}
-        step={unit === "hours" ? 0.5 : 1}
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => e.key === "Enter" && commit()}
-        placeholder="—"
-        className={cn("h-8 text-sm", unit === "hours" && "pr-7")}
-      />
-      {unit === "hours" && (
-        <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
-          h
-        </span>
+    <Command>
+      <CommandInput placeholder="Project…" />
+      <CommandList className="max-h-56">
+        <CommandEmpty>No matching projects.</CommandEmpty>
+        <CommandItem value="No project" onSelect={() => onSelect("")}>
+          No project (starts a quick chat)
+        </CommandItem>
+        {projects.map((p) => (
+          <CommandItem
+            key={p.id}
+            value={`${p.name} ${p.id}`}
+            onSelect={() => onSelect(p.id)}
+          >
+            <span className="truncate">{p.name}</span>
+          </CommandItem>
+        ))}
+      </CommandList>
+    </Command>
+  );
+}
+
+const QUICK_ESTIMATES = [1, 2, 3, 5, 8, 13];
+
+/** Estimate picker: quick values (t-shirt sizes for that unit) + a custom
+ *  number input. Selecting -1 clears (the backend's unset sentinel). */
+function EstimatePicker({
+  unit,
+  onSelect,
+}: {
+  unit: EstimateUnit;
+  onSelect: (value: number) => void;
+}) {
+  const [custom, setCustom] = useState("");
+  const unitWord = (v: number) =>
+    unit === "hours" ? (v === 1 ? "hour" : "hours") : v === 1 ? "point" : "points";
+  return (
+    <div>
+      <Command>
+        <CommandList>
+          {unit === "tshirt"
+            ? TSHIRT_SIZES.map((s) => (
+                <CommandItem
+                  key={s.label}
+                  value={s.label}
+                  onSelect={() => onSelect(s.value)}
+                  className="gap-2"
+                >
+                  {s.label}
+                </CommandItem>
+              ))
+            : QUICK_ESTIMATES.map((v) => (
+                <CommandItem
+                  key={v}
+                  value={String(v)}
+                  onSelect={() => onSelect(v)}
+                  className="gap-2"
+                >
+                  {v}
+                  <span className="text-xs text-muted-foreground">
+                    {unitWord(v)}
+                  </span>
+                </CommandItem>
+              ))}
+          <CommandItem
+            value="No estimate"
+            onSelect={() => onSelect(-1)}
+            className="text-muted-foreground"
+          >
+            No estimate
+          </CommandItem>
+        </CommandList>
+      </Command>
+      {unit !== "tshirt" && (
+        <div className="border-t border-border p-1.5">
+          <Input
+            type="number"
+            min={0}
+            step={unit === "hours" ? 0.5 : 1}
+            value={custom}
+            onChange={(e) => setCustom(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return;
+              e.preventDefault();
+              const v = Number(custom.trim());
+              if (custom.trim() !== "" && Number.isFinite(v) && v >= 0)
+                onSelect(v);
+            }}
+            placeholder="Custom…"
+            className="h-7 text-xs"
+          />
+        </div>
       )}
     </div>
   );
@@ -1812,55 +2480,297 @@ function DepEditChip({ task, onRemove }: { task: Task; onRemove: () => void }) {
   );
 }
 
-/** "+ Add" dependency picker: a searchable popover over the candidate peers
- *  (same pattern as the GitHub issue import picker). */
-function DepPicker({
+/** Searchable dependency picker body (shared by the edit rail's popovers and
+ *  the create dialog's Blocked-by chip). */
+function DepPickerContent({
   candidates,
+  selected,
   onSelect,
 }: {
   candidates: Task[];
+  /** When given, items render toggle checks and stay open (create flow). */
+  selected?: Set<string>;
   onSelect: (t: Task) => void;
 }) {
-  const [open, setOpen] = useState(false);
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          className={cn(
-            CHIP,
-            "border-dashed border-border text-muted-foreground hover:bg-accent hover:text-foreground",
-          )}
-          title="Add a task"
-        >
-          <Plus className="size-2.5" />
-          Add
-        </button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-72 p-0">
-        <Command>
-          <CommandInput placeholder="Search tasks…" />
-          <CommandList className="max-h-56">
-            <CommandEmpty>No matching tasks.</CommandEmpty>
-            {candidates.map((t) => (
-              <CommandItem
-                key={t.id}
-                value={`#${t.number} ${t.title}`}
-                onSelect={() => {
-                  setOpen(false);
-                  onSelect(t);
+    <Command>
+      <CommandInput placeholder="Search tasks…" />
+      <CommandList className="max-h-56">
+        <CommandEmpty>No matching tasks.</CommandEmpty>
+        {candidates.map((t) => (
+          <CommandItem
+            key={t.id}
+            value={`#${t.number} ${t.title}`}
+            onSelect={() => onSelect(t)}
+            className="gap-2"
+          >
+            <span className="shrink-0 font-mono text-xs text-muted-foreground">
+              #{t.number}
+            </span>
+            <span className="min-w-0 flex-1 truncate">{t.title}</span>
+            {selected?.has(t.id) && (
+              <CircleCheck className="size-3.5 shrink-0 text-primary" />
+            )}
+          </CommandItem>
+        ))}
+      </CommandList>
+    </Command>
+  );
+}
+
+// ── Activity feed (timeline events + comments + the /command composer) ──
+
+/** Feed timestamp: time-of-day for today, short date otherwise. */
+function formatWhen(ts: number): string {
+  const d = new Date(ts);
+  return d.toDateString() === new Date().toDateString()
+    ? d.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      })
+    : d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+/** Event glyph, colored by actor (user muted, agent green, ai primary) with
+ *  kind overrides (review purple, done green). */
+function ActivityIcon({ kind, actor }: { kind: string; actor: string }) {
+  const color =
+    kind === "review"
+      ? REVIEW_TEXT
+      : kind === "done"
+        ? "text-additions"
+        : actor === "ai"
+          ? "text-primary"
+          : actor === "agent"
+            ? "text-additions"
+            : "text-muted-foreground";
+  const Icon =
+    kind === "plan"
+      ? Sparkles
+      : kind === "session"
+        ? Play
+        : kind === "review" || kind === "done"
+          ? CircleCheck
+          : kind === "resumed"
+            ? Undo2
+            : kind === "moved"
+              ? ArrowRight
+              : Circle; // created + unknown kinds
+  return (
+    // Opaque backing so the icon masks the timeline's vertical line.
+    <span className="relative flex size-[15px] shrink-0 items-center justify-center rounded-full bg-popover">
+      <Icon className={cn("size-3.5", color)} />
+    </span>
+  );
+}
+
+/** One-line text per recorded event kind. */
+function activityText(entry: ActivityEntry): React.ReactNode {
+  switch (entry.kind) {
+    case "created":
+      return "created the task";
+    case "plan":
+      return entry.body || "planned subtasks";
+    case "session":
+      return "session started";
+    case "review":
+      return (
+        <>
+          agent finished a turn — moved to{" "}
+          <span className={REVIEW_TEXT}>Needs review</span>
+        </>
+      );
+    case "resumed":
+      return "moved back to In progress";
+    case "moved":
+      return `moved to ${entry.body}`;
+    case "done":
+      return entry.body ? `done — ${entry.body}` : "moved to Done";
+    default:
+      return entry.body;
+  }
+}
+
+/** The task's timeline (thin vertical line): event rows, comment bubbles, and
+ *  the comment/command composer. Fetched on open, refetched on every
+ *  `tasks:changed` while the dialog is up. */
+function ActivityFeed({ task }: { task: Task }) {
+  const [entries, setEntries] = useState<ActivityEntry[]>([]);
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const prevCount = useRef<number | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    const refetch = () =>
+      void taskActivity(task.id).then((a) => live && setEntries(a));
+    refetch();
+    // Fresh closure per mount (see the board subscription note above).
+    const unlisten = onTasksChanged(() => refetch());
+    return () => {
+      live = false;
+      void unlisten.then((f) => f());
+    };
+  }, [task.id]);
+
+  // Auto-scroll to the newest entry — but never on the initial load, so
+  // opening the dialog doesn't jump past the description.
+  useEffect(() => {
+    if (prevCount.current !== null && entries.length > prevCount.current)
+      bottomRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    prevCount.current = entries.length;
+  }, [entries.length]);
+
+  const submit = () => {
+    const body = draft.trim();
+    if (!body || sending) return;
+    setSending(true);
+    taskComment(task.id, body)
+      .then(() => {
+        setDraft("");
+        return taskActivity(task.id).then(setEntries);
+      })
+      // Keep the draft on failure so a mistyped /command can be fixed.
+      .catch((e) => toast.error(String(e)))
+      .finally(() => setSending(false));
+  };
+
+  return (
+    <div className="flex flex-col">
+      <div className="pb-2.5 text-xs font-medium tracking-wide text-muted-foreground">
+        ACTIVITY
+      </div>
+      <div className="relative flex flex-col">
+        <div className="absolute bottom-3 left-[7px] top-2 w-px bg-border/70" />
+
+        {entries.map((entry) =>
+          entry.kind === "comment" || entry.kind === "command" ? (
+            <div key={entry.id} className="relative flex gap-3 py-2">
+              <span className="relative mt-1.5 flex size-[15px] shrink-0 items-center justify-center rounded-full bg-primary text-[8.5px] font-bold text-primary-foreground">
+                M
+              </span>
+              <div className="min-w-0 flex-1 rounded-lg border border-border bg-accent/40 px-3 py-2">
+                <div className="pb-1 text-[10.5px] text-muted-foreground">
+                  {formatWhen(entry.createdAt)}
+                </div>
+                {entry.kind === "command" ? (
+                  <div className="font-mono text-xs leading-relaxed">
+                    <span className="text-primary">
+                      {entry.body.split(/\s+/, 1)[0]}
+                    </span>
+                    {entry.body.slice(entry.body.split(/\s+/, 1)[0].length)}
+                  </div>
+                ) : (
+                  <div className="whitespace-pre-wrap text-xs leading-relaxed">
+                    {entry.body}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div
+              key={entry.id}
+              className="relative flex items-center gap-3 py-1 text-xs text-muted-foreground"
+            >
+              <ActivityIcon kind={entry.kind} actor={entry.actor} />
+              <span className="min-w-0 flex-1">{activityText(entry)}</span>
+              <span className="shrink-0 text-[10.5px] text-muted-foreground/60">
+                {formatWhen(entry.createdAt)}
+              </span>
+            </div>
+          ),
+        )}
+        <div ref={bottomRef} />
+
+        {/* Composer */}
+        <div className="relative flex gap-3 pt-2.5">
+          <span className="relative mt-2 flex size-[15px] shrink-0 items-center justify-center rounded-full bg-primary text-[8.5px] font-bold text-primary-foreground">
+            M
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 transition-colors focus-within:border-ring">
+              <input
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  // Enter and ⌘Enter both submit.
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    submit();
+                  }
                 }}
-                className="gap-2"
-              >
-                <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                  #{t.number}
-                </span>
-                <span className="min-w-0 flex-1 truncate">{t.title}</span>
-              </CommandItem>
-            ))}
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
+                placeholder="Leave a comment — / for commands…"
+                className="min-w-0 flex-1 bg-transparent py-1 text-xs outline-none placeholder:text-muted-foreground"
+              />
+              {sending ? (
+                <Loader2 className="size-3 shrink-0 animate-spin text-muted-foreground" />
+              ) : (
+                <Kbd>⌘↵</Kbd>
+              )}
+            </div>
+            {draft.startsWith("/") && (
+              <p className="pt-1 text-[10.5px] text-muted-foreground">
+                /start [instructions] · /send &lt;message&gt; · /stop · /done
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── The "?" shortcuts overlay ──
+
+const BOARD_SHORTCUTS: [string, string][] = [
+  ["New task", "N"],
+  ["Move focus", "← ↑ ↓ →"],
+  ["Open task", "Space"],
+  ["Back / close", "Esc"],
+  ["Filter", "F"],
+];
+const TASK_SHORTCUTS: [string, string][] = [
+  ["Status / column", "S"],
+  ["Project", "P"],
+  ["Estimate", "E"],
+  ["Blocked by / blocks", "B · ⇧B"],
+  ["Add subtask", "A"],
+  ["Open session", "O"],
+  ["Comment / save", "⌘↵"],
+];
+
+/** The shortcut map: board keys on the left, task-dialog keys on the right.
+ *  Opened with "?" from the board or the task view. */
+function ShortcutsDialog({ onClose }: { onClose: () => void }) {
+  const col = (label: string, rows: [string, string][]) => (
+    <div className="flex flex-1 flex-col gap-2">
+      <div className="pb-0.5 text-[10.5px] font-semibold tracking-wide text-muted-foreground">
+        {label}
+      </div>
+      {rows.map(([name, key]) => (
+        <div
+          key={name}
+          className="flex items-center justify-between gap-4 text-xs"
+        >
+          <span>{name}</span>
+          <Kbd>{key}</Kbd>
+        </div>
+      ))}
+    </div>
+  );
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="w-[min(34rem,90vw)] sm:max-w-none">
+        <DialogTitle className="sr-only">Keyboard shortcuts</DialogTitle>
+        <div className="flex gap-6 py-1">
+          {col("BOARD", BOARD_SHORTCUTS)}
+          <div className="w-px shrink-0 bg-border" />
+          {col("TASK", TASK_SHORTCUTS)}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1873,6 +2783,7 @@ function SubtasksSection({
   sessions,
   prs,
   onOpenSession,
+  addInputRef,
 }: {
   task: Task;
   ctx: BoardCtx;
@@ -1882,12 +2793,22 @@ function SubtasksSection({
   sessions: Record<string, SessionPayload>;
   prs: Record<string, PrPayload>;
   onOpenSession: (workspaceId: string) => void;
+  /** The dialog's `A` shortcut focuses the add input through this ref. */
+  addInputRef?: React.RefObject<HTMLInputElement | null>;
 }) {
   const children = [...(ctx.childrenByParent.get(task.id) ?? [])].sort(
     byNumber,
   );
   const [draft, setDraft] = useState("");
   const [planning, setPlanning] = useState(false);
+
+  // Header mini progress bar: same segments/order as the card's subtask bar.
+  const doneKids = children.filter(
+    (c) => ctx.roleById.get(c.columnId) === "done",
+  ).length;
+  const segStates = children
+    .map((c) => deriveState(c, ctx.roleById.get(c.columnId) ?? "none"))
+    .sort((a, b) => SEG_ORDER[a] - SEG_ORDER[b]);
 
   const fail = (e: unknown) =>
     toast.error("Could not add subtask", { description: String(e) });
@@ -1913,10 +2834,22 @@ function SubtasksSection({
 
   return (
     <div className="flex flex-col">
-      <div className="flex items-center gap-3 pb-1.5">
+      <div className="flex items-center gap-2 pb-1.5">
         <span className="text-xs font-medium tracking-wide text-muted-foreground">
-          SUBTASKS · {children.length}
+          SUBTASKS
         </span>
+        {children.length > 0 && (
+          <>
+            <span className="flex h-1 w-16 gap-px overflow-hidden rounded-full">
+              {segStates.map((s, i) => (
+                <span key={i} className={cn("h-full flex-1", SEG_COLOR[s])} />
+              ))}
+            </span>
+            <span className="text-[10.5px] text-muted-foreground">
+              {doneKids}/{children.length}
+            </span>
+          </>
+        )}
         <div className="flex-1" />
         <Button
           variant="ghost"
@@ -1973,34 +2906,34 @@ function SubtasksSection({
         );
       })}
 
-      <input
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key !== "Enter") return;
-          const title = draft.trim();
-          if (!title) return;
-          setDraft("");
-          void add([title]).catch(fail);
-        }}
-        onPaste={(e) => {
-          const text = e.clipboardData.getData("text");
-          if (!text.includes("\n")) return;
-          e.preventDefault();
-          // Split a pasted list: one subtask per line, list markers stripped.
-          const lines = text
-            .split("\n")
-            .map((l) => l.replace(/^\s*(?:[-*]|\d+[.)])\s+/, "").trim())
-            .filter(Boolean);
-          if (lines.length) void add(lines).catch(fail);
-        }}
-        placeholder="Add a subtask — Enter to keep adding, paste a list to split it…"
-        className="h-9 bg-transparent py-2 text-sm outline-none placeholder:text-muted-foreground"
-      />
-      <p className="pt-1 text-xs text-muted-foreground">
-        Drag a subtask on the board like any card. The parent moves to Done
-        when the last child lands.
-      </p>
+      <div className="flex items-center gap-2">
+        <input
+          ref={addInputRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter") return;
+            const title = draft.trim();
+            if (!title) return;
+            setDraft("");
+            void add([title]).catch(fail);
+          }}
+          onPaste={(e) => {
+            const text = e.clipboardData.getData("text");
+            if (!text.includes("\n")) return;
+            e.preventDefault();
+            // Split a pasted list: one subtask per line, list markers stripped.
+            const lines = text
+              .split("\n")
+              .map((l) => l.replace(/^\s*(?:[-*]|\d+[.)])\s+/, "").trim())
+              .filter(Boolean);
+            if (lines.length) void add(lines).catch(fail);
+          }}
+          placeholder="Add a subtask — Enter to keep adding, paste a list to split it…"
+          className="h-9 min-w-0 flex-1 bg-transparent py-2 text-sm outline-none placeholder:text-muted-foreground"
+        />
+        <Kbd>A</Kbd>
+      </div>
     </div>
   );
 }

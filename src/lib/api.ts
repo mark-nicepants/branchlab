@@ -5,6 +5,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   Account,
+  ActivityEntry,
   BoardSnapshot,
   Task,
   UnlinkedTask,
@@ -586,6 +587,21 @@ export function taskStart(taskId: string): Promise<Workspace> {
 /** Move a task to the done-role column (the "mark as done" toast action). */
 export function taskMarkDone(taskId: string): Promise<void> {
   return invoke<void>("task_mark_done", { taskId });
+}
+
+/** A task's activity feed (events + comments), oldest first. */
+export function taskActivity(taskId: string): Promise<ActivityEntry[]> {
+  return invoke<ActivityEntry[]>("task_activity", { taskId });
+}
+
+/** Comment on a task. Plain text lands in the feed; a leading slash runs a
+ *  session command first (/start, /send, /stop, /done) and records it.
+ *  Errors are user-facing strings; the backend emits `tasks:changed` itself. */
+export function taskComment(
+  taskId: string,
+  body: string,
+): Promise<ActivityEntry> {
+  return invoke<ActivityEntry>("task_comment", { taskId, body });
 }
 
 /** Open GitHub issues for a project's repo (task-board import picker). */

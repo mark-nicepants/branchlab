@@ -28,9 +28,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (todo / queued / working / review / done), the project + task number
   reference line, and compact chips for live status, the PR with its CI
   checks, the diff size, and blocked-by dependencies.
-- Opening a task now shows it instead of a form: the description renders as
-  markdown, and clicking the title (or the pencil next to Description)
-  edits just that field — changes save as you go.
+- Opening a task now shows a full task view instead of a form: a main column
+  with the markdown description (click the title or hover-pencil to edit —
+  changes save as you go), the subtasks list with a mini progress bar, and an
+  activity feed — a timeline of everything that happened to the task (created,
+  AI plan, session started, moved to review/done) plus your comments. The
+  composer at the bottom takes plain comments or slash commands: /start
+  [instructions] boots the task's session, /send <message> prompts it, /stop
+  aborts its turn, /done marks the task done.
+- The task view has a Linear-style properties rail: status/column, project,
+  estimate, and blocked-by/blocks as rows with command-menu pickers, plus a
+  session section with the live status chip, "Open session" (or "Start
+  session"), and the uncommitted diff size.
+- Task keyboard shortcuts: inside a task, S/P/E/B/⇧B open the property
+  pickers, A focuses the add-subtask input, O opens (or starts) the session,
+  and Enter/⌘↵ sends a comment. On the board, F opens the project filter.
+  Press ? anywhere on the board or in a task for the full shortcut map.
 - "My work" is now a task board with a built-in agent workflow. Four fixed
   columns — Todo, In progress, Needs review, Done — where dragging a card
   into "In progress" delegates it: the agent picks it up automatically (two
@@ -50,10 +63,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workspace — and after cleanup the card keeps the conversation: a
   "chat archive" chip opens the full read-only transcript for future
   reference.
-- Tasks are quick to capture and rich to edit: per-column quick-add, a
-  project filter behind the board's filter icon, an edit dialog with a
-  markdown editor (formatting toolbar + preview), and
-  import-from-GitHub-issue with search, sorted by last update.
+- Tasks are quick to capture: a Linear-style create dialog (N, or "Add task"
+  on a column) with a borderless title + description, a chip per property —
+  status, project, estimate, blocked-by, and import-from-GitHub-issue (with
+  search, sorted by last update, estimate carried over) — each with its own
+  key (S/P/E/B/I), ⌘↵ to create, and a "Create more" switch for rapid entry.
+  Per-column quick-add and the board's project filter round it out.
 - Deleting a workspace that has a linked task asks whether to mark the task
   done instead of deciding for you.
 - When a workspace's pull request is merged, a notice appears in its chat

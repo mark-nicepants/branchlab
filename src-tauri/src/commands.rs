@@ -137,7 +137,75 @@ pub async fn list_project_prs(
 /// the workspace, links the card, and sends the task prompt (origin=task).
 #[tauri::command]
 pub async fn task_start(task_id: String, supervisor: State<'_, Supervisor>) -> Result<Workspace, String> {
-    supervisor.start_task(&task_id)
+    supervisor.start_task(&task_id, None)
+}
+
+/// A comment on a task. Plain text lands in the activity feed; a leading
+/// slash makes it a session command: /start [extra instructions] boots the
+/// task's session, /send <msg> prompts the linked session, /stop aborts its
+/// current turn, /done marks the task done. The comment is recorded either
+/// way (kind "command"), after the action succeeds.
+#[tauri::command]
+pub async fn task_comment(
+    task_id: String,
+    body: String,
+    app: tauri::AppHandle,
+    registry: State<'_, Registry>,
+    supervisor: State<'_, Supervisor>,
+    chat: State<'_, crate::chat::manager::ChatManager>,
+    tasks: State<'_, crate::tasks::TaskStore>,
+) -> Result<crate::tasks::ActivityEntry, String> {
+    let body = body.trim().to_string();
+    let entry = if let Some(rest) = body.strip_prefix('/') {
+        let (cmd, arg) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+        let arg = arg.trim();
+        let live_workspace = || -> Result<Workspace, String> {
+            let task = tasks.snapshot().tasks.into_iter().find(|t| t.id == task_id).ok_or("unknown task")?;
+            let ws_id = task.workspace_id.ok_or("no session yet — /start one first")?;
+            registry
+                .all_workspaces()
+                .into_iter()
+                .find(|w| w.id == ws_id)
+                .ok_or("the session's workspace is gone — /start a fresh one".into())
+        };
+        match cmd {
+            "start" => {
+                supervisor.start_task(&task_id, Some(arg))?;
+            }
+            "send" => {
+                if arg.is_empty() {
+                    return Err("nothing to send — /send <message>".into());
+                }
+                let ws = live_workspace()?;
+                chat.send(
+                    &ws.id,
+                    std::path::Path::new(&ws.path),
+                    arg.to_string(),
+                    arg.to_string(),
+                    Vec::new(),
+                    crate::chat::model::TurnOrigin::Task,
+                    None,
+                    None,
+                    None,
+                )?;
+            }
+            "stop" => {
+                let ws = live_workspace()?;
+                chat.abort(&ws.id);
+            }
+            "done" => {
+                tasks.mark_done(&task_id)?;
+            }
+            other => {
+                return Err(format!("unknown command /{other} — try /start, /send, /stop or /done"));
+            }
+        }
+        tasks.add_comment(&task_id, "command", &body)?
+    } else {
+        tasks.add_comment(&task_id, "comment", &body)?
+    };
+    crate::tasks::emit_changed(&app, &tasks);
+    Ok(entry)
 }
 
 /// AI plan for a parent task's subtasks: propose blocked-by ordering and

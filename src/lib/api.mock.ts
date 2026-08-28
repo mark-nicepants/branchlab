@@ -5,6 +5,7 @@
 import { mockEmit } from "./events.mock";
 import type {
   Account,
+  ActivityEntry,
   BoardColumn,
   BoardSnapshot,
   Task,
@@ -1624,5 +1625,87 @@ export function taskLinkWorkspace(
   );
   emitBoard();
   return Promise.resolve();
+}
+
+// ── Task activity feed mock: seeded per demo task, appended by taskComment ──
+
+let mockActivitySeq = 0;
+const activityId = () => `act-${++mockActivitySeq}`;
+const HOUR = 3_600_000;
+const activityNow = Date.now();
+
+/** Seed feeds: t6 shows the full lifecycle, t4 a fresh session. */
+let mockActivity: ActivityEntry[] = [
+  { id: activityId(), taskId: "t6", kind: "created", body: "", actor: "user", createdAt: activityNow - 6 * 24 * HOUR },
+  { id: activityId(), taskId: "t6", kind: "plan", body: "planned 3 subtasks", actor: "ai", createdAt: activityNow - 6 * 24 * HOUR + 60_000 },
+  { id: activityId(), taskId: "t6", kind: "session", body: "", actor: "agent", createdAt: activityNow - 2 * HOUR },
+  { id: activityId(), taskId: "t6", kind: "review", body: "", actor: "agent", createdAt: activityNow - 1 * HOUR },
+  { id: activityId(), taskId: "t6", kind: "comment", body: "Rounding fix looks right — also check the leave-request edge case before we open the PR.", actor: "user", createdAt: activityNow - 30 * 60_000 },
+  { id: activityId(), taskId: "t4", kind: "created", body: "", actor: "user", createdAt: activityNow - 3 * 24 * HOUR },
+  { id: activityId(), taskId: "t4", kind: "session", body: "", actor: "agent", createdAt: activityNow - 5 * HOUR },
+];
+
+export function taskActivity(taskId: string): Promise<ActivityEntry[]> {
+  return Promise.resolve(
+    mockActivity
+      .filter((a) => a.taskId === taskId)
+      .sort((a, b) => a.createdAt - b.createdAt),
+  );
+}
+
+export function taskComment(
+  taskId: string,
+  body: string,
+): Promise<ActivityEntry> {
+  const trimmed = body.trim();
+  const push = (
+    kind: string,
+    text: string,
+    actor: ActivityEntry["actor"],
+  ): ActivityEntry => {
+    const entry: ActivityEntry = {
+      id: activityId(),
+      taskId,
+      kind,
+      body: text,
+      actor,
+      createdAt: Date.now(),
+    };
+    mockActivity = [...mockActivity, entry];
+    return entry;
+  };
+  let entry: ActivityEntry;
+  if (trimmed.startsWith("/")) {
+    const cmd = trimmed.slice(1).split(/\s+/, 1)[0];
+    switch (cmd) {
+      case "done": {
+        const done = boardCols.find((c) => c.role === "done");
+        if (done)
+          boardTasks = boardTasks.map((t) =>
+            t.id === taskId ? { ...t, columnId: done.id } : t,
+          );
+        entry = push("command", trimmed, "user");
+        break;
+      }
+      case "start":
+        // No real session in the harness: record the command + a fake event.
+        entry = push("command", trimmed, "user");
+        push("session", "", "agent");
+        break;
+      case "send":
+      case "stop":
+        entry = push("command", trimmed, "user");
+        break;
+      default:
+        // Reject like the backend: a plain user-facing string.
+        return Promise.reject(
+          `unknown command /${cmd} — try /start, /send, /stop or /done`,
+        );
+    }
+  } else {
+    entry = push("comment", trimmed, "user");
+  }
+  emitBoard();
+  return Promise.resolve(entry);
 }
 

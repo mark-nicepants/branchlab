@@ -697,6 +697,19 @@ export interface BoardSnapshot {
   estimateUnit: EstimateUnit;
 }
 
+/** One line in a task's activity feed (mirrors tasks::ActivityEntry).
+ *  `kind` is "comment" (user prose), "command" (a /slash comment), or a
+ *  recorded event: created | session | review | resumed | moved | done | plan. */
+export interface ActivityEntry {
+  id: string;
+  taskId: string;
+  kind: string;
+  /** Comment text, or a short event detail ("In progress", "PR #57 merged"). */
+  body: string;
+  actor: "user" | "agent" | "ai";
+  createdAt: number;
+}
+
 /** A task whose workspace link was severed by a deletion — offer "mark done". */
 export interface UnlinkedTask {
   taskId: string;

@@ -24,6 +24,23 @@ const STRIDE: f64 = 1024.0;
 /// Below this neighbor gap a column is renumbered before inserting.
 const MIN_GAP: f64 = 1e-6;
 
+/// One line in a task's activity feed. `kind` is either "comment" (user
+/// prose), "command" (a /slash comment), or a recorded event: created |
+/// session | review | resumed | moved | done | plan.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityEntry {
+    pub id: String,
+    pub task_id: String,
+    pub kind: String,
+    /// Comment text, or a short event detail ("In progress", "PR #57 merged").
+    #[serde(default)]
+    pub body: String,
+    /// "user" | "agent" | "ai"
+    pub actor: String,
+    pub created_at: i64,
+}
+
 /// How estimates are read: story points (default), hours, or t-shirt sizes
 /// (stored as their numeric value: XS=1 S=2 M=3 L=5 XL=8). Board-global with
 /// a per-project override on `Project`.
@@ -112,6 +129,9 @@ struct BoardData {
     /// Board-global estimate unit (projects can override).
     #[serde(default)]
     estimate_unit: EstimateUnit,
+    /// Append-only per-task activity feed (events + comments).
+    #[serde(default)]
+    activity: Vec<ActivityEntry>,
 }
 
 /// What the frontend sees: live records only, sorted by position.
@@ -154,6 +174,18 @@ pub struct TaskStore {
 fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
+/// Append an activity entry (caller holds the lock and persists).
+fn record(data: &mut BoardData, task_id: &str, kind: &str, actor: &str, body: impl Into<String>) {
+    data.activity.push(ActivityEntry {
+        id: new_id(),
+        task_id: task_id.to_string(),
+        kind: kind.to_string(),
+        body: body.into(),
+        actor: actor.to_string(),
+        created_at: now_ms(),
+    });
 }
 
 fn new_id() -> String {
@@ -250,6 +282,7 @@ impl TaskStore {
             updated_at: now,
             deleted_at: None,
         };
+        record(&mut data, &task.id, "created", "user", "");
         data.tasks.push(task.clone());
         self.persist(&data);
         Ok(task)
@@ -311,11 +344,16 @@ impl TaskStore {
         if !data.columns.iter().any(|c| c.id == column_id && c.deleted_at.is_none()) {
             return Err("unknown column".into());
         }
+        let col_name = data.columns.iter().find(|c| c.id == column_id).map(|c| c.name.clone()).unwrap_or_default();
         {
             let task = live_task(&mut data, id)?;
+            let moved = task.column_id != column_id;
             task.column_id = column_id.to_string();
             task.position = position;
             task.updated_at = now_ms();
+            if moved {
+                record(&mut data, id, "moved", "user", col_name);
+            }
         }
         renumber_if_cramped(&mut data, column_id);
         self.persist(&data);
@@ -335,6 +373,8 @@ impl TaskStore {
             task.position = max + STRIDE;
         }
         task.updated_at = now_ms();
+        let id = task.id.clone();
+        record(&mut data, &id, "session", "agent", "");
         self.persist(&data);
         Ok(())
     }
@@ -357,6 +397,8 @@ impl TaskStore {
             }
         }
         task.updated_at = now_ms();
+        let id = task.id.clone();
+        record(&mut data, &id, "done", "agent", "PR merged");
         self.persist(&data);
         true
     }
@@ -385,7 +427,9 @@ impl TaskStore {
         if task.column_id != done {
             task.column_id = done;
             task.position = max + STRIDE;
+            record(&mut data, id, "done", "user", "");
         }
+        let task = live_task(&mut data, id)?;
         task.updated_at = now_ms();
         self.persist(&data);
         Ok(())
@@ -423,9 +467,32 @@ impl TaskStore {
             }
         }
         if changed > 0 {
+            record(&mut data, parent_id, "plan", "ai", format!("planned {changed} subtasks"));
             self.persist(&data);
         }
         changed
+    }
+
+    /// A task's activity feed, oldest first (insertion order — created_at has
+    /// millisecond ties within one action).
+    pub fn activity(&self, task_id: &str) -> Vec<ActivityEntry> {
+        self.data.lock().unwrap().activity.iter().filter(|a| a.task_id == task_id).cloned().collect()
+    }
+
+    /// Append a user comment ("comment") or a slash command ("command").
+    pub fn add_comment(&self, task_id: &str, kind: &str, body: &str) -> Result<ActivityEntry, String> {
+        let body = body.trim();
+        if body.is_empty() {
+            return Err("empty comment".into());
+        }
+        let mut data = self.data.lock().unwrap();
+        if !data.tasks.iter().any(|t| t.id == task_id && t.deleted_at.is_none()) {
+            return Err("unknown task".into());
+        }
+        record(&mut data, task_id, kind, "user", body);
+        let entry = data.activity.last().cloned().expect("just pushed");
+        self.persist(&data);
+        Ok(entry)
     }
 
     // ── Workflow machine hooks (called by the supervisor) ───────────────────
@@ -458,7 +525,8 @@ impl TaskStore {
         task.column_id = to_col;
         task.position = max + STRIDE;
         task.updated_at = now_ms();
-        let title = task.title.clone();
+        let (id, title) = (task.id.clone(), task.title.clone());
+        record(&mut data, &id, if to == ColumnRole::Review { "review" } else { "resumed" }, "agent", "");
         self.persist(&data);
         Some(title)
     }
@@ -717,6 +785,11 @@ pub fn board_set_estimate_unit(unit: EstimateUnit, app: AppHandle, tasks: State<
 }
 
 #[tauri::command]
+pub fn task_activity(task_id: String, tasks: State<TaskStore>) -> Vec<ActivityEntry> {
+    tasks.activity(&task_id)
+}
+
+#[tauri::command]
 pub fn task_mark_done(task_id: String, app: AppHandle, tasks: State<TaskStore>) -> Result<(), String> {
     tasks.mark_done(&task_id)?;
     emit_changed(&app, &tasks);
@@ -915,6 +988,25 @@ mod tests {
         assert_eq!(s.snapshot().tasks.iter().find(|t| t.id == c2.id).unwrap().estimate, Some(2.5));
         s.update_task(&c2.id, est(-1.0)).unwrap();
         assert_eq!(s.snapshot().tasks.iter().find(|t| t.id == c2.id).unwrap().estimate, None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn activity_records_events_and_comments() {
+        let (s, dir) = store("activity");
+        let active = col_id(&s, ColumnRole::Active);
+        let t = s.create_task("feed me".into(), None, None, None, None).unwrap();
+        s.move_task(&t.id, &active, 100.0).unwrap();
+        s.link_workspace(&t.id, "ws1").unwrap();
+        s.on_turn_ended("ws1").unwrap();
+        s.add_comment(&t.id, "comment", "  looks good  ").unwrap();
+        s.mark_done(&t.id).unwrap();
+        let kinds: Vec<String> = s.activity(&t.id).iter().map(|a| a.kind.clone()).collect();
+        assert_eq!(kinds, ["created", "moved", "session", "review", "comment", "done"]);
+        let feed = s.activity(&t.id);
+        assert_eq!(feed[4].body, "looks good", "comments are trimmed");
+        assert!(s.add_comment(&t.id, "comment", "   ").is_err(), "empty comment refused");
+        assert!(s.activity("nope").is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

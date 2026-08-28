@@ -212,8 +212,8 @@ impl Supervisor {
     /// queue dispatcher). Creates the workspace, links the card (moving it to
     /// the active column), and sends the task prompt — held by the chat
     /// manager until provisioning finishes, so this works entirely headless.
-    pub fn start_task(&self, task_id: &str) -> Result<crate::project::Workspace, String> {
-        let ws = self.inner.start_task(task_id)?;
+    pub fn start_task(&self, task_id: &str, extra: Option<&str>) -> Result<crate::project::Workspace, String> {
+        let ws = self.inner.start_task(task_id, extra)?;
         self.reconcile_now();
         Ok(ws)
     }
@@ -506,7 +506,7 @@ impl Inner {
     }
 
     /// Fold a coarse turn transition into session state + autofix progress.
-    fn start_task(&self, task_id: &str) -> Result<crate::project::Workspace, String> {
+    fn start_task(&self, task_id: &str, extra: Option<&str>) -> Result<crate::project::Workspace, String> {
         let tasks = self.app.state::<crate::tasks::TaskStore>();
         let registry = self.app.state::<Registry>();
         let task = tasks.snapshot().tasks.into_iter().find(|t| t.id == task_id).ok_or("unknown task")?;
@@ -538,7 +538,12 @@ impl Inner {
         tasks.link_workspace(&task.id, &ws.id)?;
         let _ = self.app.emit("tasks:changed", tasks.snapshot());
 
-        let (display, sent) = crate::tasks::task_prompt(&task, project_name.as_deref());
+        let (mut display, mut sent) = crate::tasks::task_prompt(&task, project_name.as_deref());
+        // Extra instructions from a /start comment ride the kickoff prompt.
+        if let Some(extra) = extra.map(str::trim).filter(|e| !e.is_empty()) {
+            display = format!("{display}\n\n{extra}");
+            sent = format!("{sent}\n\nAdditional instructions from the task board:\n{extra}");
+        }
         self.chat.send(
             &ws.id,
             std::path::Path::new(&ws.path),
@@ -566,7 +571,7 @@ impl Inner {
         let registry = self.app.state::<Registry>();
         while tasks.active_count(|id| registry.workspace_path(id).is_some()) < MAX_PARALLEL_TASKS {
             let Some(task) = tasks.next_queued() else { break };
-            if let Err(e) = self.start_task(&task.id) {
+            if let Err(e) = self.start_task(&task.id, None) {
                 crate::logf!("task", "dispatch failed task={}: {e}", task.id);
                 break;
             }
