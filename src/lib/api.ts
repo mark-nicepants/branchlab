@@ -16,6 +16,7 @@ import type {
   ChatSnapshot,
   ConfigFile,
   EnvReport,
+  EstimateUnit,
   FileContent,
   GeneratedSetup,
   GeneratedTitle,
@@ -501,6 +502,11 @@ export function boardSnapshot(): Promise<BoardSnapshot> {
   return invoke<BoardSnapshot>("board_snapshot");
 }
 
+/** Set the board-global estimate unit; emits `tasks:changed` itself. */
+export function boardSetEstimateUnit(unit: EstimateUnit): Promise<void> {
+  return invoke<void>("board_set_estimate_unit", { unit });
+}
+
 export function taskCreate(
   title: string,
   opts?: {
@@ -536,7 +542,8 @@ export function taskUpdate(
   return invoke<void>("task_update", { taskId, patch });
 }
 
-/** AI-plan a parent's subtasks (blocked-by ordering + hour estimates) on the
+/** AI-plan a parent's subtasks (blocked-by ordering + estimates in the
+ *  configured unit) on the
  *  project's engine. Applies the plan and emits `tasks:changed` itself; can
  *  take a model round-trip (~10-60s). */
 export function taskSuggestPlan(parentId: string): Promise<SuggestedPlan> {

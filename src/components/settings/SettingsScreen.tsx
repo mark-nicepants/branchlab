@@ -31,14 +31,17 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
+  boardSetEstimateUnit,
+  boardSnapshot,
   getDefaultModel,
   removeProject,
   setDefaultModel,
   telemetryGetEnabled,
   telemetrySetEnabled,
 } from "../../lib/api";
+import { onTasksChanged } from "../../lib/events";
 import { groupByProvider, shortName } from "../../lib/models";
-import type { ProjectView } from "../../lib/types";
+import type { EstimateUnit, ProjectView } from "../../lib/types";
 import { Input } from "@/components/ui/input";
 import { AccountsTab } from "./AccountsTab";
 import {
@@ -211,6 +214,18 @@ function GeneralTab() {
   useEffect(() => {
     void telemetryGetEnabled().then(setTelemetry);
   }, []);
+  // Board-global estimate unit (lives in the task board's backend store).
+  const [estimateUnit, setEstimateUnit] = useState<EstimateUnit | null>(null);
+  useEffect(() => {
+    let live = true;
+    void boardSnapshot().then((s) => live && setEstimateUnit(s.estimateUnit));
+    // Fresh closure per mount (see MyWorkScreen: the mock bus is Set-based).
+    const unlisten = onTasksChanged((s) => setEstimateUnit(s.estimateUnit));
+    return () => {
+      live = false;
+      void unlisten.then((f) => f());
+    };
+  }, []);
   return (
     <div className="flex flex-col gap-6">
       {availableVersion && (
@@ -269,6 +284,29 @@ function GeneralTab() {
             void telemetrySetEnabled(on);
           }}
         />
+      </Row>
+      <Row
+        title="Estimates"
+        desc="How task estimates are read. Projects can override this."
+      >
+        <Select
+          value={estimateUnit ?? undefined}
+          disabled={estimateUnit === null}
+          onValueChange={(v) => {
+            setEstimateUnit(v as EstimateUnit);
+            // Emits tasks:changed itself; open boards pick it up live.
+            void boardSetEstimateUnit(v as EstimateUnit);
+          }}
+        >
+          <SelectTrigger className="w-56">
+            <SelectValue placeholder="Loading…" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="points">Story points</SelectItem>
+            <SelectItem value="hours">Hours</SelectItem>
+            <SelectItem value="tshirt">T-shirt sizes</SelectItem>
+          </SelectContent>
+        </Select>
       </Row>
       <Field
         title="Storage location"

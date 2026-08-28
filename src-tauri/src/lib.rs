@@ -148,6 +148,7 @@ pub fn run() {
             tasks::task_move,
             tasks::task_link_workspace,
             tasks::task_mark_done,
+            tasks::board_set_estimate_unit,
             commands::task_start,
             commands::list_workspaces,
             commands::rename_workspace,

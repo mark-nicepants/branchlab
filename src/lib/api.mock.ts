@@ -17,6 +17,7 @@ import type {
   DiffStat,
   Entry,
   EnvReport,
+  EstimateUnit,
   FileContent,
   GeneratedSetup,
   GeneratedTitle,
@@ -52,6 +53,7 @@ let projects: ProjectView[] = [
       setup_script: "npm install",
       teardown_script: null,
     },
+    estimate_unit: null,
     workspaces: [
       {
         id: "p1-base",
@@ -125,6 +127,9 @@ let projects: ProjectView[] = [
       create_pr: null,
     },
     run: { setup_script: null, teardown_script: null },
+    // Per-project override demo: t4 belongs here, so its estimate input
+    // becomes the t-shirt size select while the board default stays points.
+    estimate_unit: "tshirt",
     workspaces: [
       {
         id: "p2-base",
@@ -168,6 +173,7 @@ export function addProject(path: string): Promise<ProjectView> {
       create_pr: null,
     },
     run: { setup_script: null, teardown_script: null },
+    estimate_unit: null,
     workspaces: [
       {
         id: `p${Date.now()}-base`,
@@ -517,6 +523,8 @@ export function updateProject(
   if (update.default_branch) p.default_branch = update.default_branch;
   if (update.prompts) p.prompts = update.prompts;
   if (update.run) p.run = update.run;
+  // Nested-option semantics: omitted = unchanged, null = back to global.
+  if (update.estimate_unit !== undefined) p.estimate_unit = update.estimate_unit;
   return Promise.resolve(p);
 }
 
@@ -1451,10 +1459,13 @@ let boardTasks: Task[] = [
   { id: "t9", number: 9, title: "Polish the onboarding copy", description: null, projectId: "p1", columnId: "c1", position: 4096, workspaceId: null, parentId: "t6", dependsOn: ["t8"], estimate: null, createdAt: 0, updatedAt: 0, deletedAt: null },
 ];
 
+let boardEstimateUnit: EstimateUnit = "points";
+
 function boardSnap(): BoardSnapshot {
   return {
     columns: [...boardCols].sort((a, b) => a.position - b.position),
     tasks: [...boardTasks].sort((a, b) => a.position - b.position),
+    estimateUnit: boardEstimateUnit,
   };
 }
 
@@ -1464,6 +1475,12 @@ function emitBoard(): void {
 
 export function boardSnapshot(): Promise<BoardSnapshot> {
   return Promise.resolve(boardSnap());
+}
+
+export function boardSetEstimateUnit(unit: EstimateUnit): Promise<void> {
+  boardEstimateUnit = unit;
+  emitBoard();
+  return Promise.resolve();
 }
 
 export function taskCreate(

@@ -24,6 +24,18 @@ const STRIDE: f64 = 1024.0;
 /// Below this neighbor gap a column is renumbered before inserting.
 const MIN_GAP: f64 = 1e-6;
 
+/// How estimates are read: story points (default), hours, or t-shirt sizes
+/// (stored as their numeric value: XS=1 S=2 M=3 L=5 XL=8). Board-global with
+/// a per-project override on `Project`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum EstimateUnit {
+    #[default]
+    Points,
+    Hours,
+    Tshirt,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum ColumnRole {
@@ -97,6 +109,9 @@ struct BoardData {
     /// Next task number to hand out (backfilled from existing tasks on load).
     #[serde(default)]
     next_task_number: u64,
+    /// Board-global estimate unit (projects can override).
+    #[serde(default)]
+    estimate_unit: EstimateUnit,
 }
 
 /// What the frontend sees: live records only, sorted by position.
@@ -105,6 +120,7 @@ struct BoardData {
 pub struct BoardSnapshot {
     pub columns: Vec<Column>,
     pub tasks: Vec<Task>,
+    pub estimate_unit: EstimateUnit,
 }
 
 /// A task whose workspace link was just severed by a deletion — the UI
@@ -172,7 +188,17 @@ impl TaskStore {
         let mut tasks: Vec<Task> = data.tasks.iter().filter(|t| t.deleted_at.is_none()).cloned().collect();
         columns.sort_by(|a, b| a.position.total_cmp(&b.position));
         tasks.sort_by(|a, b| a.position.total_cmp(&b.position));
-        BoardSnapshot { columns, tasks }
+        BoardSnapshot { columns, tasks, estimate_unit: data.estimate_unit }
+    }
+
+    pub fn estimate_unit(&self) -> EstimateUnit {
+        self.data.lock().unwrap().estimate_unit
+    }
+
+    pub fn set_estimate_unit(&self, unit: EstimateUnit) {
+        let mut data = self.data.lock().unwrap();
+        data.estimate_unit = unit;
+        self.persist(&data);
     }
 
     pub fn create_task(
@@ -682,6 +708,12 @@ pub fn task_link_workspace(
     tasks.link_workspace(&task_id, &workspace_id)?;
     emit_changed(&app, &tasks);
     Ok(())
+}
+
+#[tauri::command]
+pub fn board_set_estimate_unit(unit: EstimateUnit, app: AppHandle, tasks: State<TaskStore>) {
+    tasks.set_estimate_unit(unit);
+    emit_changed(&app, &tasks);
 }
 
 #[tauri::command]

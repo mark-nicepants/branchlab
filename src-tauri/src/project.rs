@@ -39,6 +39,9 @@ pub struct Project {
     /// the run/preview feature branch, which extends this same struct).
     #[serde(default)]
     pub run: RunSettings,
+    /// Per-project estimate unit override; `None` = the board's global unit.
+    #[serde(default)]
+    pub estimate_unit: Option<crate::tasks::EstimateUnit>,
 }
 
 /// Per-project workspace lifecycle scripts. Snake_case on the wire (matches
@@ -158,6 +161,16 @@ pub enum SetupState {
     Failed,
 }
 
+/// Field present (even as null) → `Some(inner)`; combined with
+/// `#[serde(default)]`, an absent field stays `None`.
+fn double_option<'de, T, D>(de: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Deserialize::deserialize(de).map(Some)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProjectUpdate {
     pub name: Option<String>,
@@ -168,6 +181,11 @@ pub struct ProjectUpdate {
     pub account_id: Option<String>,
     /// Lifecycle scripts — replaced as a whole block, like `prompts`.
     pub run: Option<RunSettings>,
+    /// Estimate unit override: `Some(Some(u))` sets, `Some(None)` (JSON null)
+    /// clears back to the board's global unit, absent leaves it unchanged.
+    /// Plain serde folds null into "absent"; `double_option` keeps them apart.
+    #[serde(default, deserialize_with = "double_option")]
+    pub estimate_unit: Option<Option<crate::tasks::EstimateUnit>>,
 }
 
 /// A project together with its workspaces — the shape the UI consumes.
@@ -238,7 +256,40 @@ impl Registry {
         for w in data.workspaces.iter_mut().filter(|w| w.setup == SetupState::Provisioning) {
             w.setup = SetupState::Failed;
         }
-        Self { data: Mutex::new(data), file, worktrees_dir, quick_chats_dir }
+        // Migration: projects registered before base workspaces existed have
+        // no Base entry, which breaks everything running on the base engine
+        // (AI setup scripts, subtask planning). Backfill one per project.
+        let missing: Vec<(String, String)> = data
+            .projects
+            .iter()
+            .filter(|p| !data.workspaces.iter().any(|w| w.project_id == p.id && w.kind == WorkspaceKind::Base))
+            .map(|p| (p.id.clone(), p.root_path.clone()))
+            .collect();
+        let backfilled = !missing.is_empty();
+        for (id, root) in missing {
+            data.workspaces.push(Workspace {
+                id: format!("{id}-base"),
+                project_id: id,
+                kind: WorkspaceKind::Base,
+                branch: current_branch(std::path::Path::new(&root)),
+                path: root,
+                name: None,
+                base_branch: None,
+                init_prompt: None,
+                autofix_mode: AutofixMode::default(),
+                model: None,
+                effort: None,
+                pr_number: None,
+                pr_is_fork: false,
+                pr: None,
+                setup: SetupState::Ready,
+            });
+        }
+        let registry = Self { data: Mutex::new(data), file, worktrees_dir, quick_chats_dir };
+        if backfilled {
+            registry.persist(&registry.data.lock().unwrap());
+        }
+        registry
     }
 
     fn persist(&self, data: &RegistryData) {
@@ -271,6 +322,7 @@ impl Registry {
                 prompts: ProjectPrompts::default(),
                 account_id: None,
                 run: RunSettings::default(),
+                estimate_unit: None,
             });
             data.workspaces.push(Workspace {
                 id: format!("{id}-base"),
@@ -444,6 +496,9 @@ impl Registry {
         if let Some(run) = update.run {
             project.run = run;
         }
+        if let Some(unit) = update.estimate_unit {
+            project.estimate_unit = unit;
+        }
         self.persist(&data);
         Ok(self.view_of(&data, project_id))
     }
@@ -497,6 +552,11 @@ impl Registry {
             .iter()
             .find(|w| w.project_id == project_id && w.kind == WorkspaceKind::Base)
             .cloned()
+    }
+
+    /// A project's estimate-unit override (None = use the board's global).
+    pub fn project_estimate_unit(&self, project_id: &str) -> Option<crate::tasks::EstimateUnit> {
+        self.data.lock().unwrap().projects.iter().find(|p| p.id == project_id).and_then(|p| p.estimate_unit)
     }
 
     /// A project's repo root path.

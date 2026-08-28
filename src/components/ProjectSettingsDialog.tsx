@@ -11,6 +11,7 @@ import {
 import { toast } from "sonner";
 import type {
   Account,
+  EstimateUnit,
   ProjectView,
   ProjectPrompts,
   ProjectUpdate,
@@ -66,6 +67,10 @@ export function ProjectSettingsDialog({
     project.default_branch ?? "",
   );
   const [accountId, setAccountId] = useState(project.account_id ?? "");
+  // "" = use the board-global unit (stored as null).
+  const [estimateUnit, setEstimateUnit] = useState(
+    project.estimate_unit ?? "",
+  );
   const [prompts, setPrompts] = useState<ProjectPrompts>(
     project.prompts ?? {
       init_workspace: "",
@@ -84,6 +89,7 @@ export function ProjectSettingsDialog({
     setName(project.name);
     setDefaultBranch(project.default_branch ?? "");
     setAccountId(project.account_id ?? "");
+    setEstimateUnit(project.estimate_unit ?? "");
     setPrompts(project.prompts);
     setRun(project.run ?? { setup_script: null, teardown_script: null });
   }, [project]);
@@ -171,14 +177,22 @@ export function ProjectSettingsDialog({
                   setDefaultBranch={setDefaultBranch}
                   accountId={accountId}
                   setAccountId={setAccountId}
+                  estimateUnit={estimateUnit}
+                  setEstimateUnit={setEstimateUnit}
                   saving={saving}
-                  onSave={() =>
+                  onSave={() => {
+                    const unit = (estimateUnit || null) as EstimateUnit | null;
                     save({
                       name: name.trim() || project.name,
                       default_branch: defaultBranch.trim() || undefined,
                       account_id: accountId,
-                    })
-                  }
+                      // Nested-option field: MUST be omitted entirely when
+                      // untouched — null means "clear back to global".
+                      ...(unit !== (project.estimate_unit ?? null)
+                        ? { estimate_unit: unit }
+                        : {}),
+                    });
+                  }}
                 />
               )}
               {tab === "prompts" && (
@@ -221,6 +235,8 @@ function GeneralTab({
   setDefaultBranch,
   accountId,
   setAccountId,
+  estimateUnit,
+  setEstimateUnit,
   saving,
   onSave,
 }: {
@@ -231,6 +247,9 @@ function GeneralTab({
   setDefaultBranch: (v: string) => void;
   accountId: string;
   setAccountId: (v: string) => void;
+  /** "" = use the board-global unit. */
+  estimateUnit: string;
+  setEstimateUnit: (v: string) => void;
   saving: boolean;
   onSave: () => void;
 }) {
@@ -313,6 +332,23 @@ function GeneralTab({
         <p className="mt-1 text-xs text-muted-foreground">
           Detected from this repo's origin remote. Override if you push with a
           different identity.
+        </p>
+      </Field>
+
+      <Field label="Estimates">
+        <select
+          value={estimateUnit}
+          onChange={(e) => setEstimateUnit(e.target.value)}
+          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+        >
+          <option value="">Default (use global)</option>
+          <option value="points">Story points</option>
+          <option value="hours">Hours</option>
+          <option value="tshirt">T-shirt sizes</option>
+        </select>
+        <p className="mt-1 text-xs text-muted-foreground">
+          How this project's task estimates are read; the default follows
+          Settings → General.
         </p>
       </Field>
 

@@ -12,14 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tasks can have subtasks: open a task and add them one by one (or paste a
   whole list to split it into subtasks). A "Suggest plan" button asks the AI
   to order them — which subtask is blocked by which, shown as "after #N"
-  chips — and estimate their hours. A parent card shows a full-width subtask
+  chips — and estimate their size. A parent card shows a full-width subtask
   bar with one status-colored segment per child (done, in review, active,
   todo) plus a done count; clicking the bar drills into a board of just the
   children (Esc goes back), and when the last child lands in Done, a toast
   offers moving the parent there too.
-- Every task can carry an hour estimate and explicit "Blocked by" / "Blocks"
+- Every task can carry a size estimate and explicit "Blocked by" / "Blocks"
   relationships, edited right in the task dialog — and importing a GitHub
   issue brings along its Estimate from any GitHub Projects board it sits on.
+  Estimates are unit-aware: story points by default, or hours or t-shirt
+  sizes (XS–XL), set globally in Settings → General with a per-project
+  override in the project's settings; AI estimate suggestions and every
+  estimate display follow the configured unit.
 - Task cards got a GitHub-Projects-style redesign: a state glyph
   (todo / queued / working / review / done), the project + task number
   reference line, and compact chips for live status, the PR with its CI

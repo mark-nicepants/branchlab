@@ -141,8 +141,9 @@ pub async fn task_start(task_id: String, supervisor: State<'_, Supervisor>) -> R
 }
 
 /// AI plan for a parent task's subtasks: propose blocked-by ordering and
-/// hour estimates over a throwaway session on the project's base engine, and
-/// apply them to the board. Returns the model's one-line rationale.
+/// size estimates (in the project's estimate unit) over a throwaway session
+/// on the project's base engine, and apply them to the board. Returns the
+/// model's one-line rationale.
 #[tauri::command]
 pub async fn task_suggest_plan(
     parent_id: String,
@@ -169,10 +170,19 @@ pub async fn task_suggest_plan(
         }
         listing.push('\n');
     }
+    // Estimate in the unit this project uses: its override, else the board's.
+    let unit = registry.project_estimate_unit(&project_id).unwrap_or_else(|| tasks.estimate_unit());
+    let estimate_rule = match unit {
+        crate::tasks::EstimateUnit::Points => "estimate its size in story points (1, 2, 3, 5, 8, 13)",
+        crate::tasks::EstimateUnit::Hours => "estimate its size in hours (fractions allowed)",
+        crate::tasks::EstimateUnit::Tshirt => {
+            "estimate its t-shirt size expressed as a number: XS=1, S=2, M=3, L=5, XL=8"
+        }
+    };
     let prompt = format!(
         "You are planning subtasks of the development task \"{}\"{} in this repository.\n\nSubtasks:\n{}\n\
          For each subtask, decide which sibling subtasks (if any) must be finished before it can start, and \
-         estimate its size in hours (fractions allowed). Independent subtasks get an empty blockedBy so they can \
+         {estimate_rule}. Independent subtasks get an empty blockedBy so they can \
          run in parallel; only add an ordering the work genuinely requires. Skim the repository if that helps.\n\n\
          Reply with ONLY this JSON, no prose:\n\
          {{\"tasks\":[{{\"number\":1,\"blockedBy\":[2],\"estimate\":1.5}}],\"notes\":\"<one sentence on the ordering>\"}}",

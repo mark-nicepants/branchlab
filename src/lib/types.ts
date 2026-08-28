@@ -80,6 +80,8 @@ export interface Project {
   run: RunSettings;
   /** GitHub account override (`"{host}/{login}"`); null = use auto-detected. */
   account_id: string | null;
+  /** Estimate-unit override; null = use the board's global unit. */
+  estimate_unit: EstimateUnit | null;
 }
 
 /** Per-project workspace setup/teardown scripts (snake_case on the wire). */
@@ -112,6 +114,9 @@ export interface ProjectUpdate {
   /** GitHub account override: "" clears it (auto-detect), an id sets it,
    *  undefined leaves it unchanged. */
   account_id?: string;
+  /** Estimate-unit override: null clears it (back to the board's global
+   *  unit), a value sets it, OMITTED (not undefined-assigned) = unchanged. */
+  estimate_unit?: EstimateUnit | null;
 }
 
 // `ProjectView` flattens Project fields + a workspaces array.
@@ -649,17 +654,47 @@ export interface Task {
   parentId: string | null;
   /** Queued dispatch waits until every dependency is in the done column. */
   dependsOn: string[];
-  /** Size estimate in hours; null = unset. */
+  /** Size estimate, read in the configured unit (see EstimateUnit);
+   *  null = unset. */
   estimate: number | null;
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;
 }
 
+/** How estimates are read: story points (default), hours, or t-shirt sizes
+ *  (stored as their numeric value). Board-global with a per-project override
+ *  on `Project.estimate_unit`. */
+export type EstimateUnit = "points" | "hours" | "tshirt";
+
+/** T-shirt sizes and the numbers they're stored as. */
+export const TSHIRT_SIZES = [
+  { label: "XS", value: 1 },
+  { label: "S", value: 2 },
+  { label: "M", value: 3 },
+  { label: "L", value: 5 },
+  { label: "XL", value: 8 },
+] as const;
+
+/** Nearest t-shirt size for a stored estimate (values may be non-exact,
+ *  e.g. from an imported GitHub issue). Ties round up to the larger size. */
+export function nearestTshirt(value: number): (typeof TSHIRT_SIZES)[number] {
+  return TSHIRT_SIZES.reduce((best, s) =>
+    Math.abs(s.value - value) <= Math.abs(best.value - value) ? s : best,
+  );
+}
+
+/** Compact unit-silent display: bare number, or size letters for t-shirt. */
+export function formatEstimate(value: number, unit: EstimateUnit): string {
+  return unit === "tshirt" ? nearestTshirt(value).label : String(value);
+}
+
 /** Live board state (`board_snapshot` seed + every `tasks:changed` event). */
 export interface BoardSnapshot {
   columns: BoardColumn[];
   tasks: Task[];
+  /** Board-global estimate unit (projects can override). */
+  estimateUnit: EstimateUnit;
 }
 
 /** A task whose workspace link was severed by a deletion — offer "mark done". */

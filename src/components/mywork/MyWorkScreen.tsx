@@ -49,11 +49,13 @@ import {
   taskUpdate,
 } from "../../lib/api";
 import { onTasksChanged } from "../../lib/events";
+import { formatEstimate, nearestTshirt, TSHIRT_SIZES } from "../../lib/types";
 import type {
   BoardColumn,
   ColumnRole,
   DiffStat,
   Entry,
+  EstimateUnit,
   IssueSummary,
   BoardSnapshot,
   PrPayload,
@@ -249,7 +251,11 @@ export function MyWorkScreen({
   focusTaskId,
   onFocusTaskHandled,
 }: Props) {
-  const [board, setBoard] = useState<BoardSnapshot>({ columns: [], tasks: [] });
+  const [board, setBoard] = useState<BoardSnapshot>({
+    columns: [],
+    tasks: [],
+    estimateUnit: "points",
+  });
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [archiveFor, setArchiveFor] = useState<Task | null>(null);
@@ -607,6 +613,7 @@ export function MyWorkScreen({
           // Re-resolve on every snapshot so per-field commits render back live.
           task={boardCtx.taskById.get(dialog.task.id) ?? dialog.task}
           ctx={boardCtx}
+          boardUnit={board.estimateUnit}
           projects={projects}
           workspaces={allWorkspaces}
           sessions={sessionByWorkspace}
@@ -1424,6 +1431,7 @@ function TaskCreateDialog({
 function TaskEditDialog({
   task,
   ctx,
+  boardUnit,
   projects,
   workspaces,
   sessions,
@@ -1433,6 +1441,8 @@ function TaskEditDialog({
 }: {
   task: Task;
   ctx: BoardCtx;
+  /** Board-global estimate unit (the task's project can override it). */
+  boardUnit: EstimateUnit;
   projects: ProjectView[];
   workspaces: Map<string, Workspace>;
   sessions: Record<string, SessionPayload>;
@@ -1463,6 +1473,10 @@ function TaskEditDialog({
     if (descDraft === (task.description ?? "")) return;
     taskUpdate(task.id, { description: descDraft }).catch(fail);
   };
+  // Effective estimate unit: the project's override, else the board global.
+  // Subtasks inherit the parent's project, so this holds for them too.
+  const unit =
+    projects.find((p) => p.id === task.projectId)?.estimate_unit ?? boardUnit;
   const startDescEdit = () => {
     setDescDraft(task.description ?? "");
     setEditingDesc(true);
@@ -1525,7 +1539,7 @@ function TaskEditDialog({
             </select>
           </Field>
 
-          <TaskMetaRow task={task} ctx={ctx} />
+          <TaskMetaRow task={task} ctx={ctx} unit={unit} />
 
           <div className="group/desc flex flex-col gap-1.5">
             <div className="flex items-center gap-1.5">
@@ -1580,6 +1594,7 @@ function TaskEditDialog({
             <SubtasksSection
               task={task}
               ctx={ctx}
+              unit={unit}
               workspaces={workspaces}
               sessions={sessions}
               prs={prs}
@@ -1592,10 +1607,18 @@ function TaskEditDialog({
   );
 }
 
-/** Compact metadata row (interim — a popup redesign comes later): the hour
+/** Compact metadata row (interim — a popup redesign comes later): the size
  *  estimate plus both directions of the blocked-by relation. Every field
  *  commits independently; the board snapshot renders the result back live. */
-function TaskMetaRow({ task, ctx }: { task: Task; ctx: BoardCtx }) {
+function TaskMetaRow({
+  task,
+  ctx,
+  unit,
+}: {
+  task: Task;
+  ctx: BoardCtx;
+  unit: EstimateUnit;
+}) {
   const fail = (e: unknown) =>
     toast.error("Could not save task", { description: String(e) });
 
@@ -1618,7 +1641,7 @@ function TaskMetaRow({ task, ctx }: { task: Task; ctx: BoardCtx }) {
   return (
     <div className="flex flex-wrap items-start gap-8">
       <Field label="Estimate">
-        <EstimateInput task={task} onError={fail} />
+        <EstimateInput task={task} unit={unit} onError={fail} />
       </Field>
       <Field label="Blocked by">
         <div className="flex min-h-8 flex-wrap items-center gap-1.5">
@@ -1670,13 +1693,16 @@ function TaskMetaRow({ task, ctx }: { task: Task; ctx: BoardCtx }) {
   );
 }
 
-/** Hour-estimate input: commits on blur/Enter; clearing it commits the
- *  negative unset sentinel. */
+/** Unit-aware estimate input: a number field (commits on blur/Enter) for
+ *  points/hours, a size select for t-shirt. Clearing commits the negative
+ *  unset sentinel. */
 function EstimateInput({
   task,
+  unit,
   onError,
 }: {
   task: Task;
+  unit: EstimateUnit;
   onError: (e: unknown) => void;
 }) {
   const [draft, setDraft] = useState(task.estimate?.toString() ?? "");
@@ -1699,22 +1725,54 @@ function EstimateInput({
       taskUpdate(task.id, { estimate: value }).catch(onError);
   };
 
+  if (unit === "tshirt") {
+    // Non-exact stored numbers (e.g. an imported GitHub estimate) snap to
+    // the nearest size for display; picking a size stores its exact value.
+    const current =
+      task.estimate === null ? "" : String(nearestTshirt(task.estimate).value);
+    return (
+      <select
+        value={current}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === "") {
+            if (task.estimate !== null)
+              taskUpdate(task.id, { estimate: -1 }).catch(onError);
+            return;
+          }
+          if (v !== current)
+            taskUpdate(task.id, { estimate: Number(v) }).catch(onError);
+        }}
+        className="h-8 w-24 rounded-md border border-input bg-transparent px-2 text-sm"
+      >
+        <option value="">–</option>
+        {TSHIRT_SIZES.map((s) => (
+          <option key={s.label} value={s.value}>
+            {s.label}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
   return (
     <div className="relative w-24">
       <Input
         type="number"
         min={0}
-        step={0.5}
+        step={unit === "hours" ? 0.5 : 1}
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => e.key === "Enter" && commit()}
         placeholder="—"
-        className="h-8 pr-7 text-sm"
+        className={cn("h-8 text-sm", unit === "hours" && "pr-7")}
       />
-      <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
-        h
-      </span>
+      {unit === "hours" && (
+        <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+          h
+        </span>
+      )}
     </div>
   );
 }
@@ -1795,6 +1853,7 @@ function DepPicker({
 function SubtasksSection({
   task,
   ctx,
+  unit,
   workspaces,
   sessions,
   prs,
@@ -1802,6 +1861,8 @@ function SubtasksSection({
 }: {
   task: Task;
   ctx: BoardCtx;
+  /** Effective estimate unit (subtasks share the parent's project). */
+  unit: EstimateUnit;
   workspaces: Map<string, Workspace>;
   sessions: Record<string, SessionPayload>;
   prs: Record<string, PrPayload>;
@@ -1847,7 +1908,7 @@ function SubtasksSection({
           size="sm"
           onClick={suggestPlan}
           disabled={planning}
-          title="AI orders the subtasks (blocked-by) and estimates their hours"
+          title="AI orders the subtasks (blocked-by) and estimates their size"
         >
           {planning ? (
             <Loader2 className="mr-1.5 size-3.5 animate-spin" />
@@ -1878,7 +1939,7 @@ function SubtasksSection({
             </span>
             {child.estimate !== null && (
               <span className="shrink-0 text-[10px] text-muted-foreground">
-                {child.estimate}h
+                {formatEstimate(child.estimate, unit)}
               </span>
             )}
             {ws && (
