@@ -313,6 +313,120 @@ fn parse_suggested_plan(raw: &str) -> Option<RawPlan> {
     serde_json::from_str(&raw[start..=end]).ok()
 }
 
+/// AI intake: split pasted raw content (client email, meeting notes, Excel
+/// rows — anything) into subtasks of `parent_id`, with dependencies and
+/// estimates, over a throwaway session on the project's base engine.
+#[tauri::command]
+pub async fn task_intake(
+    parent_id: String,
+    content: String,
+    app: tauri::AppHandle,
+    registry: State<'_, Registry>,
+    chat: State<'_, crate::chat::manager::ChatManager>,
+    tasks: State<'_, crate::tasks::TaskStore>,
+) -> Result<SuggestedPlan, String> {
+    let content = content.trim();
+    if content.is_empty() {
+        return Err("nothing to split — paste some content first".into());
+    }
+    let content: String = content.chars().take(12_000).collect();
+    let snap = tasks.snapshot();
+    let parent = snap.tasks.iter().find(|t| t.id == parent_id).ok_or("unknown task")?;
+    if parent.parent_id.is_some() {
+        return Err("subtasks cannot be nested — split from the parent task".into());
+    }
+    let project_id =
+        parent.project_id.clone().ok_or("give the task a project first — the AI runs on the project's engine")?;
+    let base = registry.base_workspace(&project_id).ok_or("unknown project")?;
+
+    let unit = registry.project_estimate_unit(&project_id).unwrap_or_else(|| tasks.estimate_unit());
+    let estimate_rule = match unit {
+        crate::tasks::EstimateUnit::Points => "story points (1, 2, 3, 5, 8, 13)",
+        crate::tasks::EstimateUnit::Hours => "hours (fractions allowed)",
+        crate::tasks::EstimateUnit::Tshirt => "t-shirt sizes as numbers (XS=1, S=2, M=3, L=5, XL=8)",
+    };
+    let prompt = format!(
+        "You are splitting raw input into development subtasks of the task \"{}\"{} in this repository.\n\n\
+         RAW INPUT (may be an email, meeting notes, or spreadsheet rows — tab-separated cells):\n---\n{}\n---\n\n\
+         Extract each distinct actionable piece of work as one subtask: a short imperative title, and a \
+         description carrying the relevant details from the input (quote the source where useful — do not \
+         invent requirements). Merge duplicates; skip non-actionable chatter. Estimate each in {estimate_rule}. \
+         blockedBy lists the 0-based INDEXES of subtasks in your own list that must land first — only where the \
+         work genuinely requires it; independent subtasks run in parallel. Skim the repository if that helps.\n\n\
+         Reply with ONLY this JSON, no prose:\n\
+         {{\"tasks\":[{{\"title\":\"…\",\"description\":\"…\",\"estimate\":2,\"blockedBy\":[0]}}],\"notes\":\"<one sentence>\"}}",
+        parent.title,
+        parent.description.as_deref().map(|d| format!(" ({d})")).unwrap_or_default(),
+        content,
+    );
+
+    let raw = chat
+        .one_shot(&base.id, std::path::Path::new(&base.path), prompt)
+        .await
+        .ok_or("the model did not return a usable split")?;
+    let parsed = parse_intake(&raw).ok_or("the model did not return a usable split")?;
+    if parsed.tasks.is_empty() {
+        return Err("the model found nothing actionable in that content".into());
+    }
+
+    // Children land in the parent's column when it's the active one (the
+    // batch is already delegated), else in the default first column.
+    let active_parent =
+        snap.columns.iter().any(|c| c.id == parent.column_id && c.role == crate::tasks::ColumnRole::Active);
+    let column = active_parent.then(|| parent.column_id.clone());
+
+    let mut ids: Vec<String> = Vec::new();
+    for t in &parsed.tasks {
+        let created = tasks.create_task(
+            t.title.clone(),
+            t.description.clone().filter(|d| !d.trim().is_empty()),
+            None,
+            column.clone(),
+            Some(parent_id.clone()),
+        )?;
+        ids.push(created.id);
+    }
+    let plan: Vec<(String, Vec<String>, Option<f64>)> = parsed
+        .tasks
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let deps = t.blocked_by.iter().filter(|&&d| d < ids.len() && d != i).map(|&d| ids[d].clone()).collect();
+            (ids[i].clone(), deps, t.estimate.filter(|e| *e > 0.0))
+        })
+        .collect();
+    tasks.apply_plan(&parent_id, plan);
+    tasks.record_event(&parent_id, "plan", "ai", &format!("split the pasted content into {} subtasks", ids.len()));
+    crate::tasks::emit_changed(&app, &tasks);
+    Ok(SuggestedPlan { updated: ids.len(), notes: parsed.notes.filter(|n| !n.trim().is_empty()) })
+}
+
+#[derive(serde::Deserialize)]
+struct RawIntake {
+    #[serde(default)]
+    tasks: Vec<RawIntakeTask>,
+    #[serde(default)]
+    notes: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawIntakeTask {
+    title: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    estimate: Option<f64>,
+    #[serde(default)]
+    blocked_by: Vec<usize>,
+}
+
+fn parse_intake(raw: &str) -> Option<RawIntake> {
+    let start = raw.find('{')?;
+    let end = raw.rfind('}')?;
+    serde_json::from_str(&raw[start..=end]).ok()
+}
+
 /// Open issues for a project's repo (the task board's GitHub import picker).
 #[tauri::command]
 pub async fn list_project_issues(

@@ -147,6 +147,7 @@ pub fn run() {
             commands::list_project_issues,
             commands::task_suggest_plan,
             commands::task_comment,
+            commands::task_intake,
             commands::update_project,
             commands::remove_workspace,
             commands::retry_setup,

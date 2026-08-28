@@ -37,6 +37,7 @@ import {
   Pencil,
   Play,
   Plus,
+  Scissors,
   Sparkles,
   Triangle,
   Undo2,
@@ -54,6 +55,7 @@ import {
   taskCreate,
   taskDelete,
   taskMove,
+  taskIntake,
   taskSuggestPlan,
   taskUpdate,
 } from "../../lib/api";
@@ -120,6 +122,7 @@ import {
 } from "@/components/ui/popover";
 import { MarkdownEditor } from "@/components/MarkdownEditor";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
@@ -2982,6 +2985,10 @@ function SubtasksSection({
   );
   const [draft, setDraft] = useState("");
   const [planning, setPlanning] = useState(false);
+  const [intakeOpen, setIntakeOpen] = useState(false);
+  const [intake, setIntake] = useState("");
+  const [splitting, setSplitting] = useState(false);
+  const [dropHot, setDropHot] = useState(false);
 
   // Header mini progress bar: same segments/order as the card's subtask bar.
   const doneKids = children.filter(
@@ -3045,6 +3052,15 @@ function SubtasksSection({
             <Sparkles className="mr-1.5 size-3.5" />
           )}
           Suggest plan
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setIntakeOpen((o) => !o)}
+          title="Paste raw content (email, notes, spreadsheet rows) and let AI split it into subtasks"
+        >
+          <Scissors className="mr-1.5 size-3.5" />
+          Split with AI
         </Button>
       </div>
 
@@ -3117,6 +3133,84 @@ function SubtasksSection({
         />
         <Kbd>A</Kbd>
       </div>
+
+      {intakeOpen && (
+        <div
+          className={cn(
+            "mt-1 flex flex-col gap-2 rounded-lg border p-3",
+            dropHot ? "border-primary ring-1 ring-primary/40" : "border-border",
+          )}
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setDropHot(true);
+          }}
+          onDragLeave={() => setDropHot(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setDropHot(false);
+            for (const file of Array.from(e.dataTransfer.files)) {
+              if (
+                file.size > 1_000_000 ||
+                /\.(xlsx?|docx|pdf)$/i.test(file.name)
+              ) {
+                toast.error(
+                  "Drop a text file — or paste the cells/text directly",
+                );
+                continue;
+              }
+              void file.text().then((text) =>
+                setIntake((cur) => (cur ? `${cur}\n\n${text}` : text)),
+              );
+            }
+          }}
+        >
+          <Textarea
+            autoFocus
+            value={intake}
+            disabled={splitting}
+            onChange={(e) => setIntake(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.stopPropagation();
+                setIntakeOpen(false);
+              }
+            }}
+            placeholder="Paste anything — a client email, meeting notes, Excel rows — or drop a text file here…"
+            className="min-h-28 resize-y border-0 p-0 shadow-none focus-visible:ring-0"
+          />
+          <div className="flex items-center gap-2">
+            <span className="flex-1 text-[11px] text-muted-foreground">
+              AI splits this into subtasks with estimates and ordering
+            </span>
+            <Button
+              size="sm"
+              disabled={splitting || !intake.trim()}
+              onClick={() => {
+                setSplitting(true);
+                taskIntake(task.id, intake)
+                  .then(({ updated, notes }) => {
+                    toast.success(`Created ${updated} subtasks`, {
+                      description: notes ?? undefined,
+                    });
+                    setIntake("");
+                    setIntakeOpen(false);
+                  })
+                  .catch((e) =>
+                    toast.error("Could not split that", {
+                      description: String(e),
+                    }),
+                  )
+                  .finally(() => setSplitting(false));
+              }}
+            >
+              {splitting && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
+              Split into subtasks
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

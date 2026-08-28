@@ -512,6 +512,13 @@ impl TaskStore {
         self.data.lock().unwrap().activity.iter().filter(|a| a.task_id == task_id).cloned().collect()
     }
 
+    /// Record a board event from the command layer (e.g. AI intake).
+    pub fn record_event(&self, task_id: &str, kind: &str, actor: &str, body: &str) {
+        let mut data = self.data.lock().unwrap();
+        record(&mut data, task_id, kind, actor, body);
+        self.persist(&data);
+    }
+
     /// Append a user comment ("comment") or a slash command ("command").
     pub fn add_comment(&self, task_id: &str, kind: &str, body: &str) -> Result<ActivityEntry, String> {
         let body = body.trim();

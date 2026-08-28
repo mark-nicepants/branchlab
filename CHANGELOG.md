@@ -20,8 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dragging a parent task to "In progress" delegates the whole batch: its
   not-yet-started subtasks queue up behind it and dispatch in dependency
   order under the parallel-session cap.
-- Tasks can have subtasks: open a task and add them one by one (or paste a
-  whole list to split it into subtasks). A "Suggest plan" button asks the AI
+- Tasks can have subtasks: open a task and add them one by one, paste a
+  simple list to split it — or hand the AI anything messy ("Split with AI"):
+  a client email, meeting notes, or Excel rows, pasted or dropped in as a
+  text file, become subtasks with estimates and ordering. A "Suggest plan" button asks the AI
   to order them — which subtask is blocked by which, shown as "after #N"
   chips — and estimate their size. A parent card shows a full-width subtask
   bar with one status-colored segment per child (done, in review, active,

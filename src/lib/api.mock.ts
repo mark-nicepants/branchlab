@@ -1596,6 +1596,55 @@ export function taskUpdate(
   return Promise.resolve();
 }
 
+export function taskIntake(
+  parentId: string,
+  content: string,
+): Promise<SuggestedPlan> {
+  const parent = boardTasks.find((t) => t.id === parentId);
+  if (!parent) return Promise.reject("unknown task");
+  const lines = content
+    .split("\n")
+    .map((l) => l.replace(/^\s*(?:[-*]|\d+[.)])\s+/, "").trim())
+    .filter(Boolean);
+  if (!lines.length)
+    return Promise.reject("nothing to split — paste some content first");
+  return new Promise((resolve) =>
+    setTimeout(() => {
+      const columnId = boardSnap().columns[0].id;
+      let pos = Math.max(
+        0,
+        ...boardTasks
+          .filter((t) => t.columnId === columnId)
+          .map((t) => t.position),
+      );
+      for (const title of lines) {
+        pos += 1024;
+        boardTasks = [
+          ...boardTasks,
+          {
+            id: `t${Date.now()}-${mockTaskNumber + 1}`,
+            number: ++mockTaskNumber,
+            title,
+            description: null,
+            projectId: parent.projectId,
+            columnId,
+            position: pos,
+            workspaceId: null,
+            parentId,
+            dependsOn: [],
+            estimate: 1,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            deletedAt: null,
+          },
+        ];
+      }
+      emitBoard();
+      resolve({ updated: lines.length, notes: "Split by line (mock)" });
+    }, 700),
+  );
+}
+
 export function taskDelete(taskId: string): Promise<void> {
   boardTasks = boardTasks.filter((t) => t.id !== taskId);
   emitBoard();

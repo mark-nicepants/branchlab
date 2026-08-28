@@ -551,6 +551,17 @@ export function taskSuggestPlan(parentId: string): Promise<SuggestedPlan> {
   return invoke<SuggestedPlan>("task_suggest_plan", { parentId });
 }
 
+/** AI-split raw pasted content (an email, meeting notes, spreadsheet rows)
+ *  into subtasks of `parentId` on the project's engine — creates them with
+ *  dependencies + estimates and emits `tasks:changed` itself; can take a
+ *  model round-trip (~10-60s). Content is capped server-side at 12k chars. */
+export function taskIntake(
+  parentId: string,
+  content: string,
+): Promise<SuggestedPlan> {
+  return invoke<SuggestedPlan>("task_intake", { parentId, content });
+}
+
 export function taskDelete(taskId: string): Promise<void> {
   return invoke<void>("task_delete", { taskId });
 }
