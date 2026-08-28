@@ -6,6 +6,8 @@ export interface ShortcutHandlers {
   openSettings: () => void;
   openInspector: () => void;
   newProject: () => void;
+  goHome: () => void;
+  goTasks: () => void;
 }
 
 /**
@@ -13,6 +15,7 @@ export interface ShortcutHandlers {
  *   ⌘B  toggle left panel      ⌘D  toggle right panel
  *   ⌘,  settings               ⌘⌥I inspector
  *   ⌘N  new project
+ *   ⌘H  home                   ⌘T  my work (tasks)
  * Handlers are kept in a ref so the listener registers once but always calls
  * the latest callbacks.
  */
@@ -40,6 +43,14 @@ export function useShortcuts(handlers: ShortcutHandlers) {
       } else if (k === "n") {
         e.preventDefault();
         h.newProject();
+      } else if (k === "h") {
+        // macOS may claim ⌘H for "Hide" via the app menu; when the event does
+        // reach the webview, it navigates home.
+        e.preventDefault();
+        h.goHome();
+      } else if (k === "t") {
+        e.preventDefault();
+        h.goTasks();
       }
     };
     window.addEventListener("keydown", onKey);

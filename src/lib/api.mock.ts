@@ -1452,7 +1452,8 @@ let boardTasks: Task[] = [
   { id: "t2", number: 2, title: "Investigate flaky CI on main", description: "Started after the runner image bump.", projectId: "p1", columnId: "c1", position: 2048, workspaceId: null, parentId: null, dependsOn: [], estimate: null, createdAt: 0, updatedAt: 0, deletedAt: null },
   { id: "t3", number: 3, title: "Write onboarding docs", description: null, projectId: null, columnId: "c1", position: 3072, workspaceId: null, parentId: null, dependsOn: [], estimate: null, createdAt: 0, updatedAt: 0, deletedAt: null },
   { id: "t4", number: 4, title: "Refactor the review inbox polling", description: null, projectId: "p2", columnId: "c2", position: 1024, workspaceId: "p1-ws1", parentId: null, dependsOn: [], estimate: null, createdAt: 0, updatedAt: 0, deletedAt: null },
-  { id: "t5", number: 5, title: "Ship v0.3.0", description: null, projectId: "p1", columnId: "c3", position: 1024, workspaceId: null, parentId: null, dependsOn: [], estimate: null, createdAt: 0, updatedAt: 0, deletedAt: null },
+  // workspaceId points at a cleaned-up workspace → the archived "history" state.
+  { id: "t5", number: 5, title: "Ship v0.3.0", description: null, projectId: "p1", columnId: "c3", position: 1024, workspaceId: "ws-archived", parentId: null, dependsOn: [], estimate: null, createdAt: 0, updatedAt: 0, deletedAt: null },
   // Subtasks demo: one parent with a done, a working (linked), and a blocked child.
   { id: "t6", number: 6, title: "Client feedback batch", description: "Round 2 of the pilot feedback.", projectId: "p1", columnId: "c2", position: 2048, workspaceId: null, parentId: null, dependsOn: [], estimate: null, createdAt: 0, updatedAt: 0, deletedAt: null },
   { id: "t7", number: 7, title: "Fix header contrast on dark mode", description: null, projectId: "p1", columnId: "c3", position: 2048, workspaceId: null, parentId: "t6", dependsOn: [], estimate: null, createdAt: 0, updatedAt: 0, deletedAt: null },

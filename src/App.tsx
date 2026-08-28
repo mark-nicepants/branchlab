@@ -337,6 +337,8 @@ function App() {
     toggleLeft: () => setSidebarCollapsed((c) => !c),
     toggleRight: () => {},
     openSettings: () => router.openSettings("general"),
+    goHome: () => router.navigate("home"),
+    goTasks: () => router.navigate("my-work"),
     openInspector: () => void openDevtools(),
     newProject: () => void pickProject(),
   });
@@ -365,6 +367,10 @@ function App() {
             <SessionsSidebar
               view={view}
               onNavigate={router.navigate}
+              canGoBack={router.canGoBack}
+              canGoForward={router.canGoForward}
+              onBack={router.back}
+              onForward={router.forward}
               onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
               onOpenSettings={() => router.openSettings("general")}
               onOpenAccounts={() => router.openSettings("accounts")}

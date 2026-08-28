@@ -111,6 +111,7 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
+  CommandSeparator,
 } from "@/components/ui/command";
 import {
   Popover,
@@ -678,6 +679,9 @@ export function MyWorkScreen({
       )}
       {dialog?.mode === "edit" && (
         <TaskEditDialog
+          // Keyed by task id so switching to a parent/subtask resets all
+          // dialog-local state (drafts, pickers, activity feed).
+          key={dialog.task.id}
           // Re-resolve on every snapshot so per-field commits render back live.
           task={boardCtx.taskById.get(dialog.task.id) ?? dialog.task}
           ctx={boardCtx}
@@ -690,6 +694,7 @@ export function MyWorkScreen({
           diffStats={diffStats}
           onOpenSession={onOpenSession}
           onStartTask={onStartTask}
+          onSwitchTask={(t) => setDialog({ mode: "edit", task: t })}
           onShowShortcuts={() => setShortcutsOpen(true)}
           onClose={() => setDialog(null)}
         />
@@ -1079,7 +1084,7 @@ function SubtaskBar({
       }}
       aria-label="Open subtasks"
       title="Open subtasks"
-      className="group/subtasks mt-2 flex w-full items-center gap-1.5"
+      className="group/subtasks mt-2 flex w-full cursor-pointer items-center gap-1.5"
     >
       <span className="flex h-1 min-w-0 flex-1 gap-px overflow-hidden rounded-full transition-[filter] group-hover/subtasks:brightness-125">
         {states.map((s, i) => (
@@ -1151,9 +1156,9 @@ function TaskCard({
       : null;
   const showDiff =
     !isParent && !!workspace && (diffStat?.files ?? 0) > 0 && state !== "done";
-  const showArchive = !isParent && !!task.workspaceId && !workspace;
-  const hasFooter =
-    showPr !== null || showDiff || showArchive || unmetDep !== null;
+  /** Linked chat whose workspace is gone — the transcript lives on. */
+  const isArchived = !isParent && !!task.workspaceId && !workspace;
+  const hasFooter = showPr !== null || showDiff || unmetDep !== null;
 
   const card = (
     <div
@@ -1190,14 +1195,31 @@ function TaskCard({
           {projectName && <>{projectName} </>}
           <span className="font-mono">#{task.number}</span>
         </span>
-        {!isParent && (
-          <StatusChip
-            state={state}
-            workspace={workspace}
-            session={session}
-            pr={pr}
-            onOpenSession={onOpenSession}
-          />
+        {isArchived ? (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenArchive(task);
+            }}
+            className={cn(
+              CHIP,
+              "shrink-0 border-border text-muted-foreground hover:bg-accent hover:text-foreground",
+            )}
+            title="The workspace is gone; open the archived conversation"
+          >
+            <MessageSquare className="size-2.5" />
+            history
+          </button>
+        ) : (
+          !isParent && (
+            <StatusChip
+              state={state}
+              workspace={workspace}
+              session={session}
+              pr={pr}
+              onOpenSession={onOpenSession}
+            />
+          )
         )}
       </div>
 
@@ -1220,22 +1242,6 @@ function TaskCard({
               <span className="text-additions">+{diffStat.insertions}</span>
               <span className="text-deletions">−{diffStat.deletions}</span>
             </span>
-          )}
-          {showArchive && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpenArchive(task);
-              }}
-              className={cn(
-                CHIP,
-                "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
-              )}
-              title="The workspace is gone; open the archived conversation"
-            >
-              <MessageSquare className="size-2.5" />
-              chat archive
-            </button>
           )}
           {unmetDep && <DepChip number={unmetDep.number} />}
         </div>
@@ -1318,6 +1324,7 @@ function TaskCreateDialog({
   const [projectId, setProjectId] = useState("");
   const [columnId, setColumnId] = useState(state.columnId);
   const [estimate, setEstimate] = useState<number | null>(null);
+  const [editingEstimate, setEditingEstimate] = useState(false);
   const [dependsOn, setDependsOn] = useState<string[]>([]);
   const [createMore, setCreateMore] = useState(false);
   const [picker, setPicker] = useState<PickerId | null>(null);
@@ -1448,7 +1455,12 @@ function TaskCreateDialog({
         break;
       case "e":
       case "E":
-        open("estimate");
+        // Points/hours edit inline in the chip row; only t-shirt pops a list.
+        if (unit === "tshirt") open("estimate");
+        else {
+          e.preventDefault();
+          setEditingEstimate(true);
+        }
         break;
       case "b":
       case "B":
@@ -1521,7 +1533,7 @@ function TaskCreateDialog({
                 {column?.name ?? "Column"}
               </CreateChip>
             </PopoverTrigger>
-            <PopoverContent align="start" className="w-56 p-0">
+            <PickerContent align="start" className="w-56">
               <ColumnPicker
                 columns={columns}
                 onSelect={(c) => {
@@ -1529,7 +1541,7 @@ function TaskCreateDialog({
                   setPicker(null);
                 }}
               />
-            </PopoverContent>
+            </PickerContent>
           </Popover>
 
           {!isSubtask && (
@@ -1546,7 +1558,7 @@ function TaskCreateDialog({
                   {projectName ?? "No project"}
                 </CreateChip>
               </PopoverTrigger>
-              <PopoverContent align="start" className="w-72 p-0">
+              <PickerContent align="start" className="w-72">
                 <ProjectPicker
                   projects={projects}
                   onSelect={(id) => {
@@ -1557,36 +1569,64 @@ function TaskCreateDialog({
                     setPicker(null);
                   }}
                 />
-              </PopoverContent>
+              </PickerContent>
             </Popover>
           )}
 
-          <Popover
-            open={picker === "estimate"}
-            onOpenChange={(o) => setPicker(o ? "estimate" : null)}
-          >
-            <PopoverTrigger asChild>
-              <CreateChip
-                set={effEstimate !== null}
-                kbd="E"
-                icon={<Triangle className="size-3" />}
-              >
-                {effEstimate !== null
-                  ? estimateLabel(effEstimate, unit)
-                  : "Estimate"}
-              </CreateChip>
-            </PopoverTrigger>
-            <PopoverContent align="start" className="w-56 p-0">
-              <EstimatePicker
+          {unit === "tshirt" ? (
+            <Popover
+              open={picker === "estimate"}
+              onOpenChange={(o) => setPicker(o ? "estimate" : null)}
+            >
+              <PopoverTrigger asChild>
+                <CreateChip
+                  set={effEstimate !== null}
+                  kbd="E"
+                  icon={<Triangle className="size-3" />}
+                >
+                  {effEstimate !== null
+                    ? estimateLabel(effEstimate, unit)
+                    : "Estimate"}
+                </CreateChip>
+              </PopoverTrigger>
+              <PickerContent align="start" className="w-56">
+                <EstimatePicker
+                  onSelect={(v) => {
+                    setEstimate(v < 0 ? null : v);
+                    if (v < 0) setImportEstimate(null);
+                    setPicker(null);
+                  }}
+                />
+              </PickerContent>
+            </Popover>
+          ) : editingEstimate ? (
+            // Points/hours: the chip swaps to a tiny inline number input.
+            <span className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-[11.5px]">
+              <Triangle className="size-3 shrink-0 text-muted-foreground" />
+              <InlineEstimateInput
+                initial={effEstimate === null ? "" : String(effEstimate)}
                 unit={unit}
-                onSelect={(v) => {
-                  setEstimate(v < 0 ? null : v);
-                  if (v < 0) setImportEstimate(null);
-                  setPicker(null);
+                onCommit={(v) => {
+                  setEditingEstimate(false);
+                  setEstimate(v);
+                  if (v === null) setImportEstimate(null);
                 }}
+                onCancel={() => setEditingEstimate(false)}
+                className="w-16 bg-transparent outline-none placeholder:text-muted-foreground"
               />
-            </PopoverContent>
-          </Popover>
+            </span>
+          ) : (
+            <CreateChip
+              set={effEstimate !== null}
+              kbd="E"
+              icon={<Triangle className="size-3" />}
+              onClick={() => setEditingEstimate(true)}
+            >
+              {effEstimate !== null
+                ? estimateLabel(effEstimate, unit)
+                : "Estimate"}
+            </CreateChip>
+          )}
 
           <Popover
             open={picker === "blockedBy"}
@@ -1605,7 +1645,7 @@ function TaskCreateDialog({
                   : "Blocked by"}
               </CreateChip>
             </PopoverTrigger>
-            <PopoverContent align="start" className="w-72 p-0">
+            <PickerContent align="start" className="w-72">
               <DepPickerContent
                 candidates={candidates}
                 selected={selectedDeps}
@@ -1618,7 +1658,7 @@ function TaskCreateDialog({
                   )
                 }
               />
-            </PopoverContent>
+            </PickerContent>
           </Popover>
 
           {!isSubtask && (
@@ -1640,10 +1680,11 @@ function TaskCreateDialog({
                   Import issue
                 </CreateChip>
               </PopoverTrigger>
-              <PopoverContent align="start" className="w-[28rem] p-0">
+              <PickerContent align="start" className="w-[28rem]">
                 <Command>
                   <CommandInput placeholder="Search open issues…" />
-                  <CommandList className="max-h-72">
+                  <CommandSeparator className="mt-1" />
+                  <CommandList className="max-h-72 p-1">
                     {loadingIssues ? (
                       <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
                         <Loader2 className="size-3.5 animate-spin" />
@@ -1674,7 +1715,7 @@ function TaskCreateDialog({
                     )}
                   </CommandList>
                 </Command>
-              </PopoverContent>
+              </PickerContent>
             </Popover>
           )}
         </div>
@@ -1709,6 +1750,7 @@ function TaskEditDialog({
   diffStats,
   onOpenSession,
   onStartTask,
+  onSwitchTask,
   onShowShortcuts,
   onClose,
 }: {
@@ -1724,6 +1766,8 @@ function TaskEditDialog({
   diffStats: Record<string, DiffStat>;
   onOpenSession: (workspaceId: string) => void;
   onStartTask: (t: Task) => void;
+  /** Re-target the dialog to another task (parent row / subtask rows). */
+  onSwitchTask: (t: Task) => void;
   onShowShortcuts: () => void;
   onClose: () => void;
 }) {
@@ -1731,8 +1775,11 @@ function TaskEditDialog({
   const [titleDraft, setTitleDraft] = useState("");
   const [editingDesc, setEditingDesc] = useState(false);
   const [descDraft, setDescDraft] = useState("");
+  const [editingEstimate, setEditingEstimate] = useState(false);
+  const [archiveOpen, setArchiveOpen] = useState(false);
   const [picker, setPicker] = useState<PickerId | null>(null);
   const addInputRef = useRef<HTMLInputElement>(null);
+  const composerRef = useRef<{ focusSlash: () => void } | null>(null);
 
   const fail = (e: unknown) =>
     toast.error("Could not save task", { description: String(e) });
@@ -1762,6 +1809,9 @@ function TaskEditDialog({
     projects.find((p) => p.id === task.projectId)?.estimate_unit ?? boardUnit;
 
   const isParent = (ctx.childrenByParent.get(task.id)?.length ?? 0) > 0;
+  const parentTask = task.parentId
+    ? (ctx.taskById.get(task.parentId) ?? null)
+    : null;
   const role = ctx.roleById.get(task.columnId) ?? "none";
   const state = deriveState(task, role);
   const column = columns.find((c) => c.id === task.columnId);
@@ -1822,13 +1872,22 @@ function TaskEditDialog({
         open("project");
         break;
       case "e":
-        open("estimate");
+        // Points/hours edit inline in place; only t-shirt has a picker.
+        if (unit === "tshirt") open("estimate");
+        else {
+          e.preventDefault();
+          setEditingEstimate(true);
+        }
         break;
       case "b":
         open("blockedBy");
         break;
       case "B":
         open("blocks");
+        break;
+      case "/":
+        e.preventDefault();
+        composerRef.current?.focusSlash();
         break;
       case "a":
         if (task.parentId === null) {
@@ -1969,11 +2028,12 @@ function TaskEditDialog({
               sessions={sessions}
               prs={prs}
               onOpenSession={onOpenSession}
+              onOpen={onSwitchTask}
               addInputRef={addInputRef}
             />
           )}
 
-          <ActivityFeed task={task} />
+          <ActivityFeed task={task} composerRef={composerRef} />
         </div>
 
         {/* ── Properties rail ── */}
@@ -1982,6 +2042,26 @@ function TaskEditDialog({
             <span className="mb-1.5 px-1.5 text-[10.5px] font-semibold tracking-wide text-muted-foreground">
               PROPERTIES
             </span>
+
+            {parentTask && (
+              <RailRow
+                icon={
+                  <StateIcon
+                    state={deriveState(
+                      parentTask,
+                      ctx.roleById.get(parentTask.columnId) ?? "none",
+                    )}
+                  />
+                }
+                onClick={() => onSwitchTask(parentTask)}
+                title={`Parent — #${parentTask.number} ${parentTask.title}`}
+              >
+                <span className="font-mono text-muted-foreground">
+                  #{parentTask.number}
+                </span>{" "}
+                {parentTask.title}
+              </RailRow>
+            )}
 
             <Popover
               open={picker === "status"}
@@ -1992,9 +2072,9 @@ function TaskEditDialog({
                   {column?.name ?? "—"}
                 </RailRow>
               </PopoverTrigger>
-              <PopoverContent align="end" className="w-56 p-0">
+              <PickerContent align="end" className="w-56">
                 <ColumnPicker columns={columns} onSelect={(c) => setStatus(c.id)} />
-              </PopoverContent>
+              </PickerContent>
             </Popover>
 
             <Popover
@@ -2010,7 +2090,7 @@ function TaskEditDialog({
                   {project?.name ?? "No project"}
                 </RailRow>
               </PopoverTrigger>
-              <PopoverContent align="end" className="w-72 p-0">
+              <PickerContent align="end" className="w-72">
                 <ProjectPicker
                   projects={projects}
                   onSelect={(id) => {
@@ -2018,34 +2098,65 @@ function TaskEditDialog({
                     taskUpdate(task.id, { projectId: id }).catch(fail);
                   }}
                 />
-              </PopoverContent>
+              </PickerContent>
             </Popover>
 
-            <Popover
-              open={picker === "estimate"}
-              onOpenChange={(o) => setPicker(o ? "estimate" : null)}
-            >
-              <PopoverTrigger asChild>
-                <RailRow
-                  icon={<Triangle className="size-[13px]" />}
-                  kbd="E"
-                  muted={task.estimate === null}
-                >
-                  {task.estimate !== null
-                    ? estimateLabel(task.estimate, unit)
-                    : "Estimate —"}
-                </RailRow>
-              </PopoverTrigger>
-              <PopoverContent align="end" className="w-56 p-0">
-                <EstimatePicker
+            {unit === "tshirt" ? (
+              <Popover
+                open={picker === "estimate"}
+                onOpenChange={(o) => setPicker(o ? "estimate" : null)}
+              >
+                <PopoverTrigger asChild>
+                  <RailRow
+                    icon={<Triangle className="size-[13px]" />}
+                    kbd="E"
+                    muted={task.estimate === null}
+                  >
+                    {task.estimate !== null
+                      ? estimateLabel(task.estimate, unit)
+                      : "Estimate —"}
+                  </RailRow>
+                </PopoverTrigger>
+                <PickerContent align="end" className="w-56">
+                  <EstimatePicker
+                    onSelect={(v) => {
+                      setPicker(null);
+                      taskUpdate(task.id, { estimate: v }).catch(fail);
+                    }}
+                  />
+                </PickerContent>
+              </Popover>
+            ) : editingEstimate ? (
+              // Points/hours: the value swaps to an inline number input.
+              <div className="flex w-full items-center gap-2 px-1.5 py-1">
+                <span className="flex size-[13px] shrink-0 items-center justify-center text-muted-foreground">
+                  <Triangle className="size-[13px]" />
+                </span>
+                <InlineEstimateInput
+                  initial={task.estimate === null ? "" : String(task.estimate)}
                   unit={unit}
-                  onSelect={(v) => {
-                    setPicker(null);
-                    taskUpdate(task.id, { estimate: v }).catch(fail);
+                  onCommit={(v) => {
+                    setEditingEstimate(false);
+                    if (v === task.estimate) return;
+                    // null clears (-1 is the backend's unset sentinel).
+                    taskUpdate(task.id, { estimate: v ?? -1 }).catch(fail);
                   }}
+                  onCancel={() => setEditingEstimate(false)}
+                  className="h-5 min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
                 />
-              </PopoverContent>
-            </Popover>
+              </div>
+            ) : (
+              <RailRow
+                icon={<Triangle className="size-[13px]" />}
+                kbd="E"
+                muted={task.estimate === null}
+                onClick={() => setEditingEstimate(true)}
+              >
+                {task.estimate !== null
+                  ? estimateLabel(task.estimate, unit)
+                  : "Estimate —"}
+              </RailRow>
+            )}
 
             <div className="flex flex-col gap-1">
               <Popover
@@ -2061,7 +2172,7 @@ function TaskEditDialog({
                     Blocked by{blockedBy.length === 0 && " —"}
                   </RailRow>
                 </PopoverTrigger>
-                <PopoverContent align="end" className="w-72 p-0">
+                <PickerContent align="end" className="w-72">
                   <DepPickerContent
                     candidates={peers.filter(
                       (t) => !task.dependsOn.includes(t.id),
@@ -2073,7 +2184,7 @@ function TaskEditDialog({
                       }).catch(fail);
                     }}
                   />
-                </PopoverContent>
+                </PickerContent>
               </Popover>
               {blockedBy.length > 0 && (
                 <div className="flex flex-wrap gap-1 pb-1 pl-7">
@@ -2108,7 +2219,7 @@ function TaskEditDialog({
                     Blocks{blocks.length === 0 && " —"}
                   </RailRow>
                 </PopoverTrigger>
-                <PopoverContent align="end" className="w-72 p-0">
+                <PickerContent align="end" className="w-72">
                   <DepPickerContent
                     candidates={peers.filter(
                       (t) => !t.dependsOn.includes(task.id),
@@ -2120,7 +2231,7 @@ function TaskEditDialog({
                       }).catch(fail);
                     }}
                   />
-                </PopoverContent>
+                </PickerContent>
               </Popover>
               {blocks.length > 0 && (
                 <div className="flex flex-wrap gap-1 pb-1 pl-7">
@@ -2180,13 +2291,24 @@ function TaskEditDialog({
                     )}
                   </>
                 ) : (
-                  <RailRow
-                    icon={<Play className="size-[13px]" />}
-                    kbd="O"
-                    onClick={openOrStartSession}
-                  >
-                    {task.workspaceId ? "Start new session" : "Start session"}
-                  </RailRow>
+                  <>
+                    <RailRow
+                      icon={<Play className="size-[13px]" />}
+                      kbd="O"
+                      onClick={openOrStartSession}
+                    >
+                      {task.workspaceId ? "Start new session" : "Start session"}
+                    </RailRow>
+                    {task.workspaceId && (
+                      // Workspace gone but the transcript survives in chat.db.
+                      <RailRow
+                        icon={<MessageSquare className="size-[13px]" />}
+                        onClick={() => setArchiveOpen(true)}
+                      >
+                        History
+                      </RailRow>
+                    )}
+                  </>
                 )}
               </div>
             </>
@@ -2201,11 +2323,90 @@ function TaskEditDialog({
           </button>
         </div>
       </DialogContent>
+      {archiveOpen && (
+        <ArchiveDialog task={task} onClose={() => setArchiveOpen(false)} />
+      )}
     </Dialog>
   );
 }
 
 // ── Shared pickers + rail/chip primitives (edit rail ⇄ create chips) ──
+
+/** Picker popover chrome: Radix would focus the content wrapper, leaving
+ *  cmdk deaf to arrow keys — land focus on the search input (or the command
+ *  root for list-only pickers) so keyboard-opened pickers work immediately. */
+function PickerContent({
+  className,
+  ...props
+}: React.ComponentProps<typeof PopoverContent>) {
+  const ref = useRef<HTMLDivElement>(null);
+  return (
+    <PopoverContent
+      ref={ref}
+      onOpenAutoFocus={(e) => {
+        e.preventDefault();
+        ref.current
+          ?.querySelector<HTMLElement>("[cmdk-input], [cmdk-root]")
+          ?.focus();
+      }}
+      className={cn("p-0", className)}
+      {...props}
+    />
+  );
+}
+
+/** Inline number input for points/hours estimates (rail row + create chip).
+ *  Enter/blur commits (empty = clear → null), Esc cancels. */
+function InlineEstimateInput({
+  initial,
+  unit,
+  onCommit,
+  onCancel,
+  className,
+}: {
+  initial: string;
+  unit: EstimateUnit;
+  onCommit: (value: number | null) => void;
+  onCancel: () => void;
+  className?: string;
+}) {
+  const [draft, setDraft] = useState(initial);
+  const commit = () => {
+    const raw = draft.trim();
+    if (raw === "") return onCommit(null);
+    const v = Number(raw);
+    if (Number.isFinite(v) && v >= 0) onCommit(v);
+    else onCancel();
+  };
+  return (
+    <input
+      type="number"
+      min={0}
+      step={unit === "hours" ? 0.5 : 1}
+      autoFocus
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          // stopPropagation: ⌘↵ here commits the estimate, not the dialog
+          // (the dialog's save would still read the pre-commit state).
+          e.preventDefault();
+          e.stopPropagation();
+          commit();
+        }
+        if (e.key === "Escape") {
+          // Cancel the edit without closing the dialog.
+          e.preventDefault();
+          e.stopPropagation();
+          onCancel();
+        }
+      }}
+      placeholder={unit === "hours" ? "Hours…" : "Points…"}
+      className={className}
+    />
+  );
+}
 
 /** Tiny keyboard-shortcut chip (matches the mock's kbd styling). */
 function Kbd({
@@ -2338,7 +2539,7 @@ function ColumnPicker({
 }) {
   return (
     <Command>
-      <CommandList>
+      <CommandList className="p-1">
         {columns.map((c) => (
           <CommandItem
             key={c.id}
@@ -2366,7 +2567,8 @@ function ProjectPicker({
   return (
     <Command>
       <CommandInput placeholder="Project…" />
-      <CommandList className="max-h-56">
+      <CommandSeparator className="mt-1" />
+      <CommandList className="max-h-56 p-1">
         <CommandEmpty>No matching projects.</CommandEmpty>
         <CommandItem value="No project" onSelect={() => onSelect("")}>
           No project (starts a quick chat)
@@ -2385,78 +2587,31 @@ function ProjectPicker({
   );
 }
 
-const QUICK_ESTIMATES = [1, 2, 3, 5, 8, 13];
-
-/** Estimate picker: quick values (t-shirt sizes for that unit) + a custom
- *  number input. Selecting -1 clears (the backend's unset sentinel). */
-function EstimatePicker({
-  unit,
-  onSelect,
-}: {
-  unit: EstimateUnit;
-  onSelect: (value: number) => void;
-}) {
-  const [custom, setCustom] = useState("");
-  const unitWord = (v: number) =>
-    unit === "hours" ? (v === 1 ? "hour" : "hours") : v === 1 ? "point" : "points";
+/** T-shirt estimate picker (points/hours edit inline instead — no popover).
+ *  Selecting -1 clears (the backend's unset sentinel). */
+function EstimatePicker({ onSelect }: { onSelect: (value: number) => void }) {
   return (
-    <div>
-      <Command>
-        <CommandList>
-          {unit === "tshirt"
-            ? TSHIRT_SIZES.map((s) => (
-                <CommandItem
-                  key={s.label}
-                  value={s.label}
-                  onSelect={() => onSelect(s.value)}
-                  className="gap-2"
-                >
-                  {s.label}
-                </CommandItem>
-              ))
-            : QUICK_ESTIMATES.map((v) => (
-                <CommandItem
-                  key={v}
-                  value={String(v)}
-                  onSelect={() => onSelect(v)}
-                  className="gap-2"
-                >
-                  {v}
-                  <span className="text-xs text-muted-foreground">
-                    {unitWord(v)}
-                  </span>
-                </CommandItem>
-              ))}
+    <Command>
+      <CommandList className="p-1">
+        {TSHIRT_SIZES.map((s) => (
           <CommandItem
-            value="No estimate"
-            onSelect={() => onSelect(-1)}
-            className="text-muted-foreground"
+            key={s.label}
+            value={s.label}
+            onSelect={() => onSelect(s.value)}
+            className="gap-2"
           >
-            No estimate
+            {s.label}
           </CommandItem>
-        </CommandList>
-      </Command>
-      {unit !== "tshirt" && (
-        <div className="border-t border-border p-1.5">
-          <Input
-            type="number"
-            min={0}
-            step={unit === "hours" ? 0.5 : 1}
-            value={custom}
-            onChange={(e) => setCustom(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key !== "Enter") return;
-              e.preventDefault();
-              const v = Number(custom.trim());
-              if (custom.trim() !== "" && Number.isFinite(v) && v >= 0)
-                onSelect(v);
-            }}
-            placeholder="Custom…"
-            className="h-7 text-xs"
-          />
-        </div>
-      )}
-    </div>
+        ))}
+        <CommandItem
+          value="No estimate"
+          onSelect={() => onSelect(-1)}
+          className="text-muted-foreground"
+        >
+          No estimate
+        </CommandItem>
+      </CommandList>
+    </Command>
   );
 }
 
@@ -2495,7 +2650,8 @@ function DepPickerContent({
   return (
     <Command>
       <CommandInput placeholder="Search tasks…" />
-      <CommandList className="max-h-56">
+      <CommandSeparator className="mt-1" />
+      <CommandList className="max-h-56 p-1">
         <CommandEmpty>No matching tasks.</CommandEmpty>
         {candidates.map((t) => (
           <CommandItem
@@ -2595,12 +2751,32 @@ function activityText(entry: ActivityEntry): React.ReactNode {
 /** The task's timeline (thin vertical line): event rows, comment bubbles, and
  *  the comment/command composer. Fetched on open, refetched on every
  *  `tasks:changed` while the dialog is up. */
-function ActivityFeed({ task }: { task: Task }) {
+function ActivityFeed({
+  task,
+  composerRef,
+}: {
+  task: Task;
+  /** The dialog's `/` shortcut focuses (and seeds) the composer through this. */
+  composerRef?: React.RefObject<{ focusSlash: () => void } | null>;
+}) {
   const [entries, setEntries] = useState<ActivityEntry[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const prevCount = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!composerRef) return;
+    composerRef.current = {
+      focusSlash: () => {
+        inputRef.current?.focus();
+        // Seed the slash so the command hint shows (the keydown itself was
+        // preventDefault-ed to avoid typing it twice).
+        setDraft((d) => (d === "" ? "/" : d));
+      },
+    };
+  }, [composerRef]);
 
   useEffect(() => {
     let live = true;
@@ -2692,6 +2868,7 @@ function ActivityFeed({ task }: { task: Task }) {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 transition-colors focus-within:border-ring">
               <input
+                ref={inputRef}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
@@ -2737,7 +2914,8 @@ const TASK_SHORTCUTS: [string, string][] = [
   ["Estimate", "E"],
   ["Blocked by / blocks", "B · ⇧B"],
   ["Add subtask", "A"],
-  ["Open session", "O"],
+  ["Open / start session", "O"],
+  ["Focus comment", "/"],
   ["Comment / save", "⌘↵"],
 ];
 
@@ -2783,6 +2961,7 @@ function SubtasksSection({
   sessions,
   prs,
   onOpenSession,
+  onOpen,
   addInputRef,
 }: {
   task: Task;
@@ -2793,6 +2972,8 @@ function SubtasksSection({
   sessions: Record<string, SessionPayload>;
   prs: Record<string, PrPayload>;
   onOpenSession: (workspaceId: string) => void;
+  /** Clicking a row switches the dialog to that subtask. */
+  onOpen: (t: Task) => void;
   /** The dialog's `A` shortcut focuses the add input through this ref. */
   addInputRef?: React.RefObject<HTMLInputElement | null>;
 }) {
@@ -2876,7 +3057,9 @@ function SubtasksSection({
         return (
           <div
             key={child.id}
-            className="flex items-center gap-2 border-b border-border/50 py-1.5"
+            onClick={() => onOpen(child)}
+            title="Open this subtask"
+            className="-mx-1 flex cursor-pointer items-center gap-2 rounded-md border-b border-border/50 px-1 py-1.5 hover:bg-accent/40"
           >
             <StateIcon state={deriveState(child, role)} />
             <span className="shrink-0 font-mono text-[10px] text-muted-foreground">

@@ -30,20 +30,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checks, the diff size, and blocked-by dependencies.
 - Opening a task now shows a full task view instead of a form: a main column
   with the markdown description (click the title or hover-pencil to edit —
-  changes save as you go), the subtasks list with a mini progress bar, and an
-  activity feed — a timeline of everything that happened to the task (created,
+  changes save as you go), the subtasks list with a mini progress bar (click
+  a subtask to open it), and an activity feed — a timeline of everything that happened to the task (created,
   AI plan, session started, moved to review/done) plus your comments. The
   composer at the bottom takes plain comments or slash commands: /start
   [instructions] boots the task's session, /send <message> prompts it, /stop
   aborts its turn, /done marks the task done.
 - The task view has a Linear-style properties rail: status/column, project,
-  estimate, and blocked-by/blocks as rows with command-menu pickers, plus a
-  session section with the live status chip, "Open session" (or "Start
-  session"), and the uncommitted diff size.
+  estimate (points/hours edit inline in place; t-shirt sizes pick from a
+  list), and blocked-by/blocks as rows with command-menu pickers, a parent
+  row on subtasks that jumps to the parent task, plus a session section with
+  the live status chip, "Open session" (or "Start session"), and the
+  uncommitted diff size.
 - Task keyboard shortcuts: inside a task, S/P/E/B/⇧B open the property
-  pickers, A focuses the add-subtask input, O opens (or starts) the session,
-  and Enter/⌘↵ sends a comment. On the board, F opens the project filter.
-  Press ? anywhere on the board or in a task for the full shortcut map.
+  pickers (with focus landing in the picker so the arrow keys work
+  immediately), A focuses the add-subtask input, O opens (or starts) the
+  session, / focuses the comment composer, and Enter/⌘↵ sends a comment. On
+  the board, F opens the project filter. Press ? anywhere on the board or in
+  a task for the full shortcut map.
 - "My work" is now a task board with a built-in agent workflow. Four fixed
   columns — Todo, In progress, Needs review, Done — where dragging a card
   into "In progress" delegates it: the agent picks it up automatically (two
@@ -60,9 +64,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   agent is told to reference it, and a task chip in the session header jumps
   back to the exact card on the board.
 - Moving a card to Done with a live session offers to clean up its
-  workspace — and after cleanup the card keeps the conversation: a
-  "chat archive" chip opens the full read-only transcript for future
-  reference.
+  workspace — and after cleanup the card keeps the conversation: a "history"
+  chip in the card's corner (and a History row in the task view's session
+  section) opens the full read-only transcript for future reference.
 - Tasks are quick to capture: a Linear-style create dialog (N, or "Add task"
   on a column) with a borderless title + description, a chip per property —
   status, project, estimate, blocked-by, and import-from-GitHub-issue (with

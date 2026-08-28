@@ -111,6 +111,11 @@ const NAV: NavItemDef[] = [
 interface Props {
   view: NavView | "session";
   onNavigate: (v: NavView) => void;
+  /** Browser-style history (the chevrons; ⌘[ / ⌘] do the same). */
+  canGoBack: boolean;
+  canGoForward: boolean;
+  onBack: () => void;
+  onForward: () => void;
   onToggleCollapse: () => void;
   onOpenSettings: () => void;
   /** Open Settings on the Accounts tab (from the identity indicator). */
@@ -138,6 +143,10 @@ interface Props {
 export function SessionsSidebar({
   view,
   onNavigate,
+  canGoBack,
+  canGoForward,
+  onBack,
+  onForward,
   onToggleCollapse,
   onOpenSettings,
   onOpenAccounts,
@@ -295,22 +304,34 @@ export function SessionsSidebar({
           </TooltipTrigger>
           <TooltipContent>Toggle sidebar ⌘B</TooltipContent>
         </Tooltip>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="text-muted-foreground/50"
-          disabled
-        >
-          <ChevronLeft className="size-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="text-muted-foreground/50"
-          disabled
-        >
-          <ChevronRight className="size-4" />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className={canGoBack ? "text-muted-foreground" : "text-muted-foreground/50"}
+              disabled={!canGoBack}
+              onClick={onBack}
+            >
+              <ChevronLeft className="size-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Back ⌘[</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className={canGoForward ? "text-muted-foreground" : "text-muted-foreground/50"}
+              disabled={!canGoForward}
+              onClick={onForward}
+            >
+              <ChevronRight className="size-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Forward ⌘]</TooltipContent>
+        </Tooltip>
       </div>
 
       {/* Primary navigation */}
