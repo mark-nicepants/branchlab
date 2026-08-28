@@ -79,6 +79,10 @@ pub struct Task {
     /// Sequential batches are chains; parallel batches have no deps.
     #[serde(default)]
     pub depends_on: Vec<String>,
+    /// Rough size in hours — user-entered, AI-suggested, or imported from a
+    /// GitHub Projects "Estimate" field.
+    #[serde(default)]
+    pub estimate: Option<f64>,
     pub created_at: i64,
     pub updated_at: i64,
     #[serde(default)]
@@ -120,6 +124,10 @@ pub struct TaskPatch {
     pub title: Option<String>,
     pub description: Option<String>,
     pub project_id: Option<String>,
+    /// Hours; a negative value clears the estimate (JSON has no "unset").
+    pub estimate: Option<f64>,
+    /// Replaces the whole blocked-by list. Unknown/self ids are dropped.
+    pub depends_on: Option<Vec<String>>,
 }
 
 pub struct TaskStore {
@@ -211,6 +219,7 @@ impl TaskStore {
             workspace_id: None,
             parent_id,
             depends_on: Vec::new(),
+            estimate: None,
             created_at: now,
             updated_at: now,
             deleted_at: None,
@@ -222,6 +231,8 @@ impl TaskStore {
 
     pub fn update_task(&self, id: &str, patch: TaskPatch) -> Result<(), String> {
         let mut data = self.data.lock().unwrap();
+        let live: std::collections::HashSet<String> =
+            data.tasks.iter().filter(|t| t.deleted_at.is_none()).map(|t| t.id.clone()).collect();
         let task = live_task(&mut data, id)?;
         if let Some(title) = patch.title {
             let title = title.trim().to_string();
@@ -235,6 +246,14 @@ impl TaskStore {
         }
         if let Some(p) = patch.project_id {
             task.project_id = normalize(Some(p));
+        }
+        if let Some(e) = patch.estimate {
+            task.estimate = (e >= 0.0).then_some(e);
+        }
+        if let Some(deps) = patch.depends_on {
+            let mut seen = std::collections::HashSet::new();
+            task.depends_on =
+                deps.into_iter().filter(|d| d != id && live.contains(d) && seen.insert(d.clone())).collect();
         }
         task.updated_at = now_ms();
         self.persist(&data);
@@ -346,29 +365,41 @@ impl TaskStore {
         Ok(())
     }
 
-    /// Rewrite a parent's live children as a sequential chain (each depends
-    /// on the previous, in creation order) or as parallel (no deps). The
-    /// toggle state is DERIVED from the data — no mode field exists.
-    pub fn set_subtask_mode(&self, parent_id: &str, sequential: bool) -> Result<(), String> {
+    /// Apply an AI-suggested plan to a parent's live children: replace each
+    /// listed child's blocked-by list and estimate in one persist. Ids not
+    /// among the parent's live children are ignored; dep ids are validated
+    /// the same way `update_task` does. Returns how many tasks changed.
+    pub fn apply_plan(&self, parent_id: &str, plan: Vec<(String, Vec<String>, Option<f64>)>) -> usize {
         let mut data = self.data.lock().unwrap();
-        if !data.tasks.iter().any(|t| t.id == parent_id && t.deleted_at.is_none()) {
-            return Err("unknown parent task".into());
-        }
-        let now = now_ms();
-        let mut idx: Vec<usize> = (0..data.tasks.len())
-            .filter(|&i| data.tasks[i].deleted_at.is_none() && data.tasks[i].parent_id.as_deref() == Some(parent_id))
+        let children: std::collections::HashSet<String> = data
+            .tasks
+            .iter()
+            .filter(|t| t.deleted_at.is_none() && t.parent_id.as_deref() == Some(parent_id))
+            .map(|t| t.id.clone())
             .collect();
-        idx.sort_by_key(|&i| data.tasks[i].number);
-        for w in 0..idx.len() {
-            let dep = if sequential && w > 0 { vec![data.tasks[idx[w - 1]].id.clone()] } else { Vec::new() };
-            let t = &mut data.tasks[idx[w]];
-            if t.depends_on != dep {
-                t.depends_on = dep;
+        let now = now_ms();
+        let mut changed = 0;
+        for (id, deps, estimate) in plan {
+            if !children.contains(&id) {
+                continue;
+            }
+            let mut seen = std::collections::HashSet::new();
+            let deps: Vec<String> =
+                deps.into_iter().filter(|d| *d != id && children.contains(d) && seen.insert(d.clone())).collect();
+            let Some(t) = data.tasks.iter_mut().find(|t| t.id == id) else { continue };
+            if t.depends_on != deps || (estimate.is_some() && t.estimate != estimate) {
+                t.depends_on = deps;
+                if estimate.is_some() {
+                    t.estimate = estimate;
+                }
                 t.updated_at = now;
+                changed += 1;
             }
         }
-        self.persist(&data);
-        Ok(())
+        if changed > 0 {
+            self.persist(&data);
+        }
+        changed
     }
 
     // ── Workflow machine hooks (called by the supervisor) ───────────────────
@@ -590,7 +621,7 @@ fn renumber_if_cramped(data: &mut BoardData, column_id: &str) {
 
 // ── Tauri command surface (wrapped in src/lib/api.ts) ────────────────────
 
-fn emit_changed(app: &AppHandle, store: &TaskStore) {
+pub fn emit_changed(app: &AppHandle, store: &TaskStore) {
     let _ = app.emit("tasks:changed", store.snapshot());
 }
 
@@ -649,18 +680,6 @@ pub fn task_link_workspace(
     tasks: State<TaskStore>,
 ) -> Result<(), String> {
     tasks.link_workspace(&task_id, &workspace_id)?;
-    emit_changed(&app, &tasks);
-    Ok(())
-}
-
-#[tauri::command]
-pub fn task_set_subtask_mode(
-    parent_id: String,
-    sequential: bool,
-    app: AppHandle,
-    tasks: State<TaskStore>,
-) -> Result<(), String> {
-    tasks.set_subtask_mode(&parent_id, sequential)?;
     emit_changed(&app, &tasks);
     Ok(())
 }
@@ -846,17 +865,24 @@ mod tests {
         // its first child does.
         assert_eq!(s.next_queued().unwrap().id, c1.id);
 
-        // Sequential mode chains children in creation order.
-        s.set_subtask_mode(&parent.id, true).unwrap();
+        // A blocked-by edit chains c2 behind c1 (self/unknown ids dropped).
+        let dep_patch = |deps: Vec<String>| TaskPatch { depends_on: Some(deps), ..Default::default() };
+        s.update_task(&c2.id, dep_patch(vec![c1.id.clone(), c2.id.clone(), "ghost".into()])).unwrap();
         let snap = s.snapshot();
         let c2s = snap.tasks.iter().find(|t| t.id == c2.id).unwrap();
         assert_eq!(c2s.depends_on, vec![c1.id.clone()]);
         assert_eq!(s.next_queued().unwrap().id, c1.id, "c2 blocked behind c1");
         s.mark_done(&c1.id).unwrap();
         assert_eq!(s.next_queued().unwrap().id, c2.id, "chain drains in order");
-        // Parallel clears the chains.
-        s.set_subtask_mode(&parent.id, false).unwrap();
+        // Clearing the list unblocks.
+        s.update_task(&c2.id, dep_patch(Vec::new())).unwrap();
         assert!(s.snapshot().tasks.iter().find(|t| t.id == c2.id).unwrap().depends_on.is_empty());
+        // Estimates: set, then clear with a negative value.
+        let est = |e: f64| TaskPatch { estimate: Some(e), ..Default::default() };
+        s.update_task(&c2.id, est(2.5)).unwrap();
+        assert_eq!(s.snapshot().tasks.iter().find(|t| t.id == c2.id).unwrap().estimate, Some(2.5));
+        s.update_task(&c2.id, est(-1.0)).unwrap();
+        assert_eq!(s.snapshot().tasks.iter().find(|t| t.id == c2.id).unwrap().estimate, None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

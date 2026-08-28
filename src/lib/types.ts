@@ -649,6 +649,8 @@ export interface Task {
   parentId: string | null;
   /** Queued dispatch waits until every dependency is in the done column. */
   dependsOn: string[];
+  /** Size estimate in hours; null = unset. */
+  estimate: number | null;
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;
@@ -675,6 +677,14 @@ export interface IssueSummary {
   author: string;
   /** RFC3339; the picker lists newest-updated first. */
   updatedAt: string;
+  /** "Estimate" number from a GitHub Projects v2 board — best-effort. */
+  estimate: number | null;
+}
+
+/** `task_suggest_plan` result: AI-applied ordering + estimates. */
+export interface SuggestedPlan {
+  updated: number;
+  notes: string | null;
 }
 
 /** `workspace:notify` — attention taps (turn done / awaiting input /

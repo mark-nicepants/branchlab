@@ -182,6 +182,14 @@ async fn run_loop(
                     let _ = reply.send(raw.as_deref().and_then(parse_generated_setup));
                 });
             }
+            EngineCommand::OneShot { prompt, reply } => {
+                let conn2 = conn.clone();
+                let cwd2 = cwd.clone();
+                let bufs = Arc::clone(&title_bufs);
+                tauri::async_runtime::spawn(async move {
+                    let _ = reply.send(throwaway_prompt(&conn2, cwd2, &bufs, &prompt).await);
+                });
+            }
             EngineCommand::Prompt { inputs } => {
                 let content: Vec<ContentBlock> = inputs.into_iter().map(to_content_block).collect();
                 let conn2 = conn.clone();

@@ -24,6 +24,7 @@ import type {
   ProjectView,
   ServerInfo,
   SidebarWorkspace,
+  SuggestedPlan,
   ToolsStatus,
   Workspace,
 } from "./types";
@@ -519,21 +520,27 @@ export function taskCreate(
   });
 }
 
-/** Rewire a parent's live children: sequential chains their `dependsOn` in
- *  creation (number) order; parallel clears every dependency. */
-export function taskSetSubtaskMode(
-  parentId: string,
-  sequential: boolean,
-): Promise<void> {
-  return invoke<void>("task_set_subtask_mode", { parentId, sequential });
-}
-
-/** Empty strings clear description/projectId; omitted fields are unchanged. */
+/** Empty strings clear description/projectId; a negative `estimate` clears
+ *  it; `dependsOn` replaces the whole blocked-by list (the backend drops
+ *  self/unknown ids); omitted fields are unchanged. */
 export function taskUpdate(
   taskId: string,
-  patch: { title?: string; description?: string; projectId?: string },
+  patch: {
+    title?: string;
+    description?: string;
+    projectId?: string;
+    estimate?: number;
+    dependsOn?: string[];
+  },
 ): Promise<void> {
   return invoke<void>("task_update", { taskId, patch });
+}
+
+/** AI-plan a parent's subtasks (blocked-by ordering + hour estimates) on the
+ *  project's engine. Applies the plan and emits `tasks:changed` itself; can
+ *  take a model round-trip (~10-60s). */
+export function taskSuggestPlan(parentId: string): Promise<SuggestedPlan> {
+  return invoke<SuggestedPlan>("task_suggest_plan", { parentId });
 }
 
 export function taskDelete(taskId: string): Promise<void> {

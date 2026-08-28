@@ -323,6 +323,20 @@ impl ChatManager {
         rx.await.ok().flatten()
     }
 
+    /// One prompt → raw reply text over a throwaway session on the
+    /// workspace's engine (booting it if needed). None on any failure.
+    pub async fn one_shot(&self, workspace_id: &str, cwd: &Path, prompt: String) -> Option<String> {
+        self.ensure(workspace_id, cwd).ok()?;
+        let rx = {
+            let convs = self.inner.convs.lock().unwrap();
+            let engine = convs.get(workspace_id)?.engine.as_ref()?;
+            let (tx, rx) = oneshot::channel();
+            engine.send(EngineCommand::OneShot { prompt, reply: tx });
+            rx
+        };
+        rx.await.ok().flatten()
+    }
+
     pub fn abort(&self, workspace_id: &str) {
         let mut convs = self.inner.convs.lock().unwrap();
         if let Some(conv) = convs.get_mut(workspace_id) {

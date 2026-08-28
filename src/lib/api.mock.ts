@@ -30,6 +30,7 @@ import type {
   ServerInfo,
   SessionPayload,
   SidebarWorkspace,
+  SuggestedPlan,
   Workspace,
 } from "./types";
 
@@ -576,9 +577,9 @@ export function listProjectIssues(
     setTimeout(
       () =>
         resolve([
-          { number: 61, title: "Add CSV export", body: "Requested by three customers.", url: "https://github.com/acme/repo/issues/61", author: "octocat", updatedAt: "2026-08-27T09:00:00Z" },
-          { number: 42, title: "Dark mode flickers on launch", body: "Steps to reproduce:\n\n- open the app at night\n- **flicker**", url: "https://github.com/acme/repo/issues/42", author: "octocat", updatedAt: "2026-08-20T12:00:00Z" },
-          { number: 57, title: "Migrate settings screen to new design system", body: null, url: "https://github.com/acme/repo/issues/57", author: "hubot", updatedAt: "2026-08-11T08:30:00Z" },
+          { number: 61, title: "Add CSV export", body: "Requested by three customers.", url: "https://github.com/acme/repo/issues/61", author: "octocat", updatedAt: "2026-08-27T09:00:00Z", estimate: 3 },
+          { number: 42, title: "Dark mode flickers on launch", body: "Steps to reproduce:\n\n- open the app at night\n- **flicker**", url: "https://github.com/acme/repo/issues/42", author: "octocat", updatedAt: "2026-08-20T12:00:00Z", estimate: null },
+          { number: 57, title: "Migrate settings screen to new design system", body: null, url: "https://github.com/acme/repo/issues/57", author: "hubot", updatedAt: "2026-08-11T08:30:00Z", estimate: null },
         ]),
       600,
     ),
@@ -1438,16 +1439,16 @@ let boardCols: BoardColumn[] = [
 ];
 let mockTaskNumber = 9;
 let boardTasks: Task[] = [
-  { id: "t1", number: 1, title: "Add dark-mode toggle to settings", description: null, projectId: "p1", columnId: "c1", position: 1024, workspaceId: null, parentId: null, dependsOn: [], createdAt: 0, updatedAt: 0, deletedAt: null },
-  { id: "t2", number: 2, title: "Investigate flaky CI on main", description: "Started after the runner image bump.", projectId: "p1", columnId: "c1", position: 2048, workspaceId: null, parentId: null, dependsOn: [], createdAt: 0, updatedAt: 0, deletedAt: null },
-  { id: "t3", number: 3, title: "Write onboarding docs", description: null, projectId: null, columnId: "c1", position: 3072, workspaceId: null, parentId: null, dependsOn: [], createdAt: 0, updatedAt: 0, deletedAt: null },
-  { id: "t4", number: 4, title: "Refactor the review inbox polling", description: null, projectId: "p2", columnId: "c2", position: 1024, workspaceId: "p1-ws1", parentId: null, dependsOn: [], createdAt: 0, updatedAt: 0, deletedAt: null },
-  { id: "t5", number: 5, title: "Ship v0.3.0", description: null, projectId: "p1", columnId: "c3", position: 1024, workspaceId: null, parentId: null, dependsOn: [], createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t1", number: 1, title: "Add dark-mode toggle to settings", description: null, projectId: "p1", columnId: "c1", position: 1024, workspaceId: null, parentId: null, dependsOn: [], estimate: null, createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t2", number: 2, title: "Investigate flaky CI on main", description: "Started after the runner image bump.", projectId: "p1", columnId: "c1", position: 2048, workspaceId: null, parentId: null, dependsOn: [], estimate: null, createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t3", number: 3, title: "Write onboarding docs", description: null, projectId: null, columnId: "c1", position: 3072, workspaceId: null, parentId: null, dependsOn: [], estimate: null, createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t4", number: 4, title: "Refactor the review inbox polling", description: null, projectId: "p2", columnId: "c2", position: 1024, workspaceId: "p1-ws1", parentId: null, dependsOn: [], estimate: null, createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t5", number: 5, title: "Ship v0.3.0", description: null, projectId: "p1", columnId: "c3", position: 1024, workspaceId: null, parentId: null, dependsOn: [], estimate: null, createdAt: 0, updatedAt: 0, deletedAt: null },
   // Subtasks demo: one parent with a done, a working (linked), and a blocked child.
-  { id: "t6", number: 6, title: "Client feedback batch", description: "Round 2 of the pilot feedback.", projectId: "p1", columnId: "c2", position: 2048, workspaceId: null, parentId: null, dependsOn: [], createdAt: 0, updatedAt: 0, deletedAt: null },
-  { id: "t7", number: 7, title: "Fix header contrast on dark mode", description: null, projectId: "p1", columnId: "c3", position: 2048, workspaceId: null, parentId: "t6", dependsOn: [], createdAt: 0, updatedAt: 0, deletedAt: null },
-  { id: "t8", number: 8, title: "Update the empty states", description: null, projectId: "p1", columnId: "c2", position: 3072, workspaceId: "p1-ws2", parentId: "t6", dependsOn: [], createdAt: 0, updatedAt: 0, deletedAt: null },
-  { id: "t9", number: 9, title: "Polish the onboarding copy", description: null, projectId: "p1", columnId: "c1", position: 4096, workspaceId: null, parentId: "t6", dependsOn: ["t8"], createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t6", number: 6, title: "Client feedback batch", description: "Round 2 of the pilot feedback.", projectId: "p1", columnId: "c2", position: 2048, workspaceId: null, parentId: null, dependsOn: [], estimate: null, createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t7", number: 7, title: "Fix header contrast on dark mode", description: null, projectId: "p1", columnId: "c3", position: 2048, workspaceId: null, parentId: "t6", dependsOn: [], estimate: null, createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t8", number: 8, title: "Update the empty states", description: null, projectId: "p1", columnId: "c2", position: 3072, workspaceId: "p1-ws2", parentId: "t6", dependsOn: [], estimate: 2, createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t9", number: 9, title: "Polish the onboarding copy", description: null, projectId: "p1", columnId: "c1", position: 4096, workspaceId: null, parentId: "t6", dependsOn: ["t8"], estimate: null, createdAt: 0, updatedAt: 0, deletedAt: null },
 ];
 
 function boardSnap(): BoardSnapshot {
@@ -1498,6 +1499,7 @@ export function taskCreate(
     workspaceId: null,
     parentId: parent?.id ?? null,
     dependsOn: [],
+    estimate: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
     deletedAt: null,
@@ -1507,27 +1509,39 @@ export function taskCreate(
   return Promise.resolve(task);
 }
 
-/** Mirror the backend: rewrite the live children's deps as a chain in
- *  creation (number) order, or clear them all. */
-export function taskSetSubtaskMode(
-  parentId: string,
-  sequential: boolean,
-): Promise<void> {
+/** Mirror the backend "AI" plan: chain the parent's children sequentially in
+ *  creation (number) order and set escalating hour estimates, after a short
+ *  delay so the button's loading state is visible. */
+export function taskSuggestPlan(parentId: string): Promise<SuggestedPlan> {
   const kids = boardTasks
     .filter((t) => t.parentId === parentId)
     .sort((a, b) => a.number - b.number);
-  boardTasks = boardTasks.map((t) => {
-    const i = kids.findIndex((k) => k.id === t.id);
-    if (i < 0) return t;
-    return { ...t, dependsOn: sequential && i > 0 ? [kids[i - 1].id] : [] };
-  });
-  emitBoard();
-  return Promise.resolve();
+  return new Promise((resolve) =>
+    setTimeout(() => {
+      boardTasks = boardTasks.map((t) => {
+        const i = kids.findIndex((k) => k.id === t.id);
+        if (i < 0) return t;
+        return {
+          ...t,
+          dependsOn: i > 0 ? [kids[i - 1].id] : [],
+          estimate: i + 1,
+        };
+      });
+      emitBoard();
+      resolve({ updated: kids.length, notes: "Chained by number (mock)" });
+    }, 600),
+  );
 }
 
 export function taskUpdate(
   taskId: string,
-  patch: { title?: string; description?: string; projectId?: string },
+  patch: {
+    title?: string;
+    description?: string;
+    projectId?: string;
+    estimate?: number;
+    dependsOn?: string[];
+  },
 ): Promise<void> {
   boardTasks = boardTasks.map((t) =>
     t.id === taskId
@@ -1542,6 +1556,20 @@ export function taskUpdate(
             patch.projectId !== undefined
               ? patch.projectId || null
               : t.projectId,
+          // Negative = the unset sentinel (JSON has no "clear this field").
+          estimate:
+            patch.estimate !== undefined
+              ? patch.estimate >= 0
+                ? patch.estimate
+                : null
+              : t.estimate,
+          // Whole-list replace; drop self/unknown ids like the backend.
+          dependsOn:
+            patch.dependsOn !== undefined
+              ? patch.dependsOn.filter(
+                  (id) => id !== taskId && boardTasks.some((o) => o.id === id),
+                )
+              : t.dependsOn,
         }
       : t,
   );

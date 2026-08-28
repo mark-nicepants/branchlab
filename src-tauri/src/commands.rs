@@ -140,6 +140,101 @@ pub async fn task_start(task_id: String, supervisor: State<'_, Supervisor>) -> R
     supervisor.start_task(&task_id)
 }
 
+/// AI plan for a parent task's subtasks: propose blocked-by ordering and
+/// hour estimates over a throwaway session on the project's base engine, and
+/// apply them to the board. Returns the model's one-line rationale.
+#[tauri::command]
+pub async fn task_suggest_plan(
+    parent_id: String,
+    app: tauri::AppHandle,
+    registry: State<'_, Registry>,
+    chat: State<'_, crate::chat::manager::ChatManager>,
+    tasks: State<'_, crate::tasks::TaskStore>,
+) -> Result<SuggestedPlan, String> {
+    let snap = tasks.snapshot();
+    let parent = snap.tasks.iter().find(|t| t.id == parent_id).ok_or("unknown task")?;
+    let children: Vec<_> = snap.tasks.iter().filter(|t| t.parent_id.as_deref() == Some(parent_id.as_str())).collect();
+    if children.len() < 2 {
+        return Err("add at least two subtasks first".into());
+    }
+    let project_id =
+        parent.project_id.clone().ok_or("give the task a project first — the AI runs on the project's engine")?;
+    let base = registry.base_workspace(&project_id).ok_or("unknown project")?;
+
+    let mut listing = String::new();
+    for c in &children {
+        listing.push_str(&format!("- #{}: {}", c.number, c.title));
+        if let Some(d) = &c.description {
+            listing.push_str(&format!(" — {}", d.replace('\n', " ")));
+        }
+        listing.push('\n');
+    }
+    let prompt = format!(
+        "You are planning subtasks of the development task \"{}\"{} in this repository.\n\nSubtasks:\n{}\n\
+         For each subtask, decide which sibling subtasks (if any) must be finished before it can start, and \
+         estimate its size in hours (fractions allowed). Independent subtasks get an empty blockedBy so they can \
+         run in parallel; only add an ordering the work genuinely requires. Skim the repository if that helps.\n\n\
+         Reply with ONLY this JSON, no prose:\n\
+         {{\"tasks\":[{{\"number\":1,\"blockedBy\":[2],\"estimate\":1.5}}],\"notes\":\"<one sentence on the ordering>\"}}",
+        parent.title,
+        parent.description.as_deref().map(|d| format!(" ({d})")).unwrap_or_default(),
+        listing,
+    );
+
+    let raw = chat
+        .one_shot(&base.id, std::path::Path::new(&base.path), prompt)
+        .await
+        .ok_or("the model did not return a usable plan")?;
+    let parsed = parse_suggested_plan(&raw).ok_or("the model did not return a usable plan")?;
+
+    let by_number: std::collections::HashMap<u64, String> = children.iter().map(|c| (c.number, c.id.clone())).collect();
+    let plan: Vec<(String, Vec<String>, Option<f64>)> = parsed
+        .tasks
+        .into_iter()
+        .filter_map(|t| {
+            let id = by_number.get(&t.number)?.clone();
+            let deps = t.blocked_by.iter().filter_map(|n| by_number.get(n).cloned()).collect();
+            Some((id, deps, t.estimate.filter(|e| *e > 0.0)))
+        })
+        .collect();
+    let updated = tasks.apply_plan(&parent_id, plan);
+    if updated > 0 {
+        crate::tasks::emit_changed(&app, &tasks);
+    }
+    Ok(SuggestedPlan { updated, notes: parsed.notes.filter(|n| !n.trim().is_empty()) })
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SuggestedPlan {
+    pub updated: usize,
+    pub notes: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct RawPlan {
+    #[serde(default)]
+    tasks: Vec<RawPlanTask>,
+    #[serde(default)]
+    notes: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawPlanTask {
+    number: u64,
+    #[serde(default)]
+    blocked_by: Vec<u64>,
+    #[serde(default)]
+    estimate: Option<f64>,
+}
+
+fn parse_suggested_plan(raw: &str) -> Option<RawPlan> {
+    let start = raw.find('{')?;
+    let end = raw.rfind('}')?;
+    serde_json::from_str(&raw[start..=end]).ok()
+}
+
 /// Open issues for a project's repo (the task board's GitHub import picker).
 #[tauri::command]
 pub async fn list_project_issues(
@@ -151,7 +246,12 @@ pub async fn list_project_issues(
     let override_id = registry.project_account_id(&project_id);
     let (account, owner, repo) = github.resolve_account(&root, override_id.as_deref())?;
     let client = github.client_for(&account.id)?;
-    client.list_open_issues(&owner, &repo).await
+    let mut issues = client.list_open_issues(&owner, &repo).await?;
+    let estimates = client.issue_estimates(&owner, &repo).await;
+    for i in &mut issues {
+        i.estimate = estimates.get(&i.number).copied();
+    }
+    Ok(issues)
 }
 
 /// Check a PR out into a fresh worktree and register it as a workspace.

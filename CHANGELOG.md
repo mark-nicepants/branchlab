@@ -10,12 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Tasks can have subtasks: open a task and add them one by one (or paste a
-  whole list to split it into subtasks), then run them Sequential — each
-  waits for the previous, shown as an "after #N" chip — or Parallel. A
-  parent card shows child progress (bar, done count, how many are running)
-  and clicking it drills into a board of just its children (Esc goes back);
-  when the last child lands in Done, a toast offers moving the parent there
-  too.
+  whole list to split it into subtasks). A "Suggest plan" button asks the AI
+  to order them — which subtask is blocked by which, shown as "after #N"
+  chips — and estimate their hours. A parent card shows a full-width subtask
+  bar with one status-colored segment per child (done, in review, active,
+  todo) plus a done count; clicking the bar drills into a board of just the
+  children (Esc goes back), and when the last child lands in Done, a toast
+  offers moving the parent there too.
+- Every task can carry an hour estimate and explicit "Blocked by" / "Blocks"
+  relationships, edited right in the task dialog — and importing a GitHub
+  issue brings along its Estimate from any GitHub Projects board it sits on.
 - Task cards got a GitHub-Projects-style redesign: a state glyph
   (todo / queued / working / review / done), the project + task number
   reference line, and compact chips for live status, the PR with its CI

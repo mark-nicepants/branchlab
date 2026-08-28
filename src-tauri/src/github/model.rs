@@ -105,6 +105,9 @@ pub struct IssueSummary {
     pub author: String,
     /// RFC3339 — the picker sorts newest-updated first.
     pub updated_at: String,
+    /// A "Estimate" number field from any Projects v2 board the issue sits
+    /// on — best-effort (needs the `read:project` scope), None otherwise.
+    pub estimate: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -49,6 +49,13 @@ pub enum EngineCommand {
         context: String,
         reply: oneshot::Sender<Option<GeneratedSetup>>,
     },
+    /// One raw prompt → collected reply text on a throwaway session (same
+    /// mechanics as GenerateTitle). The caller owns prompt building and
+    /// response parsing. Replies with None on failure.
+    OneShot {
+        prompt: String,
+        reply: oneshot::Sender<Option<String>>,
+    },
     Cancel,
     Shutdown,
 }

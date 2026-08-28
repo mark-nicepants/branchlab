@@ -4,10 +4,11 @@
 // apply optimistically in between. Ordering uses fractional positions — the
 // frontend computes midpoints, the backend renumbers when gaps exhaust.
 //
-// Subtasks: a task with live children is a "parent" — its card shows child
-// progress and clicking it drills down to a board of just its children. The
-// backend never dispatches parents; children carry `dependsOn` chains when
-// the parent runs sequentially.
+// Subtasks: a task with live children is a "parent" — its card shows a
+// status-colored subtask bar, and clicking that bar drills down to a board of
+// just its children (clicking the card itself opens the edit dialog, like any
+// card). The backend never dispatches parents; children carry `dependsOn`
+// chains ("Suggest plan" asks the AI to order + estimate them).
 //
 // HTML5 drag-and-drop requires `dragDropEnabled: false` on the Tauri window
 // (tauri.conf.json) — with it on, WKWebView's native file-drop interception
@@ -31,6 +32,8 @@ import {
   Pencil,
   Play,
   Plus,
+  Sparkles,
+  X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -42,7 +45,7 @@ import {
   taskCreate,
   taskDelete,
   taskMove,
-  taskSetSubtaskMode,
+  taskSuggestPlan,
   taskUpdate,
 } from "../../lib/api";
 import { onTasksChanged } from "../../lib/events";
@@ -92,7 +95,6 @@ import {
 import { MarkdownEditor } from "@/components/MarkdownEditor";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Segmented, SegmentedItem } from "@/components/ui/segmented";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -160,16 +162,6 @@ interface BoardCtx {
 }
 
 const byNumber = (a: Task, b: Task) => a.number - b.number;
-
-/** Sequential iff every non-first child (by number) depends on exactly the
- *  previous one. Fewer than two children reads as parallel (nothing chained). */
-function isSequential(children: Task[]): boolean {
-  if (children.length < 2) return false;
-  const sorted = [...children].sort(byNumber);
-  return sorted
-    .slice(1)
-    .every((c, i) => c.dependsOn.length === 1 && c.dependsOn[0] === sorted[i].id);
-}
 
 /** First dependency that still exists and hasn't reached a done column. */
 function firstUnmetDep(task: Task, ctx: BoardCtx): Task | null {
@@ -472,10 +464,8 @@ export function MyWorkScreen({
       if (isOpenKey) {
         if (ci >= 0) {
           e.preventDefault();
-          const t = grid[ci][ri];
-          // Parents open their drill-down, like clicking the card.
-          if (boardCtx.childrenByParent.has(t.id)) setDrillParentId(t.id);
-          else setDialog({ mode: "edit", task: t });
+          // Every card opens its dialog; the subtask bar drills into parents.
+          setDialog({ mode: "edit", task: grid[ci][ri] });
         }
         return;
       }
@@ -506,7 +496,7 @@ export function MyWorkScreen({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [grid, focusedId, dialog, board.columns, drillParentId, boardCtx]);
+  }, [grid, focusedId, dialog, board.columns, drillParentId]);
 
   const drillChildren = drillParentId
     ? (boardCtx.childrenByParent.get(drillParentId) ?? [])
@@ -989,6 +979,61 @@ function DepChip({ number }: { number: number }) {
   );
 }
 
+// Segmented subtask bar: sort + color order, done → todo, so it reads like
+// a progress bar even though every child keeps its own segment.
+const SEG_ORDER: Record<CardState, number> = {
+  done: 0,
+  review: 1,
+  working: 2,
+  queued: 3,
+  todo: 3,
+};
+const SEG_COLOR: Record<CardState, string> = {
+  done: "bg-additions",
+  review: "bg-[#a371f7]", // GitHub's review purple (no theme token)
+  working: "bg-warning",
+  queued: "bg-accent",
+  todo: "bg-accent",
+};
+
+/** A parent card's full-width subtask bar: one status-colored segment per
+ *  child + a done count. Clicking it drills into the children's board. */
+function SubtaskBar({
+  subtasks,
+  ctx,
+  doneCount,
+  onDrill,
+}: {
+  subtasks: Task[];
+  ctx: BoardCtx;
+  doneCount: number;
+  onDrill: () => void;
+}) {
+  const states = subtasks
+    .map((c) => deriveState(c, ctx.roleById.get(c.columnId) ?? "none"))
+    .sort((a, b) => SEG_ORDER[a] - SEG_ORDER[b]);
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        onDrill();
+      }}
+      aria-label="Open subtasks"
+      title="Open subtasks"
+      className="group/subtasks mt-2 flex w-full items-center gap-1.5"
+    >
+      <span className="flex h-1 min-w-0 flex-1 gap-px overflow-hidden rounded-full transition-[filter] group-hover/subtasks:brightness-125">
+        {states.map((s, i) => (
+          <span key={i} className={cn("h-full flex-1", SEG_COLOR[s])} />
+        ))}
+      </span>
+      <span className="shrink-0 text-[10px] text-muted-foreground group-hover/subtasks:underline">
+        {doneCount}/{subtasks.length}
+      </span>
+    </button>
+  );
+}
+
 function TaskCard({
   task,
   columnRole,
@@ -1040,9 +1085,6 @@ function TaskCard({
   const doneKids = children.filter(
     (c) => ctx.roleById.get(c.columnId) === "done",
   ).length;
-  const runningKids = children.filter(
-    (c) => c.workspaceId && ctx.roleById.get(c.columnId) === "active",
-  ).length;
 
   const showPr =
     !isParent && workspace && pr?.status && pr.status.state === "OPEN"
@@ -1052,7 +1094,7 @@ function TaskCard({
     !isParent && !!workspace && (diffStat?.files ?? 0) > 0 && state !== "done";
   const showArchive = !isParent && !!task.workspaceId && !workspace;
   const hasFooter =
-    isParent || showPr !== null || showDiff || showArchive || unmetDep !== null;
+    showPr !== null || showDiff || showArchive || unmetDep !== null;
 
   const card = (
     <div
@@ -1067,9 +1109,8 @@ function TaskCard({
       onDragEnd={() => onDragStateChange(null, null)}
       onClick={() => {
         onFocus(task.id);
-        // Parents drill into their children; Edit… stays on the context menu.
-        if (isParent) onDrill(task.id);
-        else onEdit(task);
+        // Every card opens its dialog; the subtask bar drills into parents.
+        onEdit(task);
       }}
       className={cn(
         "group/card cursor-pointer rounded-md border bg-card px-3 py-2.5 shadow-sm transition-opacity hover:bg-accent/40",
@@ -1081,28 +1122,16 @@ function TaskCard({
         dragging && "opacity-40",
       )}
     >
-      {/* Header: state glyph + muted "project #N" ref + live status. */}
+      {/* Header: state glyph + muted "project #N" ref; the top-right slot is
+          always the live session chip's home (empty for parents, which have
+          no session of their own). */}
       <div className="flex items-center gap-1.5">
         <StateIcon state={state} />
         <span className="min-w-0 flex-1 truncate text-[11.5px] text-muted-foreground">
           {projectName && <>{projectName} </>}
           <span className="font-mono">#{task.number}</span>
         </span>
-        {isParent ? (
-          <span className="flex shrink-0 items-center gap-1.5">
-            <span className="h-1 w-11 overflow-hidden rounded-full bg-accent">
-              <span
-                className="block h-full rounded-full bg-additions"
-                style={{
-                  width: `${Math.round((doneKids / children.length) * 100)}%`,
-                }}
-              />
-            </span>
-            <span className="text-[10px] text-muted-foreground">
-              {doneKids}/{children.length}
-            </span>
-          </span>
-        ) : (
+        {!isParent && (
           <StatusChip
             state={state}
             workspace={workspace}
@@ -1115,43 +1144,41 @@ function TaskCard({
 
       <div className="mt-1 text-sm font-medium leading-snug">{task.title}</div>
 
+      {isParent && (
+        <SubtaskBar
+          subtasks={children}
+          ctx={ctx}
+          doneCount={doneKids}
+          onDrill={() => onDrill(task.id)}
+        />
+      )}
+
       {hasFooter && (
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          {isParent ? (
-            <span className={cn(CHIP, "border-border text-muted-foreground")}>
-              {runningKids} running ·{" "}
-              {isSequential(children) ? "sequential" : "parallel"}
+          {showPr && <PrChip status={showPr} />}
+          {showDiff && diffStat && (
+            <span className="flex items-center gap-1 text-[10.5px] text-muted-foreground">
+              <span className="text-additions">+{diffStat.insertions}</span>
+              <span className="text-deletions">−{diffStat.deletions}</span>
             </span>
-          ) : (
-            <>
-              {showPr && <PrChip status={showPr} />}
-              {showDiff && diffStat && (
-                <span className="flex items-center gap-1 text-[10.5px] text-muted-foreground">
-                  <span className="text-additions">
-                    +{diffStat.insertions}
-                  </span>
-                  <span className="text-deletions">−{diffStat.deletions}</span>
-                </span>
-              )}
-              {showArchive && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onOpenArchive(task);
-                  }}
-                  className={cn(
-                    CHIP,
-                    "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
-                  )}
-                  title="The workspace is gone; open the archived conversation"
-                >
-                  <MessageSquare className="size-2.5" />
-                  chat archive
-                </button>
-              )}
-              {unmetDep && <DepChip number={unmetDep.number} />}
-            </>
           )}
+          {showArchive && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenArchive(task);
+              }}
+              className={cn(
+                CHIP,
+                "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
+              )}
+              title="The workspace is gone; open the archived conversation"
+            >
+              <MessageSquare className="size-2.5" />
+              chat archive
+            </button>
+          )}
+          {unmetDep && <DepChip number={unmetDep.number} />}
         </div>
       )}
     </div>
@@ -1218,6 +1245,8 @@ function TaskCreateDialog({
   const [issuesOpen, setIssuesOpen] = useState(false);
   const [issues, setIssues] = useState<IssueSummary[] | null>(null);
   const [loadingIssues, setLoadingIssues] = useState(false);
+  /** GitHub Projects estimate carried from the imported issue, if any. */
+  const [importEstimate, setImportEstimate] = useState<number | null>(null);
 
   const openIssuePicker = (open: boolean) => {
     setIssuesOpen(open);
@@ -1246,6 +1275,7 @@ function TaskCreateDialog({
         .join("\n")
         .trim(),
     );
+    setImportEstimate(issue.estimate);
     setIssuesOpen(false);
   };
 
@@ -1258,6 +1288,13 @@ function TaskCreateDialog({
       columnId: state.columnId,
       parentId: state.parentId ?? undefined,
     })
+      .then((created) =>
+        // taskCreate has no estimate arg — the imported issue's GitHub
+        // Projects estimate lands via a follow-up patch.
+        importEstimate !== null
+          ? taskUpdate(created.id, { estimate: importEstimate })
+          : undefined,
+      )
       .then(onClose)
       .catch((e) =>
         toast.error("Could not save task", { description: String(e) }),
@@ -1488,6 +1525,8 @@ function TaskEditDialog({
             </select>
           </Field>
 
+          <TaskMetaRow task={task} ctx={ctx} />
+
           <div className="group/desc flex flex-col gap-1.5">
             <div className="flex items-center gap-1.5">
               <span className="text-xs font-medium text-muted-foreground">
@@ -1553,7 +1592,206 @@ function TaskEditDialog({
   );
 }
 
-/** Subtask list + Sequential/Parallel mode + rapid add input. */
+/** Compact metadata row (interim — a popup redesign comes later): the hour
+ *  estimate plus both directions of the blocked-by relation. Every field
+ *  commits independently; the board snapshot renders the result back live. */
+function TaskMetaRow({ task, ctx }: { task: Task; ctx: BoardCtx }) {
+  const fail = (e: unknown) =>
+    toast.error("Could not save task", { description: String(e) });
+
+  // Dependency candidates: peers only — siblings for a subtask, other
+  // top-level tasks otherwise — excluding itself and done-column tasks.
+  const live = [...ctx.taskById.values()];
+  const peers = live
+    .filter(
+      (t) =>
+        t.id !== task.id &&
+        t.parentId === task.parentId &&
+        ctx.roleById.get(t.columnId) !== "done",
+    )
+    .sort(byNumber);
+  const blockedBy = task.dependsOn
+    .map((id) => ctx.taskById.get(id))
+    .filter((t): t is Task => t !== undefined);
+  const blocks = live.filter((t) => t.dependsOn.includes(task.id)).sort(byNumber);
+
+  return (
+    <div className="flex flex-wrap items-start gap-8">
+      <Field label="Estimate">
+        <EstimateInput task={task} onError={fail} />
+      </Field>
+      <Field label="Blocked by">
+        <div className="flex min-h-8 flex-wrap items-center gap-1.5">
+          {blockedBy.map((dep) => (
+            <DepEditChip
+              key={dep.id}
+              task={dep}
+              onRemove={() =>
+                taskUpdate(task.id, {
+                  dependsOn: task.dependsOn.filter((id) => id !== dep.id),
+                }).catch(fail)
+              }
+            />
+          ))}
+          <DepPicker
+            candidates={peers.filter((t) => !task.dependsOn.includes(t.id))}
+            onSelect={(dep) =>
+              taskUpdate(task.id, {
+                dependsOn: [...task.dependsOn, dep.id],
+              }).catch(fail)
+            }
+          />
+        </div>
+      </Field>
+      <Field label="Blocks">
+        <div className="flex min-h-8 flex-wrap items-center gap-1.5">
+          {blocks.map((other) => (
+            <DepEditChip
+              key={other.id}
+              task={other}
+              onRemove={() =>
+                taskUpdate(other.id, {
+                  dependsOn: other.dependsOn.filter((id) => id !== task.id),
+                }).catch(fail)
+              }
+            />
+          ))}
+          <DepPicker
+            candidates={peers.filter((t) => !t.dependsOn.includes(task.id))}
+            onSelect={(other) =>
+              taskUpdate(other.id, {
+                dependsOn: [...other.dependsOn, task.id],
+              }).catch(fail)
+            }
+          />
+        </div>
+      </Field>
+    </div>
+  );
+}
+
+/** Hour-estimate input: commits on blur/Enter; clearing it commits the
+ *  negative unset sentinel. */
+function EstimateInput({
+  task,
+  onError,
+}: {
+  task: Task;
+  onError: (e: unknown) => void;
+}) {
+  const [draft, setDraft] = useState(task.estimate?.toString() ?? "");
+  // Re-sync when another commit (or Suggest plan) changes the live value.
+  useEffect(() => setDraft(task.estimate?.toString() ?? ""), [task.estimate]);
+
+  const commit = () => {
+    const trimmed = draft.trim();
+    if (trimmed === "") {
+      if (task.estimate !== null)
+        taskUpdate(task.id, { estimate: -1 }).catch(onError);
+      return;
+    }
+    const value = Number(trimmed);
+    if (!Number.isFinite(value) || value < 0) {
+      setDraft(task.estimate?.toString() ?? "");
+      return;
+    }
+    if (value !== task.estimate)
+      taskUpdate(task.id, { estimate: value }).catch(onError);
+  };
+
+  return (
+    <div className="relative w-24">
+      <Input
+        type="number"
+        min={0}
+        step={0.5}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === "Enter" && commit()}
+        placeholder="—"
+        className="h-8 pr-7 text-sm"
+      />
+      <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+        h
+      </span>
+    </div>
+  );
+}
+
+/** Removable `#N title` chip for the Blocked by / Blocks lists. */
+function DepEditChip({ task, onRemove }: { task: Task; onRemove: () => void }) {
+  return (
+    <span
+      className={cn(CHIP, "max-w-44 border-border text-muted-foreground")}
+      title={`#${task.number} ${task.title}`}
+    >
+      <span className="shrink-0 font-mono">#{task.number}</span>
+      <span className="min-w-0 truncate">{task.title}</span>
+      <button
+        onClick={onRemove}
+        className="shrink-0 rounded-full hover:text-foreground"
+        title="Remove"
+      >
+        <X className="size-2.5" />
+      </button>
+    </span>
+  );
+}
+
+/** "+ Add" dependency picker: a searchable popover over the candidate peers
+ *  (same pattern as the GitHub issue import picker). */
+function DepPicker({
+  candidates,
+  onSelect,
+}: {
+  candidates: Task[];
+  onSelect: (t: Task) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          className={cn(
+            CHIP,
+            "border-dashed border-border text-muted-foreground hover:bg-accent hover:text-foreground",
+          )}
+          title="Add a task"
+        >
+          <Plus className="size-2.5" />
+          Add
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-72 p-0">
+        <Command>
+          <CommandInput placeholder="Search tasks…" />
+          <CommandList className="max-h-56">
+            <CommandEmpty>No matching tasks.</CommandEmpty>
+            {candidates.map((t) => (
+              <CommandItem
+                key={t.id}
+                value={`#${t.number} ${t.title}`}
+                onSelect={() => {
+                  setOpen(false);
+                  onSelect(t);
+                }}
+                className="gap-2"
+              >
+                <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                  #{t.number}
+                </span>
+                <span className="min-w-0 flex-1 truncate">{t.title}</span>
+              </CommandItem>
+            ))}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** Subtask list + AI "Suggest plan" + rapid add input. */
 function SubtasksSection({
   task,
   ctx,
@@ -1572,16 +1810,29 @@ function SubtasksSection({
   const children = [...(ctx.childrenByParent.get(task.id) ?? [])].sort(
     byNumber,
   );
-  const sequential = isSequential(children);
   const [draft, setDraft] = useState("");
+  const [planning, setPlanning] = useState(false);
 
   const fail = (e: unknown) =>
     toast.error("Could not add subtask", { description: String(e) });
 
-  /** Create in order (numbers follow creation), then re-chain if sequential. */
+  /** Create in order — numbers follow creation. */
   const add = async (titles: string[]) => {
     for (const title of titles) await taskCreate(title, { parentId: task.id });
-    if (sequential) await taskSetSubtaskMode(task.id, true);
+  };
+
+  const suggestPlan = () => {
+    setPlanning(true);
+    taskSuggestPlan(task.id)
+      .then(({ updated, notes }) =>
+        toast.success(`Planned ${updated} subtasks`, {
+          description: notes ?? undefined,
+        }),
+      )
+      .catch((e) =>
+        toast.error("Could not suggest a plan", { description: String(e) }),
+      )
+      .finally(() => setPlanning(false));
   };
 
   return (
@@ -1591,26 +1842,20 @@ function SubtasksSection({
           SUBTASKS · {children.length}
         </span>
         <div className="flex-1" />
-        <Segmented>
-          <SegmentedItem
-            active={sequential}
-            onClick={() =>
-              sequential ||
-              taskSetSubtaskMode(task.id, true).catch(fail)
-            }
-          >
-            Sequential
-          </SegmentedItem>
-          <SegmentedItem
-            active={!sequential}
-            onClick={() =>
-              !sequential ||
-              taskSetSubtaskMode(task.id, false).catch(fail)
-            }
-          >
-            Parallel
-          </SegmentedItem>
-        </Segmented>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={suggestPlan}
+          disabled={planning}
+          title="AI orders the subtasks (blocked-by) and estimates their hours"
+        >
+          {planning ? (
+            <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+          ) : (
+            <Sparkles className="mr-1.5 size-3.5" />
+          )}
+          Suggest plan
+        </Button>
       </div>
 
       {children.map((child) => {
@@ -1631,6 +1876,11 @@ function SubtasksSection({
             <span className="min-w-0 flex-1 truncate text-sm">
               {child.title}
             </span>
+            {child.estimate !== null && (
+              <span className="shrink-0 text-[10px] text-muted-foreground">
+                {child.estimate}h
+              </span>
+            )}
             {ws && (
               <StatusChip
                 state={deriveState(child, role)}

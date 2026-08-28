@@ -198,8 +198,42 @@ impl GithubClient {
                 url: i.html_url.to_string(),
                 author: i.user.login,
                 updated_at: i.updated_at.to_rfc3339(),
+                estimate: None,
             })
             .collect())
+    }
+
+    /// Best-effort: number-typed "Estimate" fields from Projects v2 boards,
+    /// keyed by issue number. Empty on any failure (missing `read:project`
+    /// scope, no boards) — callers merge and move on, never surface errors.
+    pub async fn issue_estimates(&self, owner: &str, repo: &str) -> std::collections::HashMap<i64, f64> {
+        let body = serde_json::json!({
+            "query": ISSUE_ESTIMATES_QUERY,
+            "variables": { "owner": owner, "repo": repo },
+        });
+        let Ok(resp): Result<serde_json::Value, _> = Self::timed(self.crab.graphql(&body)).await else {
+            return Default::default();
+        };
+        let mut out = std::collections::HashMap::new();
+        let nodes =
+            resp.pointer("/data/repository/issues/nodes").and_then(|n| n.as_array()).cloned().unwrap_or_default();
+        for issue in nodes {
+            let Some(number) = issue.get("number").and_then(|n| n.as_i64()) else { continue };
+            let items = issue.pointer("/projectItems/nodes").and_then(|n| n.as_array()).cloned().unwrap_or_default();
+            'issue: for item in items {
+                let fields = item.pointer("/fieldValues/nodes").and_then(|n| n.as_array()).cloned().unwrap_or_default();
+                for f in fields {
+                    let name = f.pointer("/field/name").and_then(|n| n.as_str()).unwrap_or_default();
+                    if name.eq_ignore_ascii_case("estimate") {
+                        if let Some(v) = f.get("number").and_then(|n| n.as_f64()) {
+                            out.insert(number, v);
+                            break 'issue;
+                        }
+                    }
+                }
+            }
+        }
+        out
     }
 
     pub async fn list_open_prs(&self, owner: &str, repo: &str) -> Result<Vec<PrSummary>, String> {
@@ -356,6 +390,30 @@ fn parse_pr_summary(n: &serde_json::Value, bucket: &str) -> Option<PrSummary> {
 }
 
 /// Three aliased repo-scoped searches (mine / review-requested / assigned).
+const ISSUE_ESTIMATES_QUERY: &str = r#"
+query($owner: String!, $repo: String!) {
+  repository(owner: $owner, name: $repo) {
+    issues(states: OPEN, first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes {
+        number
+        projectItems(first: 5) {
+          nodes {
+            fieldValues(first: 20) {
+              nodes {
+                ... on ProjectV2ItemFieldNumberValue {
+                  number
+                  field { ... on ProjectV2FieldCommon { name } }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"#;
+
 const LIST_PRS_QUERY: &str = r#"
 query($mine:String!,$review:String!,$assigned:String!){
   mine: search(query:$mine, type:ISSUE, first:30){ nodes{ ...prsum } }
