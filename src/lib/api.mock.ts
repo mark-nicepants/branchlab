@@ -9,6 +9,7 @@ import type {
   BoardColumn,
   BoardSnapshot,
   Task,
+  TaskAttachment,
   UnlinkedTask,
   IssueSummary,
   ChatAttachment,
@@ -1448,17 +1449,18 @@ let boardCols: BoardColumn[] = [
 ];
 let mockTaskNumber = 9;
 let boardTasks: Task[] = [
-  { id: "t1", number: 1, title: "Add dark-mode toggle to settings", description: null, projectId: "p1", columnId: "c1", position: 1024, workspaceId: null, parentId: null, dependsOn: [], estimate: null, createdAt: 0, updatedAt: 0, deletedAt: null },
-  { id: "t2", number: 2, title: "Investigate flaky CI on main", description: "Started after the runner image bump.", projectId: "p1", columnId: "c1", position: 2048, workspaceId: null, parentId: null, dependsOn: [], estimate: null, createdAt: 0, updatedAt: 0, deletedAt: null },
-  { id: "t3", number: 3, title: "Write onboarding docs", description: null, projectId: null, columnId: "c1", position: 3072, workspaceId: null, parentId: null, dependsOn: [], estimate: null, createdAt: 0, updatedAt: 0, deletedAt: null },
-  { id: "t4", number: 4, title: "Refactor the review inbox polling", description: null, projectId: "p2", columnId: "c2", position: 1024, workspaceId: "p1-ws1", parentId: null, dependsOn: [], estimate: null, createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t1", number: 1, title: "Add dark-mode toggle to settings", description: null, projectId: "p1", columnId: "c1", position: 1024, workspaceId: null, parentId: null, dependsOn: [], estimate: null, attachments: [], createdAt: 0, updatedAt: 0, deletedAt: null },
+  // Demo attachment: exercises the edit dialog's chip list in the harness.
+  { id: "t2", number: 2, title: "Investigate flaky CI on main", description: "Started after the runner image bump.", projectId: "p1", columnId: "c1", position: 2048, workspaceId: null, parentId: null, dependsOn: [], estimate: null, attachments: [{ id: "att-seed", name: "ci-failure-log.txt", size: 48_213, createdAt: 0 }], createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t3", number: 3, title: "Write onboarding docs", description: null, projectId: null, columnId: "c1", position: 3072, workspaceId: null, parentId: null, dependsOn: [], estimate: null, attachments: [], createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t4", number: 4, title: "Refactor the review inbox polling", description: null, projectId: "p2", columnId: "c2", position: 1024, workspaceId: "p1-ws1", parentId: null, dependsOn: [], estimate: null, attachments: [], createdAt: 0, updatedAt: 0, deletedAt: null },
   // workspaceId points at a cleaned-up workspace → the archived "history" state.
-  { id: "t5", number: 5, title: "Ship v0.3.0", description: null, projectId: "p1", columnId: "c3", position: 1024, workspaceId: "ws-archived", parentId: null, dependsOn: [], estimate: null, createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t5", number: 5, title: "Ship v0.3.0", description: null, projectId: "p1", columnId: "c3", position: 1024, workspaceId: "ws-archived", parentId: null, dependsOn: [], estimate: null, attachments: [], createdAt: 0, updatedAt: 0, deletedAt: null },
   // Subtasks demo: one parent with a done, a working (linked), and a blocked child.
-  { id: "t6", number: 6, title: "Client feedback batch", description: "Round 2 of the pilot feedback.", projectId: "p1", columnId: "c2", position: 2048, workspaceId: null, parentId: null, dependsOn: [], estimate: null, createdAt: 0, updatedAt: 0, deletedAt: null },
-  { id: "t7", number: 7, title: "Fix header contrast on dark mode", description: null, projectId: "p1", columnId: "c3", position: 2048, workspaceId: null, parentId: "t6", dependsOn: [], estimate: null, createdAt: 0, updatedAt: 0, deletedAt: null },
-  { id: "t8", number: 8, title: "Update the empty states", description: null, projectId: "p1", columnId: "c2", position: 3072, workspaceId: "p1-ws2", parentId: "t6", dependsOn: [], estimate: 2, createdAt: 0, updatedAt: 0, deletedAt: null },
-  { id: "t9", number: 9, title: "Polish the onboarding copy", description: null, projectId: "p1", columnId: "c1", position: 4096, workspaceId: null, parentId: "t6", dependsOn: ["t8"], estimate: null, createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t6", number: 6, title: "Client feedback batch", description: "Round 2 of the pilot feedback.", projectId: "p1", columnId: "c2", position: 2048, workspaceId: null, parentId: null, dependsOn: [], estimate: null, attachments: [], createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t7", number: 7, title: "Fix header contrast on dark mode", description: null, projectId: "p1", columnId: "c3", position: 2048, workspaceId: null, parentId: "t6", dependsOn: [], estimate: null, attachments: [], createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t8", number: 8, title: "Update the empty states", description: null, projectId: "p1", columnId: "c2", position: 3072, workspaceId: "p1-ws2", parentId: "t6", dependsOn: [], estimate: 2, attachments: [], createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t9", number: 9, title: "Polish the onboarding copy", description: null, projectId: "p1", columnId: "c1", position: 4096, workspaceId: null, parentId: "t6", dependsOn: ["t8"], estimate: null, attachments: [], createdAt: 0, updatedAt: 0, deletedAt: null },
 ];
 
 let boardEstimateUnit: EstimateUnit = "points";
@@ -1519,6 +1521,7 @@ export function taskCreate(
     parentId: parent?.id ?? null,
     dependsOn: [],
     estimate: null,
+    attachments: [],
     createdAt: Date.now(),
     updatedAt: Date.now(),
     deletedAt: null,
@@ -1633,6 +1636,7 @@ export function taskIntake(
             parentId,
             dependsOn: [],
             estimate: 1,
+            attachments: [],
             createdAt: Date.now(),
             updatedAt: Date.now(),
             deletedAt: null,
@@ -1773,5 +1777,78 @@ export function taskComment(
   }
   emitBoard();
   return Promise.resolve(entry);
+}
+
+// ── Task attachment mocks: in-memory metadata, no bytes stored ──
+
+let mockAttachmentSeq = 0;
+
+/** Push the attachment + the "attached" feed event the backend records. */
+function mockAttach(taskId: string, att: TaskAttachment): Promise<TaskAttachment> {
+  if (!boardTasks.some((t) => t.id === taskId))
+    return Promise.reject("unknown task");
+  boardTasks = boardTasks.map((t) =>
+    t.id === taskId ? { ...t, attachments: [...t.attachments, att] } : t,
+  );
+  mockActivity = [
+    ...mockActivity,
+    { id: activityId(), taskId, kind: "attached", body: att.name, actor: "user", createdAt: Date.now() },
+  ];
+  emitBoard();
+  return Promise.resolve(att);
+}
+
+export function taskAttachData(
+  taskId: string,
+  name: string,
+  data: string,
+): Promise<TaskAttachment> {
+  // Mirror the backend cap (base64 is ~4/3 of the byte size).
+  const size = Math.floor((data.length * 3) / 4);
+  if (size > 25_000_000)
+    return Promise.reject("attachments are capped at 25MB");
+  return mockAttach(taskId, {
+    id: `att-${++mockAttachmentSeq}`,
+    name,
+    size,
+    createdAt: Date.now(),
+  });
+}
+
+export function taskAttachPath(
+  taskId: string,
+  path: string,
+): Promise<TaskAttachment> {
+  return mockAttach(taskId, {
+    id: `att-${++mockAttachmentSeq}`,
+    name: path.split("/").pop() || "file",
+    size: 12_345,
+    createdAt: Date.now(),
+  });
+}
+
+export function taskAttachmentRemove(
+  taskId: string,
+  attachmentId: string,
+): Promise<void> {
+  const att = boardTasks
+    .find((t) => t.id === taskId)
+    ?.attachments.find((a) => a.id === attachmentId);
+  if (!att) return Promise.reject("unknown attachment");
+  boardTasks = boardTasks.map((t) =>
+    t.id === taskId
+      ? { ...t, attachments: t.attachments.filter((a) => a.id !== attachmentId) }
+      : t,
+  );
+  mockActivity = [
+    ...mockActivity,
+    { id: activityId(), taskId, kind: "detached", body: att.name, actor: "user", createdAt: Date.now() },
+  ];
+  emitBoard();
+  return Promise.resolve();
+}
+
+export function taskAttachmentPath(): Promise<string> {
+  return Promise.resolve("/mock/path");
 }
 

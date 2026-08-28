@@ -427,6 +427,64 @@ fn parse_intake(raw: &str) -> Option<RawIntake> {
     serde_json::from_str(&raw[start..=end]).ok()
 }
 
+/// Attach a file to a task from raw base64 (HTML5 drop / paste — WKWebview
+/// files carry no filesystem path).
+#[tauri::command]
+pub async fn task_attach_data(
+    task_id: String,
+    name: String,
+    data: String,
+    app: tauri::AppHandle,
+    tasks: State<'_, crate::tasks::TaskStore>,
+) -> Result<crate::tasks::TaskAttachment, String> {
+    use base64::Engine as _;
+    let bytes =
+        base64::engine::general_purpose::STANDARD.decode(data.as_bytes()).map_err(|e| format!("bad file data: {e}"))?;
+    let att = tasks.add_attachment(&task_id, &name, &bytes)?;
+    crate::tasks::emit_changed(&app, &tasks);
+    Ok(att)
+}
+
+/// Attach a file to a task by filesystem path (the native file picker).
+#[tauri::command]
+pub async fn task_attach_path(
+    task_id: String,
+    path: String,
+    app: tauri::AppHandle,
+    tasks: State<'_, crate::tasks::TaskStore>,
+) -> Result<crate::tasks::TaskAttachment, String> {
+    let bytes = std::fs::read(&path).map_err(|e| format!("cannot read the file: {e}"))?;
+    let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let att = tasks.add_attachment(&task_id, &name, &bytes)?;
+    crate::tasks::emit_changed(&app, &tasks);
+    Ok(att)
+}
+
+#[tauri::command]
+pub fn task_attachment_remove(
+    task_id: String,
+    attachment_id: String,
+    app: tauri::AppHandle,
+    tasks: State<crate::tasks::TaskStore>,
+) -> Result<(), String> {
+    tasks.remove_attachment(&task_id, &attachment_id)?;
+    crate::tasks::emit_changed(&app, &tasks);
+    Ok(())
+}
+
+/// Absolute path of an attachment's bytes (the frontend opens it with the
+/// system default app via the opener plugin).
+#[tauri::command]
+pub fn task_attachment_path(
+    task_id: String,
+    attachment_id: String,
+    tasks: State<crate::tasks::TaskStore>,
+) -> Result<String, String> {
+    let task = tasks.snapshot().tasks.into_iter().find(|t| t.id == task_id).ok_or("unknown task")?;
+    let att = task.attachments.iter().find(|a| a.id == attachment_id).ok_or("unknown attachment")?;
+    Ok(tasks.attachment_file(&task_id, att).to_string_lossy().into_owned())
+}
+
 /// Open issues for a project's repo (the task board's GitHub import picker).
 #[tauri::command]
 pub async fn list_project_issues(

@@ -48,14 +48,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (todo / queued / working / review / done), the project + task number
   reference line, and compact chips for live status, the PR with its CI
   checks, the diff size, and blocked-by dependencies.
+- Tasks can carry file attachments: pick files with the task view's Attach
+  button or drop them anywhere on the description area (25MB per file).
+  Chips under the description open a file with its default app and remove on
+  hover ×; attached files are visible to the task's agent sessions and over
+  MCP, and attach/remove events land in the activity feed.
 - Opening a task now shows a full task view instead of a form: a main column
   with the markdown description (click the title or hover-pencil to edit —
   changes save as you go), the subtasks list with a mini progress bar (click
-  a subtask to open it), and an activity feed — a timeline of everything that happened to the task (created,
-  AI plan, session started, moved to review/done) plus your comments. The
-  composer at the bottom takes plain comments or slash commands: /start
-  [instructions] boots the task's session, /send <message> prompts it, /stop
-  aborts its turn, /done marks the task done.
+  a subtask to open it), and a Linear-style activity feed — every event
+  reads as an actor-prefixed sentence ("You created the task", "Agent
+  finished a turn — moved to Needs review") with comment bubbles from you
+  and the agent in between. The composer at the bottom takes plain comments
+  or slash commands: /start [instructions] boots the task's session, /send
+  <message> prompts it, /stop aborts its turn, /done marks the task done.
 - The task view has a Linear-style properties rail: status/column, project,
   estimate (points/hours edit inline in place; t-shirt sizes pick from a
   list), and blocked-by/blocks as rows with command-menu pickers, a parent

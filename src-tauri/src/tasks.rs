@@ -53,6 +53,17 @@ pub enum EstimateUnit {
     Tshirt,
 }
 
+/// A file attached to a task. Bytes live under app-data
+/// `task-files/<task_id>/<id>-<name>`; this is the metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskAttachment {
+    pub id: String,
+    pub name: String,
+    pub size: u64,
+    pub created_at: i64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum ColumnRole {
@@ -112,6 +123,9 @@ pub struct Task {
     /// GitHub Projects "Estimate" field.
     #[serde(default)]
     pub estimate: Option<f64>,
+    /// Attached files (metadata; bytes under app-data task-files/).
+    #[serde(default)]
+    pub attachments: Vec<TaskAttachment>,
     pub created_at: i64,
     pub updated_at: i64,
     #[serde(default)]
@@ -186,6 +200,10 @@ fn record(data: &mut BoardData, task_id: &str, kind: &str, actor: &str, body: im
         actor: actor.to_string(),
         created_at: now_ms(),
     });
+}
+
+fn sanitize_filename(name: &str) -> String {
+    name.chars().map(|c| if c.is_alphanumeric() || "._-".contains(c) { c } else { '_' }).collect()
 }
 
 fn new_id() -> String {
@@ -278,6 +296,7 @@ impl TaskStore {
             parent_id,
             depends_on: Vec::new(),
             estimate: None,
+            attachments: Vec::new(),
             created_at: now,
             updated_at: now,
             deleted_at: None,
@@ -530,6 +549,63 @@ impl TaskStore {
         Ok(task)
     }
 
+    /// The directory holding a task's attachment bytes.
+    pub fn files_dir(&self, task_id: &str) -> PathBuf {
+        self.file.parent().map(|p| p.to_path_buf()).unwrap_or_default().join("task-files").join(task_id)
+    }
+
+    /// Absolute path of one attachment's bytes.
+    pub fn attachment_file(&self, task_id: &str, att: &TaskAttachment) -> PathBuf {
+        self.files_dir(task_id).join(format!("{}-{}", att.id, sanitize_filename(&att.name)))
+    }
+
+    /// Attach a file: write the bytes, push the metadata, record the event.
+    pub fn add_attachment(&self, task_id: &str, name: &str, bytes: &[u8]) -> Result<TaskAttachment, String> {
+        if bytes.is_empty() {
+            return Err("the file is empty".into());
+        }
+        if bytes.len() > 25_000_000 {
+            return Err("attachments are capped at 25MB".into());
+        }
+        let name = name.trim();
+        let name = if name.is_empty() { "file" } else { name };
+        let att =
+            TaskAttachment { id: new_id(), name: name.to_string(), size: bytes.len() as u64, created_at: now_ms() };
+        let mut data = self.data.lock().unwrap();
+        if !data.tasks.iter().any(|t| t.id == task_id && t.deleted_at.is_none()) {
+            return Err("unknown task".into());
+        }
+        let dir = self.files_dir(task_id);
+        std::fs::create_dir_all(&dir).map_err(|e| format!("cannot store the file: {e}"))?;
+        let path = dir.join(format!("{}-{}", att.id, sanitize_filename(&att.name)));
+        std::fs::write(&path, bytes).map_err(|e| format!("cannot store the file: {e}"))?;
+        let task = live_task(&mut data, task_id)?;
+        task.attachments.push(att.clone());
+        task.updated_at = now_ms();
+        record(&mut data, task_id, "attached", "user", att.name.clone());
+        self.persist(&data);
+        Ok(att)
+    }
+
+    /// Remove an attachment (metadata + bytes).
+    pub fn remove_attachment(&self, task_id: &str, attachment_id: &str) -> Result<(), String> {
+        let mut data = self.data.lock().unwrap();
+        let file = {
+            let task = live_task(&mut data, task_id)?;
+            let Some(pos) = task.attachments.iter().position(|a| a.id == attachment_id) else {
+                return Err("unknown attachment".into());
+            };
+            let att = task.attachments.remove(pos);
+            task.updated_at = now_ms();
+            att
+        };
+        record(&mut data, task_id, "detached", "user", file.name.clone());
+        self.persist(&data);
+        drop(data);
+        let _ = std::fs::remove_file(self.attachment_file(task_id, &file));
+        Ok(())
+    }
+
     /// Look a live task up by its human #number.
     pub fn find_by_number(&self, number: u64) -> Option<Task> {
         self.data.lock().unwrap().tasks.iter().find(|t| t.number == number && t.deleted_at.is_none()).cloned()
@@ -604,6 +680,17 @@ impl TaskStore {
                 .collect();
             if !deps.is_empty() {
                 sent.push_str(&format!("Completed prerequisite tasks: {}.\n", deps.join(", ")));
+            }
+        }
+        if !task.attachments.is_empty() {
+            sent.push_str("Attached files (read them from disk as needed):\n");
+            for a in &task.attachments {
+                sent.push_str(&format!(
+                    "- {} ({} bytes): {}\n",
+                    a.name,
+                    a.size,
+                    self.attachment_file(&task.id, a).display()
+                ));
             }
         }
         // Notes handed to this task (user comments, or findings another
@@ -1202,6 +1289,7 @@ mod tests {
             parent_id: None,
             depends_on: Vec::new(),
             estimate: None,
+            attachments: Vec::new(),
             created_at: 0,
             updated_at: 0,
             deleted_at: None,

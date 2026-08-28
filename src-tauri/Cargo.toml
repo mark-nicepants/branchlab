@@ -39,6 +39,7 @@ notify-debouncer-full = "0.7"
 rusqlite = { version = "0.40", features = ["bundled"] }
 # Stable, sortable ids for conversations/entries/blocks (monotonic ULIDs).
 ulid = "3"
+base64 = "0.22"
 # ACP (Agent Client Protocol) client — the engine transport. Pinned exactly:
 # the crate's high-level API is still evolving, and all its types are isolated
 # behind `crate::engine::acp` so an upgrade touches only that module.

@@ -639,6 +639,15 @@ export interface BoardColumn {
   deletedAt: number | null;
 }
 
+/** A file attached to a task (mirrors tasks::TaskAttachment). The bytes
+ *  live in app data; the frontend opens them via `taskAttachmentPath`. */
+export interface TaskAttachment {
+  id: string;
+  name: string;
+  size: number;
+  createdAt: number;
+}
+
 export interface Task {
   id: string;
   /** Human reference (#7): incremental, never reused. */
@@ -657,6 +666,8 @@ export interface Task {
   /** Size estimate, read in the configured unit (see EstimateUnit);
    *  null = unset. */
   estimate: number | null;
+  /** Files attached to the task (visible to agent sessions/MCP). */
+  attachments: TaskAttachment[];
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;

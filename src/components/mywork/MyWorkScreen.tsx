@@ -34,6 +34,7 @@ import {
   Lock,
   MessageSquare,
   PanelTop,
+  Paperclip,
   Pencil,
   Play,
   Plus,
@@ -45,12 +46,17 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import {
   boardSnapshot,
   chatArchive,
   listProjectIssues,
   taskActivity,
+  taskAttachData,
+  taskAttachPath,
+  taskAttachmentPath,
+  taskAttachmentRemove,
   taskComment,
   taskCreate,
   taskDelete,
@@ -75,6 +81,7 @@ import type {
   ProjectView,
   SessionPayload,
   Task,
+  TaskAttachment,
   Workspace,
 } from "../../lib/types";
 import { useWorkspaceData } from "../../hooks/useWorkspaceData";
@@ -1781,11 +1788,42 @@ function TaskEditDialog({
   const [editingEstimate, setEditingEstimate] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [picker, setPicker] = useState<PickerId | null>(null);
+  const [attachHot, setAttachHot] = useState(false);
   const addInputRef = useRef<HTMLInputElement>(null);
   const composerRef = useRef<{ focusSlash: () => void } | null>(null);
 
   const fail = (e: unknown) =>
     toast.error("Could not save task", { description: String(e) });
+
+  /** HTML5-dropped files go up as base64 — WKWebView drops carry no path. */
+  const attachDroppedFiles = (files: FileList) => {
+    for (const file of Array.from(files)) {
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        toast.error("attachments are capped at 25MB", {
+          description: file.name,
+        });
+        continue;
+      }
+      void fileToBase64(file)
+        .then((data) => taskAttachData(task.id, file.name, data))
+        .catch((e) =>
+          toast.error("Could not attach file", { description: String(e) }),
+        );
+    }
+  };
+
+  /** The Attach button: native multi-file picker → attach by path. */
+  const pickAttachments = async () => {
+    try {
+      const paths = await openFileDialog({ multiple: true });
+      if (!paths) return;
+      for (const p of Array.isArray(paths) ? paths : [paths]) {
+        await taskAttachPath(task.id, p);
+      }
+    } catch (e) {
+      toast.error("Could not attach file", { description: String(e) });
+    }
+  };
 
   const commitTitle = () => {
     setEditingTitle(false);
@@ -1972,54 +2010,84 @@ function TaskEditDialog({
             </DialogTitle>
           )}
 
-          {/* Description (hover pencil / double-click to edit) */}
-          <div className="group/desc flex flex-col gap-1.5">
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground">
-                Description
-              </span>
-              {!editingDesc && (
+          {/* Attachment drop target: scoped to the description+attachments
+              area (not the whole dialog) so it can never fight the intake
+              panel's own file-drop zone in SubtasksSection below. */}
+          <div
+            className={cn(
+              "-m-2 flex flex-col gap-5 rounded-lg p-2 transition-colors",
+              attachHot && "bg-primary/5 ring-1 ring-inset ring-primary/40",
+            )}
+            onDragOver={(e) => {
+              if (!e.dataTransfer.types.includes("Files")) return;
+              e.preventDefault();
+              setAttachHot(true);
+            }}
+            onDragLeave={(e) => {
+              if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+              setAttachHot(false);
+            }}
+            onDrop={(e) => {
+              if (!e.dataTransfer.types.includes("Files")) return;
+              e.preventDefault();
+              setAttachHot(false);
+              attachDroppedFiles(e.dataTransfer.files);
+            }}
+          >
+            {/* Description (hover pencil / double-click to edit) */}
+            <div className="group/desc flex flex-col gap-1.5">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-medium text-muted-foreground">
+                  Description
+                </span>
+                {!editingDesc && (
+                  <button
+                    onClick={startDescEdit}
+                    title="Edit description"
+                    className="rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/desc:opacity-100"
+                  >
+                    <Pencil className="size-3" />
+                  </button>
+                )}
+              </div>
+              {editingDesc ? (
+                <div className="flex flex-col gap-2">
+                  <MarkdownEditor
+                    value={descDraft}
+                    onChange={setDescDraft}
+                    placeholder="Optional — markdown, included in the session prompt."
+                    className="min-h-48"
+                  />
+                  <div className="flex justify-end">
+                    <Button variant="ghost" size="sm" onClick={commitDesc}>
+                      Done
+                    </Button>
+                  </div>
+                </div>
+              ) : task.description?.trim() ? (
+                <div
+                  className="markdown-content cursor-text text-sm"
+                  onDoubleClick={startDescEdit}
+                  title="Double-click to edit"
+                >
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {task.description}
+                  </ReactMarkdown>
+                </div>
+              ) : (
                 <button
                   onClick={startDescEdit}
-                  title="Edit description"
-                  className="rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/desc:opacity-100"
+                  className="self-start text-sm text-muted-foreground hover:text-foreground"
                 >
-                  <Pencil className="size-3" />
+                  No description — click to add
                 </button>
               )}
             </div>
-            {editingDesc ? (
-              <div className="flex flex-col gap-2">
-                <MarkdownEditor
-                  value={descDraft}
-                  onChange={setDescDraft}
-                  placeholder="Optional — markdown, included in the session prompt."
-                  className="min-h-48"
-                />
-                <div className="flex justify-end">
-                  <Button variant="ghost" size="sm" onClick={commitDesc}>
-                    Done
-                  </Button>
-                </div>
-              </div>
-            ) : task.description?.trim() ? (
-              <div
-                className="markdown-content cursor-text text-sm"
-                onDoubleClick={startDescEdit}
-                title="Double-click to edit"
-              >
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {task.description}
-                </ReactMarkdown>
-              </div>
-            ) : (
-              <button
-                onClick={startDescEdit}
-                className="self-start text-sm text-muted-foreground hover:text-foreground"
-              >
-                No description — click to add
-              </button>
-            )}
+
+            <AttachmentsSection
+              task={task}
+              onPick={() => void pickAttachments()}
+            />
           </div>
 
           {task.parentId === null && (
@@ -2330,6 +2398,105 @@ function TaskEditDialog({
         <ArchiveDialog task={task} onClose={() => setArchiveOpen(false)} />
       )}
     </Dialog>
+  );
+}
+
+// ── Attachments (edit dialog only) ──
+
+/** Matches the backend cap in tasks::add_attachment. */
+const MAX_ATTACHMENT_BYTES = 25_000_000;
+
+/** "48 KB" / "1.2 MB" — compact attachment size. */
+function fmtSize(bytes: number): string {
+  return bytes >= 1_000_000
+    ? `${(bytes / 1_000_000).toFixed(1)} MB`
+    : `${Math.max(1, Math.round(bytes / 1000))} KB`;
+}
+
+/** Chunk-safe base64 of a File: readAsDataURL then strip the data: prefix
+ *  (avoids building huge strings from Uint8Array one char at a time). */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const url = reader.result as string;
+      resolve(url.slice(url.indexOf(",") + 1));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("read failed"));
+    reader.readAsDataURL(file);
+  });
+}
+
+/** Attachment chip list + the Attach affordance. Clicking a chip opens the
+ *  stored file with the system default app; the hover × removes it (no
+ *  confirm — the feed records it, so nothing is silently lost). */
+function AttachmentsSection({
+  task,
+  onPick,
+}: {
+  task: Task;
+  onPick: () => void;
+}) {
+  const openAttachment = async (att: TaskAttachment) => {
+    try {
+      const path = await taskAttachmentPath(task.id, att.id);
+      // Same lazy-import pattern as lib/links.ts openExternal.
+      const { openPath } = await import("@tauri-apps/plugin-opener");
+      await openPath(path);
+    } catch (e) {
+      toast.error("Could not open attachment", { description: String(e) });
+    }
+  };
+  const remove = (att: TaskAttachment) =>
+    taskAttachmentRemove(task.id, att.id).catch((e) =>
+      toast.error("Could not remove attachment", { description: String(e) }),
+    );
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      {task.attachments.length > 0 && (
+        <span className="text-xs font-medium tracking-wide text-muted-foreground">
+          ATTACHMENTS
+        </span>
+      )}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {task.attachments.map((att) => (
+          <button
+            key={att.id}
+            onClick={() => void openAttachment(att)}
+            title={`Open ${att.name}`}
+            className="group/att flex max-w-full items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs transition-colors hover:bg-accent/50"
+          >
+            <Paperclip className="size-3 shrink-0 text-muted-foreground" />
+            <span className="max-w-[40ch] truncate">{att.name}</span>
+            <span className="shrink-0 text-[10.5px] text-muted-foreground">
+              {fmtSize(att.size)}
+            </span>
+            {/* span, not button: chips are buttons and can't nest one. */}
+            <span
+              onClick={(e) => {
+                e.stopPropagation();
+                void remove(att);
+              }}
+              title="Remove attachment"
+              className="shrink-0 rounded-full text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/att:opacity-100"
+            >
+              <X className="size-3" />
+            </span>
+          </button>
+        ))}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onPick}
+          title="Attach files — or drop them on this area"
+          className="gap-1.5 px-2 text-muted-foreground hover:text-foreground"
+        >
+          <Paperclip className="size-3.5" />
+          Attach
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -2715,7 +2882,9 @@ function ActivityIcon({ kind, actor }: { kind: string; actor: string }) {
             ? Undo2
             : kind === "moved"
               ? ArrowRight
-              : Circle; // created + unknown kinds
+              : kind === "attached" || kind === "detached"
+                ? Paperclip
+                : Circle; // created + unknown kinds
   return (
     // Opaque backing so the icon masks the timeline's vertical line.
     <span className="relative flex size-[15px] shrink-0 items-center justify-center rounded-full bg-popover">
@@ -2724,30 +2893,80 @@ function ActivityIcon({ kind, actor }: { kind: string; actor: string }) {
   );
 }
 
-/** One-line text per recorded event kind. */
+/** Linear-style actor name that opens each feed sentence. */
+function actorName(actor: string): string {
+  return actor === "user"
+    ? "You"
+    : actor === "agent"
+      ? "Agent"
+      : actor === "ai"
+        ? "AI"
+        : "System";
+}
+
+/** The slightly-emphasized actor prefix of a feed sentence. */
+function Actor({ actor }: { actor: string }) {
+  return (
+    <span className="font-medium text-foreground/90">{actorName(actor)}</span>
+  );
+}
+
+/** One actor-prefixed sentence per recorded event kind ("You created the
+ *  task" — the row itself renders muted, the actor pops). */
 function activityText(entry: ActivityEntry): React.ReactNode {
+  const actor = <Actor actor={entry.actor} />;
   switch (entry.kind) {
     case "created":
-      return "created the task";
+      return <>{actor} created the task</>;
     case "plan":
-      return entry.body || "planned subtasks";
+      // The body reads like a predicate ("planned 2 subtasks").
+      return (
+        <>
+          {actor} {entry.body || "planned subtasks"}
+        </>
+      );
     case "session":
-      return "session started";
+      return "Session started";
     case "review":
       return (
         <>
-          agent finished a turn — moved to{" "}
+          {actor} finished a turn — moved to{" "}
           <span className={REVIEW_TEXT}>Needs review</span>
         </>
       );
     case "resumed":
-      return "moved back to In progress";
+      return <>{actor} resumed — back to In progress</>;
     case "moved":
-      return `moved to ${entry.body}`;
+      // The body may carry a suffix ("In progress — queued 3 subtasks").
+      return (
+        <>
+          {actor} moved it to {entry.body}
+        </>
+      );
     case "turn":
-      return entry.body;
+      return entry.body; // already starts with a verb (the AI summary)
     case "done":
-      return entry.body ? `done — ${entry.body}` : "moved to Done";
+      return entry.body === "PR merged" ? (
+        "PR merged — moved to Done"
+      ) : entry.body ? (
+        <>
+          {actor} — {entry.body}
+        </>
+      ) : (
+        <>{actor} moved it to Done</>
+      );
+    case "attached":
+      return (
+        <>
+          {actor} attached {entry.body}
+        </>
+      );
+    case "detached":
+      return (
+        <>
+          {actor} removed {entry.body}
+        </>
+      );
     default:
       return entry.body;
   }
@@ -2829,20 +3048,21 @@ function ActivityFeed({
         {entries.map((entry) =>
           entry.kind === "comment" || entry.kind === "command" ? (
             <div key={entry.id} className="relative flex gap-3 py-2">
-              {entry.actor === "user" ? (
-                <span className="relative mt-1.5 flex size-[15px] shrink-0 items-center justify-center rounded-full bg-primary text-[8.5px] font-bold text-primary-foreground">
-                  M
-                </span>
-              ) : (
-                <span className="relative mt-1.5 flex size-[15px] shrink-0 items-center justify-center rounded-full border border-border bg-accent">
-                  <Sparkles className="size-2.5 text-muted-foreground" />
-                </span>
-              )}
+              {/* Same timeline-glyph style as event rows (masks the line). */}
+              <span className="relative mt-1.5 flex size-[15px] shrink-0 items-center justify-center rounded-full bg-popover">
+                <MessageSquare
+                  className={cn(
+                    "size-3.5",
+                    entry.actor === "user"
+                      ? "text-primary"
+                      : "text-muted-foreground",
+                  )}
+                />
+              </span>
               <div className="min-w-0 flex-1 rounded-lg border border-border bg-accent/40 px-3 py-2">
                 <div className="pb-1 text-[10.5px] text-muted-foreground">
-                  {entry.actor !== "user" && (
-                    <span className="pr-1.5 font-medium">agent</span>
-                  )}
+                  <span className="font-medium">{actorName(entry.actor)}</span>
+                  {" · "}
                   {formatWhen(entry.createdAt)}
                 </div>
                 {entry.kind === "command" ? (
@@ -2876,8 +3096,8 @@ function ActivityFeed({
 
         {/* Composer */}
         <div className="relative flex gap-3 pt-2.5">
-          <span className="relative mt-2 flex size-[15px] shrink-0 items-center justify-center rounded-full bg-primary text-[8.5px] font-bold text-primary-foreground">
-            M
+          <span className="relative mt-2 flex size-[15px] shrink-0 items-center justify-center rounded-full bg-popover">
+            <MessageSquare className="size-3.5 text-primary" />
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 transition-colors focus-within:border-ring">

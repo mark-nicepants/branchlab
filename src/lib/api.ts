@@ -8,6 +8,7 @@ import type {
   ActivityEntry,
   BoardSnapshot,
   Task,
+  TaskAttachment,
   UnlinkedTask,
   IssueSummary,
   AutofixMode,
@@ -613,6 +614,42 @@ export function taskComment(
   body: string,
 ): Promise<ActivityEntry> {
   return invoke<ActivityEntry>("task_comment", { taskId, body });
+}
+
+/** Attach a file to a task from raw bytes (HTML5 drag-drop — WKWebView files
+ *  carry no filesystem path). `data` is plain base64, no `data:` prefix.
+ *  Emits `tasks:changed` and records an "attached" feed event itself. */
+export function taskAttachData(
+  taskId: string,
+  name: string,
+  data: string,
+): Promise<TaskAttachment> {
+  return invoke<TaskAttachment>("task_attach_data", { taskId, name, data });
+}
+
+/** Attach a file to a task by filesystem path (the native picker).
+ *  Emits `tasks:changed` and records an "attached" feed event itself. */
+export function taskAttachPath(
+  taskId: string,
+  path: string,
+): Promise<TaskAttachment> {
+  return invoke<TaskAttachment>("task_attach_path", { taskId, path });
+}
+
+/** Remove an attachment (metadata + stored bytes); emits `tasks:changed`. */
+export function taskAttachmentRemove(
+  taskId: string,
+  attachmentId: string,
+): Promise<void> {
+  return invoke<void>("task_attachment_remove", { taskId, attachmentId });
+}
+
+/** Absolute path of an attachment's bytes (open with the system app). */
+export function taskAttachmentPath(
+  taskId: string,
+  attachmentId: string,
+): Promise<string> {
+  return invoke<string>("task_attachment_path", { taskId, attachmentId });
 }
 
 /** Open GitHub issues for a project's repo (task-board import picker). */

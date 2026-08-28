@@ -212,6 +212,20 @@ fn call_tool(msg: &Value, data_dir: Option<&Path>) -> Result<Value, (i64, String
             if let Some(d) = &t.description {
                 out.push_str(&format!("\n{d}\n"));
             }
+            if !t.attachments.is_empty() {
+                out.push_str("\nAttachments (read from disk as needed):\n");
+                if let Some(dir) = data_dir {
+                    for a in &t.attachments {
+                        let file: String = a
+                            .name
+                            .chars()
+                            .map(|c| if c.is_alphanumeric() || "._-".contains(c) { c } else { '_' })
+                            .collect();
+                        let path = dir.join("task-files").join(&t.id).join(format!("{}-{}", a.id, file));
+                        out.push_str(&format!("- {} ({} bytes): {}\n", a.name, a.size, path.display()));
+                    }
+                }
+            }
             let mut kids: Vec<&Task> = board
                 .tasks
                 .iter()
