@@ -36,23 +36,25 @@ import type {
   Entry,
 } from "../lib/types";
 
-/** Merge a streamed block into a turn's block list (upsert by blockId). For a
- *  text/reasoning delta the backend sends only `textAppend` (the block's text is
- *  blank) so we append rather than replace; other updates replace the block. */
-function applyBlock(
-  blocks: Block[],
-  block: Block,
-  textAppend: string | null,
-): Block[] {
+/** Merge a streamed block into a turn's block list: upsert by blockId. Every
+ *  event carries the full authoritative block, so this is idempotent — a
+ *  duplicated, reordered, or dropped delivery cannot corrupt the text (the
+ *  next event heals it). The duplicate log is diagnostic: it tells us whether
+ *  the event transport actually double-delivers (§thought-doubling). */
+function applyBlock(blocks: Block[], block: Block): Block[] {
   const idx = blocks.findIndex((b) => b.blockId === block.blockId);
   if (idx === -1) return [...blocks, block];
   const cur = blocks[idx];
-  const next = blocks.slice();
-  if (textAppend != null && (cur.type === "text" || cur.type === "reasoning")) {
-    next[idx] = { ...cur, text: cur.text + textAppend };
-  } else {
-    next[idx] = block;
+  if (
+    import.meta.env.DEV &&
+    (cur.type === "text" || cur.type === "reasoning") &&
+    cur.type === block.type &&
+    cur.text === block.text
+  ) {
+    console.debug("[chat] duplicate chat:block delivery", block.blockId);
   }
+  const next = blocks.slice();
+  next[idx] = block;
   return next;
 }
 
@@ -163,7 +165,7 @@ export function useChat(workspaceId: string): ChatStore {
               ...prev,
               [p.entrySeq]: {
                 ...e,
-                blocks: applyBlock(e.blocks, p.block, p.textAppend),
+                blocks: applyBlock(e.blocks, p.block),
               },
             };
           }),

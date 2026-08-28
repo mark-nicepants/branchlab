@@ -24,7 +24,6 @@ struct BlockEvent<'a> {
     workspace_id: &'a str,
     entry_seq: i64,
     block: &'a Block,
-    text_append: Option<&'a str>,
 }
 
 #[derive(Serialize, Clone)]
@@ -114,8 +113,8 @@ pub fn emit_entry(app: &AppHandle, workspace_id: &str, entry: &Entry) {
     let _ = app.emit("chat:entry", EntryEvent { workspace_id, entry });
 }
 
-pub fn emit_block(app: &AppHandle, workspace_id: &str, entry_seq: i64, block: &Block, text_append: Option<&str>) {
-    let _ = app.emit("chat:block", BlockEvent { workspace_id, entry_seq, block, text_append });
+pub fn emit_block(app: &AppHandle, workspace_id: &str, entry_seq: i64, block: &Block) {
+    let _ = app.emit("chat:block", BlockEvent { workspace_id, entry_seq, block });
 }
 
 pub fn emit_turn(

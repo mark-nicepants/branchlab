@@ -564,9 +564,9 @@ export interface ChatEntryEvent {
 export interface ChatBlockEvent {
   workspaceId: string;
   entrySeq: number;
+  /** The full authoritative block — upsert by blockId (idempotent: duplicate
+   *  or reordered deliveries cannot corrupt the rendered text). */
   block: Block;
-  /** Incremental text to append (streaming); null = replace the whole block. */
-  textAppend: string | null;
 }
 
 export interface ChatTurnEvent {

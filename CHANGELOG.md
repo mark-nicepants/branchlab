@@ -102,6 +102,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the last check shown next to it. Manual checks always report their result —
   including "You're on the latest version".
 
+### Fixed
+
+- Streamed agent thoughts and prose no longer garble mid-turn (doubled
+  words, a later thought overwriting an earlier one, thoughts missing from
+  a finished turn until the session was reopened): every streaming update
+  now carries the full authoritative block, and a finished turn re-syncs
+  the whole transcript entry.
+
 ## [0.3.0] - 2026-08-13
 
 ### Added

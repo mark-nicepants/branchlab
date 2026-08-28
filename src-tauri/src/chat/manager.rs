@@ -792,20 +792,18 @@ impl Inner {
                     let seq = cur.seq;
                     let started = !cur.streaming;
                     cur.streaming = true;
-                    // For streaming text, send only the incremental `textAppend`
-                    // (thin the block's text) so we don't resend the growing
-                    // prose each chunk; the frontend appends. Whole-block updates
-                    // (new block, tool updates) send the full block.
+                    // Every block event carries the FULL authoritative block —
+                    // the frontend upserts by blockId, so delivery glitches
+                    // (a duplicated, reordered, or dropped event) can never
+                    // corrupt the rendered text the way incremental appends
+                    // could (§thought-doubling). Costs re-sending the growing
+                    // string per chunk; localhost IPC absorbs that fine.
                     let full = &conv.assembler.blocks[delta.index];
                     // opencode surfaces the plan/todo list as a `todowrite` tool
                     // call (not an ACP `Plan`), so drive the composer's TodoButton
                     // from the tool's `todos` input (§NOTES).
                     let todos = todos_from_block(full);
-                    let (block, append) = match &delta.text_append {
-                        Some(app) => (thin_text(full), Some(app.as_str())),
-                        None => (full.clone(), None),
-                    };
-                    events::emit_block(&self.app, ws, seq, &block, append);
+                    events::emit_block(&self.app, ws, seq, full);
                     if let Some(todos) = todos {
                         crate::logf!("chat", "todos from tool ws={ws} n={}", todos.len());
                         events::emit_todos(&self.app, ws, &todos);
@@ -919,23 +917,15 @@ impl Inner {
         }
         let origin = cur.origin;
         drop(convs);
+        // The full terminal entry FIRST (authoritative blocks — the live view
+        // must end exactly equal to what the DB holds), then the turn status.
+        events::emit_entry(&self.app, ws, &entry);
         events::emit_turn(&self.app, ws, cur.seq, status, &summary, Some(now));
         if let Some(text) = err_text {
             crate::logf!("chat", "turn failed ws={ws} seq={}: {text}", cur.seq);
             self.push_system(ws, &conv_id, SystemKind::Error, format!("Turn failed: {text}"));
         }
         let _ = self.turn_tx.send(TurnEvent { workspace_id: ws.to_string(), origin, status });
-    }
-}
-
-/// Strip the accumulated text from a streaming text/reasoning block so a
-/// `chat:block` delta carries only the incremental `textAppend`, not the whole
-/// growing string. Non-text blocks are returned unchanged.
-fn thin_text(b: &Block) -> Block {
-    match b {
-        Block::Text { block_id, .. } => Block::Text { block_id: block_id.clone(), text: String::new() },
-        Block::Reasoning { block_id, .. } => Block::Reasoning { block_id: block_id.clone(), text: String::new() },
-        other => other.clone(),
     }
 }
 
