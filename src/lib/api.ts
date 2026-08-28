@@ -502,14 +502,30 @@ export function boardSnapshot(): Promise<BoardSnapshot> {
 
 export function taskCreate(
   title: string,
-  opts?: { description?: string; projectId?: string; columnId?: string },
+  opts?: {
+    description?: string;
+    projectId?: string;
+    columnId?: string;
+    /** Create as a subtask — inherits the parent's project (nesting refused). */
+    parentId?: string;
+  },
 ): Promise<Task> {
   return invoke<Task>("task_create", {
     title,
     description: opts?.description ?? null,
     projectId: opts?.projectId ?? null,
     columnId: opts?.columnId ?? null,
+    parentId: opts?.parentId ?? null,
   });
+}
+
+/** Rewire a parent's live children: sequential chains their `dependsOn` in
+ *  creation (number) order; parallel clears every dependency. */
+export function taskSetSubtaskMode(
+  parentId: string,
+  sequential: boolean,
+): Promise<void> {
+  return invoke<void>("task_set_subtask_mode", { parentId, sequential });
 }
 
 /** Empty strings clear description/projectId; omitted fields are unchanged. */

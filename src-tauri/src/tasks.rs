@@ -173,12 +173,24 @@ impl TaskStore {
         description: Option<String>,
         project_id: Option<String>,
         column_id: Option<String>,
+        parent_id: Option<String>,
     ) -> Result<Task, String> {
         let title = title.trim().to_string();
         if title.is_empty() {
             return Err("task title is empty".into());
         }
         let mut data = self.data.lock().unwrap();
+        // Subtasks inherit their parent's project so dispatch never needs
+        // hierarchy awareness; a subtask of a subtask is refused (one level).
+        let mut project_id = project_id;
+        if let Some(pid) = &parent_id {
+            let parent =
+                data.tasks.iter().find(|t| &t.id == pid && t.deleted_at.is_none()).ok_or("unknown parent task")?;
+            if parent.parent_id.is_some() {
+                return Err("subtasks cannot be nested".into());
+            }
+            project_id = parent.project_id.clone();
+        }
         let column_id = match column_id {
             Some(id) if data.columns.iter().any(|c| c.id == id && c.deleted_at.is_none()) => id,
             Some(_) => return Err("unknown column".into()),
@@ -197,7 +209,7 @@ impl TaskStore {
             column_id,
             position,
             workspace_id: None,
-            parent_id: None,
+            parent_id,
             depends_on: Vec::new(),
             created_at: now,
             updated_at: now,
@@ -334,6 +346,31 @@ impl TaskStore {
         Ok(())
     }
 
+    /// Rewrite a parent's live children as a sequential chain (each depends
+    /// on the previous, in creation order) or as parallel (no deps). The
+    /// toggle state is DERIVED from the data — no mode field exists.
+    pub fn set_subtask_mode(&self, parent_id: &str, sequential: bool) -> Result<(), String> {
+        let mut data = self.data.lock().unwrap();
+        if !data.tasks.iter().any(|t| t.id == parent_id && t.deleted_at.is_none()) {
+            return Err("unknown parent task".into());
+        }
+        let now = now_ms();
+        let mut idx: Vec<usize> = (0..data.tasks.len())
+            .filter(|&i| data.tasks[i].deleted_at.is_none() && data.tasks[i].parent_id.as_deref() == Some(parent_id))
+            .collect();
+        idx.sort_by_key(|&i| data.tasks[i].number);
+        for w in 0..idx.len() {
+            let dep = if sequential && w > 0 { vec![data.tasks[idx[w - 1]].id.clone()] } else { Vec::new() };
+            let t = &mut data.tasks[idx[w]];
+            if t.depends_on != dep {
+                t.depends_on = dep;
+                t.updated_at = now;
+            }
+        }
+        self.persist(&data);
+        Ok(())
+    }
+
     // ── Workflow machine hooks (called by the supervisor) ───────────────────
 
     /// A linked session's turn finished: park the card in the review column —
@@ -384,6 +421,8 @@ impl TaskStore {
                 .find(|t| &t.id == dep && t.deleted_at.is_none())
                 .is_none_or(|t| Some(t.column_id.as_str()) == done.as_deref())
         };
+        let has_live_children =
+            |id: &str| data.tasks.iter().any(|c| c.deleted_at.is_none() && c.parent_id.as_deref() == Some(id));
         data.tasks
             .iter()
             .filter(|t| {
@@ -391,6 +430,8 @@ impl TaskStore {
                     && t.column_id == queued
                     && t.workspace_id.is_none()
                     && t.depends_on.iter().all(dep_done)
+                    // Parents never run — their children are the work.
+                    && !has_live_children(&t.id)
             })
             .min_by(|a, b| a.position.total_cmp(&b.position))
             .cloned()
@@ -564,10 +605,11 @@ pub fn task_create(
     description: Option<String>,
     project_id: Option<String>,
     column_id: Option<String>,
+    parent_id: Option<String>,
     app: AppHandle,
     tasks: State<TaskStore>,
 ) -> Result<Task, String> {
-    let task = tasks.create_task(title, description, project_id, column_id)?;
+    let task = tasks.create_task(title, description, project_id, column_id, parent_id)?;
     emit_changed(&app, &tasks);
     Ok(task)
 }
@@ -612,6 +654,18 @@ pub fn task_link_workspace(
 }
 
 #[tauri::command]
+pub fn task_set_subtask_mode(
+    parent_id: String,
+    sequential: bool,
+    app: AppHandle,
+    tasks: State<TaskStore>,
+) -> Result<(), String> {
+    tasks.set_subtask_mode(&parent_id, sequential)?;
+    emit_changed(&app, &tasks);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn task_mark_done(task_id: String, app: AppHandle, tasks: State<TaskStore>) -> Result<(), String> {
     tasks.mark_done(&task_id)?;
     emit_changed(&app, &tasks);
@@ -637,7 +691,7 @@ mod tests {
         let roles: Vec<ColumnRole> = snap.columns.iter().map(|c| c.role).collect();
         assert_eq!(roles, [ColumnRole::None, ColumnRole::Active, ColumnRole::Review, ColumnRole::Done]);
 
-        let t = s.create_task("Ship the board".into(), None, Some("p1".into()), None).unwrap();
+        let t = s.create_task("Ship the board".into(), None, Some("p1".into()), None, None).unwrap();
         assert_eq!(t.column_id, snap.columns[0].id, "new tasks land in the first column");
 
         // Reload from disk: same board, task included.
@@ -649,7 +703,7 @@ mod tests {
     #[test]
     fn tombstones_survive_reload_but_stay_hidden() {
         let (s, dir) = store("tombstones_survive_reload_but_stay_hidden");
-        let t = s.create_task("temp".into(), None, None, None).unwrap();
+        let t = s.create_task("temp".into(), None, None, None, None).unwrap();
         s.delete_task(&t.id).unwrap();
         assert!(s.snapshot().tasks.is_empty());
         // Still on disk as a tombstone (future sync needs it).
@@ -662,8 +716,8 @@ mod tests {
     fn move_renumbers_when_gaps_exhaust() {
         let (s, dir) = store("move_renumbers_when_gaps_exhaust");
         let col = s.snapshot().columns[0].id.clone();
-        let a = s.create_task("a".into(), None, None, None).unwrap();
-        let b = s.create_task("b".into(), None, None, None).unwrap();
+        let a = s.create_task("a".into(), None, None, None, None).unwrap();
+        let b = s.create_task("b".into(), None, None, None, None).unwrap();
         // Squeeze b into a gap smaller than MIN_GAP → renumber kicks in.
         s.move_task(&b.id, &col, a.position + MIN_GAP / 2.0).unwrap();
         let snap = s.snapshot();
@@ -679,7 +733,7 @@ mod tests {
         let (s, dir) = store("lifecycle_hooks_route_by_role");
         let active = col_id(&s, ColumnRole::Active);
         let done = col_id(&s, ColumnRole::Done);
-        let t = s.create_task("task".into(), None, None, None).unwrap();
+        let t = s.create_task("task".into(), None, None, None, None).unwrap();
 
         s.link_workspace(&t.id, "ws1").unwrap();
         let t2 = s.snapshot().tasks[0].clone();
@@ -701,7 +755,7 @@ mod tests {
         assert_eq!(s.active_count(|_| false), 0);
 
         // A task deleted mid-flight (not in Done) gets the offer instead.
-        let t2 = s.create_task("mid-flight".into(), None, None, None).unwrap();
+        let t2 = s.create_task("mid-flight".into(), None, None, None, None).unwrap();
         s.link_workspace(&t2.id, "ws2").unwrap();
         let offer = s.on_workspace_removed("ws2").expect("offer to mark done");
         assert_eq!(offer.title, "mid-flight");
@@ -720,7 +774,7 @@ mod tests {
         let active = col_id(&s, ColumnRole::Active);
         let review = col_id(&s, ColumnRole::Review);
 
-        let t = s.create_task("t".into(), Some("desc".into()), Some("p1".into()), None).unwrap();
+        let t = s.create_task("t".into(), Some("desc".into()), Some("p1".into()), None, None).unwrap();
         s.link_workspace(&t.id, "ws1").unwrap(); // -> active
 
         // Turn ends: active -> review (returns the title for the toast).
@@ -748,9 +802,9 @@ mod tests {
         // No queued tasks yet.
         assert!(s.next_queued().is_none());
 
-        let a = s.create_task("a".into(), None, Some("p1".into()), Some(queued.clone())).unwrap();
-        let b = s.create_task("b".into(), None, Some("p1".into()), Some(queued.clone())).unwrap();
-        let no_project = s.create_task("np".into(), None, None, Some(queued.clone())).unwrap();
+        let a = s.create_task("a".into(), None, Some("p1".into()), Some(queued.clone()), None).unwrap();
+        let b = s.create_task("b".into(), None, Some("p1".into()), Some(queued.clone()), None).unwrap();
+        let no_project = s.create_task("np".into(), None, None, Some(queued.clone()), None).unwrap();
         // b depends on a: not dispatchable until a is done.
         {
             let mut data = s.data.lock().unwrap();
@@ -779,14 +833,42 @@ mod tests {
     }
 
     #[test]
+    fn subtasks_inherit_project_and_parents_never_dispatch() {
+        let (s, dir) = store("subtasks");
+        let active = col_id(&s, ColumnRole::Active);
+        let parent = s.create_task("batch".into(), None, Some("p1".into()), Some(active.clone()), None).unwrap();
+        let c1 = s.create_task("one".into(), None, None, Some(active.clone()), Some(parent.id.clone())).unwrap();
+        let c2 = s.create_task("two".into(), None, None, Some(active.clone()), Some(parent.id.clone())).unwrap();
+        assert_eq!(c1.project_id.as_deref(), Some("p1"), "inherits the parent's project");
+        // Nesting refused.
+        assert!(s.create_task("x".into(), None, None, None, Some(c1.id.clone())).is_err());
+        // The parent sits queued in the active column but never dispatches;
+        // its first child does.
+        assert_eq!(s.next_queued().unwrap().id, c1.id);
+
+        // Sequential mode chains children in creation order.
+        s.set_subtask_mode(&parent.id, true).unwrap();
+        let snap = s.snapshot();
+        let c2s = snap.tasks.iter().find(|t| t.id == c2.id).unwrap();
+        assert_eq!(c2s.depends_on, vec![c1.id.clone()]);
+        assert_eq!(s.next_queued().unwrap().id, c1.id, "c2 blocked behind c1");
+        s.mark_done(&c1.id).unwrap();
+        assert_eq!(s.next_queued().unwrap().id, c2.id, "chain drains in order");
+        // Parallel clears the chains.
+        s.set_subtask_mode(&parent.id, false).unwrap();
+        assert!(s.snapshot().tasks.iter().find(|t| t.id == c2.id).unwrap().depends_on.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn numbers_are_incremental_and_backfilled() {
         let (s, dir) = store("numbers");
-        let a = s.create_task("a".into(), None, None, None).unwrap();
-        let b = s.create_task("b".into(), None, None, None).unwrap();
+        let a = s.create_task("a".into(), None, None, None, None).unwrap();
+        let b = s.create_task("b".into(), None, None, None, None).unwrap();
         assert_eq!((a.number, b.number), (1, 2));
         s.delete_task(&b.id).unwrap();
         // Numbers are never reused, even after tombstoning.
-        assert_eq!(s.create_task("c".into(), None, None, None).unwrap().number, 3);
+        assert_eq!(s.create_task("c".into(), None, None, None, None).unwrap().number, 3);
 
         // Pre-numbering rows (number=0) get backfilled oldest-first on load.
         {
@@ -799,15 +881,15 @@ mod tests {
         let snap = s2.snapshot();
         let a2 = snap.tasks.iter().find(|t| t.id == a.id).unwrap();
         assert!(a2.number > 0);
-        assert_eq!(s2.create_task("d".into(), None, None, None).unwrap().number, 4);
+        assert_eq!(s2.create_task("d".into(), None, None, None, None).unwrap().number, 4);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn parent_deletion_tombstones_children() {
         let (s, dir) = store("parent-del");
-        let parent = s.create_task("parent".into(), None, None, None).unwrap();
-        let child = s.create_task("child".into(), None, None, None).unwrap();
+        let parent = s.create_task("parent".into(), None, None, None, None).unwrap();
+        let child = s.create_task("child".into(), None, None, None, None).unwrap();
         {
             let mut data = s.data.lock().unwrap();
             data.tasks.iter_mut().find(|t| t.id == child.id).unwrap().parent_id = Some(parent.id.clone());

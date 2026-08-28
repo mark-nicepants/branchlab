@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Tasks can have subtasks: open a task and add them one by one (or paste a
+  whole list to split it into subtasks), then run them Sequential — each
+  waits for the previous, shown as an "after #N" chip — or Parallel. A
+  parent card shows child progress (bar, done count, how many are running)
+  and clicking it drills into a board of just its children (Esc goes back);
+  when the last child lands in Done, a toast offers moving the parent there
+  too.
+- Task cards got a GitHub-Projects-style redesign: a state glyph
+  (todo / queued / working / review / done), the project + task number
+  reference line, and compact chips for live status, the PR with its CI
+  checks, the diff size, and blocked-by dependencies.
+- Opening a task now shows it instead of a form: the description renders as
+  markdown, and clicking the title (or the pencil next to Description)
+  edits just that field — changes save as you go.
 - "My work" is now a task board with a built-in agent workflow. Four fixed
   columns — Todo, In progress, Needs review, Done — where dragging a card
   into "In progress" delegates it: the agent picks it up automatically (two

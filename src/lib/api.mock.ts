@@ -1436,13 +1436,18 @@ let boardCols: BoardColumn[] = [
   { id: "cr", name: "Needs review", role: "review", position: 3000, updatedAt: 0, deletedAt: null },
   { id: "c3", name: "Done", role: "done", position: 3072, updatedAt: 0, deletedAt: null },
 ];
-let mockTaskNumber = 5;
+let mockTaskNumber = 9;
 let boardTasks: Task[] = [
   { id: "t1", number: 1, title: "Add dark-mode toggle to settings", description: null, projectId: "p1", columnId: "c1", position: 1024, workspaceId: null, parentId: null, dependsOn: [], createdAt: 0, updatedAt: 0, deletedAt: null },
   { id: "t2", number: 2, title: "Investigate flaky CI on main", description: "Started after the runner image bump.", projectId: "p1", columnId: "c1", position: 2048, workspaceId: null, parentId: null, dependsOn: [], createdAt: 0, updatedAt: 0, deletedAt: null },
   { id: "t3", number: 3, title: "Write onboarding docs", description: null, projectId: null, columnId: "c1", position: 3072, workspaceId: null, parentId: null, dependsOn: [], createdAt: 0, updatedAt: 0, deletedAt: null },
   { id: "t4", number: 4, title: "Refactor the review inbox polling", description: null, projectId: "p2", columnId: "c2", position: 1024, workspaceId: "p1-ws1", parentId: null, dependsOn: [], createdAt: 0, updatedAt: 0, deletedAt: null },
   { id: "t5", number: 5, title: "Ship v0.3.0", description: null, projectId: "p1", columnId: "c3", position: 1024, workspaceId: null, parentId: null, dependsOn: [], createdAt: 0, updatedAt: 0, deletedAt: null },
+  // Subtasks demo: one parent with a done, a working (linked), and a blocked child.
+  { id: "t6", number: 6, title: "Client feedback batch", description: "Round 2 of the pilot feedback.", projectId: "p1", columnId: "c2", position: 2048, workspaceId: null, parentId: null, dependsOn: [], createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t7", number: 7, title: "Fix header contrast on dark mode", description: null, projectId: "p1", columnId: "c3", position: 2048, workspaceId: null, parentId: "t6", dependsOn: [], createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t8", number: 8, title: "Update the empty states", description: null, projectId: "p1", columnId: "c2", position: 3072, workspaceId: "p1-ws2", parentId: "t6", dependsOn: [], createdAt: 0, updatedAt: 0, deletedAt: null },
+  { id: "t9", number: 9, title: "Polish the onboarding copy", description: null, projectId: "p1", columnId: "c1", position: 4096, workspaceId: null, parentId: "t6", dependsOn: ["t8"], createdAt: 0, updatedAt: 0, deletedAt: null },
 ];
 
 function boardSnap(): BoardSnapshot {
@@ -1462,23 +1467,36 @@ export function boardSnapshot(): Promise<BoardSnapshot> {
 
 export function taskCreate(
   title: string,
-  opts?: { description?: string; projectId?: string; columnId?: string },
+  opts?: {
+    description?: string;
+    projectId?: string;
+    columnId?: string;
+    parentId?: string;
+  },
 ): Promise<Task> {
+  // Mirror the backend: subtasks inherit the parent's project; nesting refused.
+  const parent = opts?.parentId
+    ? boardTasks.find((t) => t.id === opts.parentId)
+    : undefined;
+  if (opts?.parentId && !parent)
+    return Promise.reject(new Error("unknown parent task"));
+  if (parent?.parentId)
+    return Promise.reject(new Error("subtasks cannot be nested"));
   const columnId = opts?.columnId ?? boardSnap().columns[0].id;
   const max = Math.max(
     0,
     ...boardTasks.filter((t) => t.columnId === columnId).map((t) => t.position),
   );
   const task: Task = {
-    id: `t${Date.now()}`,
+    id: `t${Date.now()}-${mockTaskNumber + 1}`,
     number: ++mockTaskNumber,
     title,
     description: opts?.description ?? null,
-    projectId: opts?.projectId ?? null,
+    projectId: parent ? parent.projectId : (opts?.projectId ?? null),
     columnId,
     position: max + 1024,
     workspaceId: null,
-    parentId: null,
+    parentId: parent?.id ?? null,
     dependsOn: [],
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -1487,6 +1505,24 @@ export function taskCreate(
   boardTasks = [...boardTasks, task];
   emitBoard();
   return Promise.resolve(task);
+}
+
+/** Mirror the backend: rewrite the live children's deps as a chain in
+ *  creation (number) order, or clear them all. */
+export function taskSetSubtaskMode(
+  parentId: string,
+  sequential: boolean,
+): Promise<void> {
+  const kids = boardTasks
+    .filter((t) => t.parentId === parentId)
+    .sort((a, b) => a.number - b.number);
+  boardTasks = boardTasks.map((t) => {
+    const i = kids.findIndex((k) => k.id === t.id);
+    if (i < 0) return t;
+    return { ...t, dependsOn: sequential && i > 0 ? [kids[i - 1].id] : [] };
+  });
+  emitBoard();
+  return Promise.resolve();
 }
 
 export function taskUpdate(
