@@ -40,22 +40,6 @@ const MAX_SUPER_ATTEMPTS: u32 = 5;
 // usage wants tuning.
 const MAX_PARALLEL_TASKS: usize = 2;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-enum Activity {
-    #[default]
-    Idle,
-    Working,
-}
-
-impl Activity {
-    fn as_str(self) -> &'static str {
-        match self {
-            Activity::Idle => "idle",
-            Activity::Working => "working",
-        }
-    }
-}
-
 /// Pipeline phase — mirrors the old frontend `PipelinePhase`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -73,7 +57,7 @@ pub enum Phase {
 #[derive(Default)]
 struct WsRuntime {
     // coarse session state (from the manager's TurnEvent broadcast)
-    activity: Activity,
+    working: bool,
     awaiting_input: bool,
     /// Sticky "needs the user" flag: set when a turn finishes or a permission is
     /// asked while this workspace isn't active; cleared when it becomes active.
@@ -262,7 +246,7 @@ impl Supervisor {
                 WorkspaceStatus {
                     session: SessionPayload {
                         workspace_id: w.id.clone(),
-                        activity: rt.map(|r| r.activity).unwrap_or_default().as_str().to_string(),
+                        activity: if rt.is_some_and(|r| r.working) { "working" } else { "idle" }.to_string(),
                         awaiting_input: rt.is_some_and(|r| r.awaiting_input),
                         needs_attention: rt.is_some_and(|r| r.needs_attention),
                         error: rt.and_then(|r| r.last_error.clone()),
@@ -641,7 +625,7 @@ impl Inner {
             let rt = rts.entry(ev.workspace_id.clone()).or_default();
             match ev.status {
                 TurnStatus::Queued | TurnStatus::Streaming => {
-                    rt.activity = Activity::Working;
+                    rt.working = true;
                     rt.needs_attention = false;
                     rt.awaiting_input = false;
                 }
@@ -655,13 +639,13 @@ impl Inner {
                     }
                 }
                 TurnStatus::Completed | TurnStatus::Cancelled | TurnStatus::Failed => {
-                    if rt.activity == Activity::Working {
+                    if rt.working {
                         notify = Some("turn_done");
                         if !is_active {
                             rt.needs_attention = true;
                         }
                     }
-                    rt.activity = Activity::Idle;
+                    rt.working = false;
                     rt.awaiting_input = false;
                     if ev.status == TurnStatus::Failed {
                         rt.last_error = Some("the last turn failed".to_string());
@@ -729,7 +713,7 @@ impl Inner {
             };
             let p = SessionPayload {
                 workspace_id: wsid.to_string(),
-                activity: rt.activity.as_str().to_string(),
+                activity: if rt.working { "working" } else { "idle" }.to_string(),
                 awaiting_input: rt.awaiting_input,
                 needs_attention: rt.needs_attention,
                 error: rt.last_error.clone(),
@@ -804,7 +788,7 @@ fn decide(rt: &mut WsRuntime, status: Option<&PrStatus>, mode: AutofixMode) -> O
                 rt.phase = Phase::Exhausted;
                 return None;
             }
-            if rt.activity == Activity::Working {
+            if rt.working {
                 rt.phase = Phase::Failing;
                 return None;
             }

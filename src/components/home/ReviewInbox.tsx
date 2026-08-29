@@ -1,7 +1,8 @@
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { CheckCircle2, GitPullRequest, RefreshCw } from "lucide-react";
-import { openExternal, refreshReviewInbox } from "../../lib/api";
+import { refreshReviewInbox } from "../../lib/api";
+import { openExternal } from "../../lib/links";
 import { useGitHub } from "../../hooks/useGitHub";
 import type { ReviewInboxItem } from "../../lib/types";
 import { AccountAvatar } from "../github/AccountAvatar";

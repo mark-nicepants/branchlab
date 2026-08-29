@@ -89,14 +89,12 @@ function ExtendCard({
   title,
   body,
   action,
-  onClick,
   disabled,
 }: {
   icon: React.ReactNode;
   title: string;
   body: string;
   action: string;
-  onClick?: () => void;
   disabled?: boolean;
 }) {
   return (
@@ -107,7 +105,6 @@ function ExtendCard({
         {body}
       </p>
       <button
-        onClick={onClick}
         disabled={disabled}
         className="mt-3 self-start rounded-md border border-border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-accent disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent"
       >

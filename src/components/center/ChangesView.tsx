@@ -212,7 +212,6 @@ export function ChangesView({
               viewed={isViewed}
               open={open}
               inLastTurn={effScope === "all" && turnPaths.has(f.path)}
-              commentCount={comments.filter((c) => c.file === f.path).length}
               commenting={{
                 file: f.path,
                 comments: comments.filter((c) => c.file === f.path),
@@ -319,7 +318,6 @@ function DiffFile({
   viewed,
   open,
   inLastTurn,
-  commentCount,
   commenting,
   onToggleOpen,
   onToggleViewed,
@@ -331,7 +329,6 @@ function DiffFile({
   viewed: boolean;
   open: boolean;
   inLastTurn: boolean;
-  commentCount: number;
   commenting: DiffCommenting;
   onToggleOpen: () => void;
   onToggleViewed: () => void;
@@ -362,9 +359,9 @@ function DiffFile({
             last turn
           </span>
         )}
-        {commentCount > 0 && (
+        {commenting.comments.length > 0 && (
           <span className="flex shrink-0 items-center gap-1 text-[11px] text-warning">
-            <MessageSquare className="size-3" /> {commentCount}
+            <MessageSquare className="size-3" /> {commenting.comments.length}
           </span>
         )}
         <span className="shrink-0 font-mono">

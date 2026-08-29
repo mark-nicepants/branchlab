@@ -39,12 +39,10 @@ import { cn } from "@/lib/utils";
 import {
   BotMessageSquare,
   ArrowUp,
-  CalendarClock,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   CircleX,
-  Cloud,
   Code2,
   Folder,
   FolderOpen,
@@ -54,7 +52,6 @@ import {
   GitPullRequest,
   GitPullRequestClosed,
   House,
-  Link2,
   ListFilter,
   ListTodo,
   Loader2,
@@ -73,7 +70,9 @@ import {
 import { Fragment, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useWorkspaceData } from "../../hooks/useWorkspaceData";
-import { openExternal, removeProject, removeWorkspace } from "../../lib/api";
+import { removeProject } from "../../lib/api";
+import { openPathWith, revealPath } from "../../lib/links";
+import { deleteWorkspaceWithConfirm } from "../../lib/deleteWorkspace";
 import { onWorkspaceSetup } from "../../lib/events";
 import { offerMarkTaskDone } from "../../lib/taskDone";
 import {
@@ -87,25 +86,18 @@ import {
 } from "../../lib/types";
 import { usePreferences } from "../PreferencesProvider";
 
-export type NavView = "home" | "my-work" | "automations" | "search";
+export type NavView = "home" | "my-work" | "search";
 
 interface NavItemDef {
   id: NavView;
   label: string;
   icon: typeof House;
-  enabled: boolean;
 }
 
 const NAV: NavItemDef[] = [
-  { id: "home", label: "Home", icon: House, enabled: true },
-  { id: "my-work", label: "My work", icon: ListTodo, enabled: true },
-  {
-    id: "automations",
-    label: "Automations",
-    icon: CalendarClock,
-    enabled: false,
-  },
-  { id: "search", label: "Search", icon: Search, enabled: true },
+  { id: "home", label: "Home", icon: House },
+  { id: "my-work", label: "My work", icon: ListTodo },
+  { id: "search", label: "Search", icon: Search },
 ];
 
 interface Props {
@@ -223,43 +215,12 @@ export function SessionsSidebar({
 
   async function deleteWorkspace(w: Workspace) {
     setDeleting(w.id, true);
-    try {
-      const unlinked = await removeWorkspace(w.id, false);
+    await deleteWorkspaceWithConfirm(w.id, (unlinked) => {
       onProjectsChanged();
       toast.success(`Deleted workspace ${workspaceLabel(w)}`);
       offerMarkTaskDone(unlinked);
-    } catch (e) {
-      const uncommitted = String(e).includes("uncommitted changes");
-      toast.error(
-        uncommitted
-          ? "Workspace has uncommitted changes"
-          : "Could not delete workspace",
-        {
-          description: uncommitted
-            ? "Deleting it will discard them."
-            : String(e),
-          action: {
-            label: "Delete anyway",
-            onClick: () => {
-              setDeleting(w.id, true);
-              void removeWorkspace(w.id, true)
-                .then((unlinked) => {
-                  onProjectsChanged();
-                  offerMarkTaskDone(unlinked);
-                })
-                .catch((e2) =>
-                  toast.error("Could not delete workspace", {
-                    description: String(e2),
-                  }),
-                )
-                .finally(() => setDeleting(w.id, false));
-            },
-          },
-        },
-      );
-    } finally {
-      setDeleting(w.id, false);
-    }
+    });
+    setDeleting(w.id, false);
   }
 
   function startRename(w: Workspace) {
@@ -274,7 +235,7 @@ export function SessionsSidebar({
   }
 
   function openIn(w: Workspace, app?: string) {
-    openExternal(w.path, app).catch((e) =>
+    (app ? openPathWith(w.path, app) : revealPath(w.path)).catch((e) =>
       toast.error("Could not open", { description: String(e) }),
     );
   }
@@ -341,7 +302,7 @@ export function SessionsSidebar({
             key={item.id}
             item={item}
             active={view === item.id}
-            onClick={() => item.enabled && onNavigate(item.id)}
+            onClick={() => onNavigate(item.id)}
           />
         ))}
       </nav>
@@ -601,29 +562,19 @@ function NavRow({
   active: boolean;
   onClick: () => void;
 }) {
-  const row = (
+  return (
     <button
       onClick={onClick}
-      disabled={!item.enabled}
       className={cn(
         "flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors",
         active
           ? "bg-sidebar-accent text-sidebar-accent-foreground"
           : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
-        !item.enabled &&
-          "opacity-40 hover:bg-transparent hover:text-muted-foreground",
       )}
     >
       <item.icon className="size-4 shrink-0" />
       {item.label}
     </button>
-  );
-  if (item.enabled) return row;
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>{row}</TooltipTrigger>
-      <TooltipContent side="right">Coming soon</TooltipContent>
-    </Tooltip>
   );
 }
 
@@ -1054,12 +1005,6 @@ function NewSessionMenu({
         <DropdownMenuLabel>Add project from</DropdownMenuLabel>
         <DropdownMenuItem onClick={onAddProject}>
           <FolderPlus className="size-4" /> Local folder or repository…
-        </DropdownMenuItem>
-        <DropdownMenuItem disabled>
-          <Cloud className="size-4" /> GitHub repository…
-        </DropdownMenuItem>
-        <DropdownMenuItem disabled>
-          <Link2 className="size-4" /> Repository URL…
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuLabel>Chat</DropdownMenuLabel>

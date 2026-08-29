@@ -32,6 +32,30 @@ function on<T>(name: string, cb: (payload: T) => void): Promise<UnlistenFn> {
   return listen<T>(name, (e) => cb(e.payload));
 }
 
+/** Bundle several subscriptions: `dispose()` unsubscribes everything (even
+ *  registrations still in flight — listen() is async), `ready` resolves true
+ *  once every listener is live (false if disposed first), and `disposed`
+ *  gates late async seeds. */
+export function listenAll(...subs: Array<Promise<UnlistenFn>>): {
+  ready: Promise<boolean>;
+  dispose: () => void;
+  readonly disposed: boolean;
+} {
+  const fns: UnlistenFn[] = [];
+  let disposed = false;
+  for (const p of subs) void p.then((fn) => (disposed ? fn() : fns.push(fn)));
+  return {
+    ready: Promise.all(subs).then(() => !disposed),
+    dispose: () => {
+      disposed = true;
+      fns.forEach((fn) => fn());
+    },
+    get disposed() {
+      return disposed;
+    },
+  };
+}
+
 /** Git state (diff stat for all workspaces; changes for the active one). */
 export function onWorkspaceGit(cb: (p: GitPayload) => void) {
   return on<GitPayload>("workspace:git", cb);

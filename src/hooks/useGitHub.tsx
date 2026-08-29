@@ -12,7 +12,7 @@ import {
   resyncGitHub,
   reviewInbox as fetchReviewInbox,
 } from "../lib/api";
-import { onGitHubAccounts, onReviewInbox } from "../lib/events";
+import { listenAll, onGitHubAccounts, onReviewInbox } from "../lib/events";
 import type { Account, Project, ReviewInboxItem } from "../lib/types";
 
 interface GitHubValue {
@@ -41,13 +41,8 @@ export function GitHubProvider({ children }: { children: React.ReactNode }) {
   const [inboxError, setInboxError] = useState<string | null>(null);
 
   useEffect(() => {
-    const unlisteners: Array<() => void> = [];
-    let cancelled = false;
-    const track = (p: Promise<() => void>) =>
-      void p.then((fn) => (cancelled ? fn() : unlisteners.push(fn)));
-
-    track(onGitHubAccounts((p) => setAccounts(p.accounts)));
-    track(
+    const subs = listenAll(
+      onGitHubAccounts((p) => setAccounts(p.accounts)),
       onReviewInbox((p) => {
         setReviewInbox(p.items);
         setInboxRefreshedAt(p.refreshedAt);
@@ -59,17 +54,14 @@ export function GitHubProvider({ children }: { children: React.ReactNode }) {
     // accounts have no other re-emit trigger, so a miss would leave the list
     // permanently empty. Direct reads can't be missed.
     void listAccounts().then((a) => {
-      if (!cancelled) setAccounts(a);
+      if (!subs.disposed) setAccounts(a);
     });
     void fetchReviewInbox().then((items) => {
-      if (!cancelled) setReviewInbox(items);
+      if (!subs.disposed) setReviewInbox(items);
     });
     // Also nudge a re-emit so inbox refreshedAt/error metadata populates.
     void resyncGitHub();
-    return () => {
-      cancelled = true;
-      unlisteners.forEach((fn) => fn());
-    };
+    return subs.dispose;
   }, []);
 
   const accountById = useMemo(() => {

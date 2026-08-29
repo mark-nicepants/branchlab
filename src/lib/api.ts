@@ -50,11 +50,6 @@ export function removeProject(projectId: string): Promise<void> {
   return invoke<void>("remove_project", { projectId });
 }
 
-/** Start (or reuse) the opencode server for a workspace; returns its base URL. */
-export function startServer(workspaceId: string): Promise<ServerInfo> {
-  return invoke<ServerInfo>("start_server", { workspaceId });
-}
-
 // ── M2: worktrees & fleet ──
 
 export function listBranches(projectId: string): Promise<string[]> {
@@ -464,14 +459,6 @@ export function openDevtools(): Promise<void> {
   return invoke<void>("open_devtools");
 }
 
-/**
- * Open a path externally. Pass a macOS app name (`open -a`, e.g. "Terminal",
- * "Visual Studio Code"); omit `app` to reveal it in Finder.
- */
-export function openExternal(path: string, app?: string): Promise<void> {
-  return invoke<void>("open_external", { path, app: app ?? null });
-}
-
 /** Absolute path of the backend debug logfile (null if logging failed to init). */
 export function logPath(): Promise<string | null> {
   return invoke<string | null>("log_path");
@@ -574,14 +561,6 @@ export function taskMove(
   position: number,
 ): Promise<void> {
   return invoke<void>("task_move", { taskId, columnId, position });
-}
-
-/** Link a card to its session; the backend moves it to the active column. */
-export function taskLinkWorkspace(
-  taskId: string,
-  workspaceId: string,
-): Promise<void> {
-  return invoke<void>("task_link_workspace", { taskId, workspaceId });
 }
 
 /** Read-only transcript for a possibly-deleted workspace (the chat survives

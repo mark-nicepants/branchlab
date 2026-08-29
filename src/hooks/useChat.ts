@@ -17,6 +17,7 @@ import {
   chatSetConfig,
 } from "../lib/api";
 import {
+  listenAll,
   onChatBlock,
   onChatCommands,
   onChatConfig,
@@ -39,20 +40,10 @@ import type {
 /** Merge a streamed block into a turn's block list: upsert by blockId. Every
  *  event carries the full authoritative block, so this is idempotent — a
  *  duplicated, reordered, or dropped delivery cannot corrupt the text (the
- *  next event heals it). The duplicate log is diagnostic: it tells us whether
- *  the event transport actually double-delivers (§thought-doubling). */
+ *  next event heals it). */
 function applyBlock(blocks: Block[], block: Block): Block[] {
   const idx = blocks.findIndex((b) => b.blockId === block.blockId);
   if (idx === -1) return [...blocks, block];
-  const cur = blocks[idx];
-  if (
-    import.meta.env.DEV &&
-    (cur.type === "text" || cur.type === "reasoning") &&
-    cur.type === block.type &&
-    cur.text === block.text
-  ) {
-    console.debug("[chat] duplicate chat:block delivery", block.blockId);
-  }
   const next = blocks.slice();
   next[idx] = block;
   return next;
@@ -133,14 +124,7 @@ export function useChat(workspaceId: string): ChatStore {
 
   // Subscribe to deltas for this workspace.
   useEffect(() => {
-    const unsubs: Array<() => void> = [];
-    let cancelled = false;
     setSubscribed(false);
-    const registrations: Array<Promise<unknown>> = [];
-    const track = (p: Promise<() => void>) => {
-      registrations.push(p);
-      void p.then((fn) => (cancelled ? fn() : unsubs.push(fn)));
-    };
     const mine =
       <T extends { workspaceId: string }>(cb: (p: T) => void) =>
       (p: T) => {
@@ -154,8 +138,8 @@ export function useChat(workspaceId: string): ChatStore {
       );
     };
 
-    track(onChatEntry(mine((p) => upsert(p.entry))));
-    track(
+    const subs = listenAll(
+      onChatEntry(mine((p) => upsert(p.entry))),
       onChatBlock(
         mine((p) =>
           setById((prev) => {
@@ -171,8 +155,6 @@ export function useChat(workspaceId: string): ChatStore {
           }),
         ),
       ),
-    );
-    track(
       onChatTurn(
         mine((p) =>
           setById((prev) => {
@@ -191,11 +173,9 @@ export function useChat(workspaceId: string): ChatStore {
           }),
         ),
       ),
-    );
-    track(onChatConfig(mine((p) => setConfig(p.options))));
-    track(onChatContext(mine((p) => setContext({ used: p.used, max: p.max }))));
-    track(onChatCommands(mine((p) => setCommands(p.commands))));
-    track(
+      onChatConfig(mine((p) => setConfig(p.options))),
+      onChatContext(mine((p) => setContext({ used: p.used, max: p.max }))),
+      onChatCommands(mine((p) => setCommands(p.commands))),
       onChatPermission(
         mine((p) =>
           setPermissions((prev) =>
@@ -203,19 +183,14 @@ export function useChat(workspaceId: string): ChatStore {
           ),
         ),
       ),
+      onChatReset(mine(() => void reload())),
     );
-    track(onChatReset(mine(() => void reload())));
 
     // listen() registration is async; signal when every subscription is live
     // so callers can safely fire programmatic sends (init prompts).
-    void Promise.all(registrations).then(() => {
-      if (!cancelled) setSubscribed(true);
-    });
+    void subs.ready.then((live) => live && setSubscribed(true));
 
-    return () => {
-      cancelled = true;
-      unsubs.forEach((f) => f());
-    };
+    return subs.dispose;
   }, [workspaceId, reload]);
 
   const entries = useMemo(

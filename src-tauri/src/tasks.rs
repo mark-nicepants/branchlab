@@ -19,6 +19,8 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
+use crate::util::{new_id, now_ms};
+
 /// Gap between positions when (re)numbering from scratch.
 const STRIDE: f64 = 1024.0;
 /// Below this neighbor gap a column is renumbered before inserting.
@@ -185,11 +187,6 @@ pub struct TaskStore {
     file: PathBuf,
 }
 
-fn now_ms() -> i64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
-}
-
 /// Append an activity entry (caller holds the lock and persists).
 fn record(data: &mut BoardData, task_id: &str, kind: &str, actor: &str, body: impl Into<String>) {
     data.activity.push(ActivityEntry {
@@ -204,10 +201,6 @@ fn record(data: &mut BoardData, task_id: &str, kind: &str, actor: &str, body: im
 
 fn sanitize_filename(name: &str) -> String {
     name.chars().map(|c| if c.is_alphanumeric() || "._-".contains(c) { c } else { '_' }).collect()
-}
-
-fn new_id() -> String {
-    ulid::Ulid::generate().to_string()
 }
 
 impl TaskStore {
@@ -1001,18 +994,6 @@ pub fn task_move(
     tasks: State<TaskStore>,
 ) -> Result<(), String> {
     tasks.move_task(&task_id, &column_id, position)?;
-    emit_changed(&app, &tasks);
-    Ok(())
-}
-
-#[tauri::command]
-pub fn task_link_workspace(
-    task_id: String,
-    workspace_id: String,
-    app: AppHandle,
-    tasks: State<TaskStore>,
-) -> Result<(), String> {
-    tasks.link_workspace(&task_id, &workspace_id)?;
     emit_changed(&app, &tasks);
     Ok(())
 }

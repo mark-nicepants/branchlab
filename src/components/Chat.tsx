@@ -27,34 +27,7 @@ import { usePreferences } from "./PreferencesProvider";
 import { SlashCommandPalette } from "./SlashCommandPalette";
 
 /** Lifecycle actions exposed to the parent by the composer (commit/merge/push/pr). */
-export type WorkspaceAction =
-  | {
-      kind: "commit";
-      message?: string;
-      prompt: string;
-      display: string;
-      onFinish?: OnFinishAction;
-    }
-  | {
-      kind: "merge";
-      prompt: string;
-      display: string;
-      onFinish?: OnFinishAction;
-    }
-  | { kind: "push"; prompt: string; display: string; onFinish?: OnFinishAction }
-  | {
-      kind: "pr";
-      title?: string;
-      body?: string;
-      prompt: string;
-      display: string;
-      onFinish?: OnFinishAction;
-    };
-
-/** Action presented to the user after a lifecycle action completes. */
-export type OnFinishAction =
-  | { kind: "remove_workspace"; message: string }
-  | { kind: "try_again"; message: string };
+export type WorkspaceAction = { prompt: string; display: string };
 
 interface Props {
   workspace: Workspace;
@@ -407,24 +380,11 @@ export function Chat({
                 return;
               }
             }
-            // Enter sends; Shift/⌘/Ctrl+Enter inserts a newline.
+            // Enter sends; Shift+Enter (native) and ⌘/Ctrl+Enter (the
+            // composer's handler) insert a newline.
             if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
               e.preventDefault();
               void send();
-              return;
-            }
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-              // Textareas don't insert a newline on ⌘/Ctrl+Enter natively —
-              // do it by hand so the modifier means "literal newline".
-              e.preventDefault();
-              const el = e.currentTarget;
-              const start = el.selectionStart ?? input.length;
-              const end = el.selectionEnd ?? input.length;
-              const next = input.slice(0, start) + "\n" + input.slice(end);
-              setInput(next);
-              requestAnimationFrame(() => {
-                el.selectionStart = el.selectionEnd = start + 1;
-              });
             }
           }}
         />

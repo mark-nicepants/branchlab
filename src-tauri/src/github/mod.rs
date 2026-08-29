@@ -15,9 +15,9 @@ pub mod login;
 pub mod model;
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{ChildStdin, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -30,6 +30,7 @@ use crate::github::account::{
 use crate::github::client::GithubClient;
 use crate::github::model::{AccountView, LoginEvent, ReviewItem};
 use crate::project::Registry;
+use crate::util::now_ms;
 use tauri::Manager;
 
 /// How often the cross-repo review inbox is refreshed (slower than the
@@ -164,7 +165,9 @@ impl GithubManager {
                     continue;
                 }
             };
-            match client.review_inbox().await {
+            let result = client.review_inbox().await;
+            self.flag_stale_token(&acct.id, &result);
+            match result {
                 Ok(mut list) => {
                     for it in &mut list {
                         it.account_id = acct.id.clone();
@@ -172,15 +175,7 @@ impl GithubManager {
                     }
                     items.extend(list);
                 }
-                Err(e) => {
-                    if e.contains("401") || e.to_lowercase().contains("bad credentials") {
-                        self.inner.tokens.lock().unwrap().remove(&acct.id);
-                        self.inner.clients.lock().unwrap().remove(&acct.id);
-                        self.inner.store.set_status(&acct.id, AccountStatus::NeedsReauth);
-                        self.emit_accounts();
-                    }
-                    errors.push(format!("{}: {e}", acct.login));
-                }
+                Err(e) => errors.push(format!("{}: {e}", acct.login)),
             }
         }
         // Newest first.
@@ -507,67 +502,14 @@ impl GithubManager {
 
         // stderr reader: gh prints its prompt here. It owns stdin so it can press
         // Enter (letting gh open the browser) once it has surfaced the one-time
-        // code to the UI.
+        // code to the UI. The stdout reader is the same scan without stdin —
+        // drained so gh never blocks on a full pipe, and a fallback in case a gh
+        // version prints the code there instead.
         let h_err = stderr.map(|stderr| {
-            let app = app.clone();
-            let login_id = login_id.to_string();
-            let url = url.clone();
-            let err_buf = err_buf.clone();
-            let mut stdin = stdin;
-            std::thread::spawn(move || {
-                let reader = BufReader::new(stderr);
-                let mut pressed = false;
-                for line in reader.lines().map_while(Result::ok) {
-                    {
-                        let mut b = err_buf.lock().unwrap();
-                        b.push_str(&line);
-                        b.push('\n');
-                    }
-                    if !pressed {
-                        if let Some(code) = login::extract_device_code(&line) {
-                            let mut ev = LoginEvent::phase(&login_id, "awaitingCode");
-                            ev.code = Some(code);
-                            ev.url = Some(url.clone());
-                            events::emit_login(&app, &ev);
-                            if let Some(si) = stdin.as_mut() {
-                                let _ = si.write_all(b"\n");
-                                let _ = si.flush();
-                            }
-                            events::emit_login(&app, &LoginEvent::phase(&login_id, "polling"));
-                            pressed = true;
-                        }
-                    }
-                }
-            })
+            spawn_login_reader(app.clone(), login_id.to_string(), url.clone(), err_buf.clone(), stderr, stdin)
         });
-
-        // stdout reader: drain it (so gh never blocks on a full pipe) and scan as
-        // a fallback in case a gh version prints the code here instead.
         let h_out = stdout.map(|stdout| {
-            let app = app.clone();
-            let login_id = login_id.to_string();
-            let url = url.clone();
-            let err_buf = err_buf.clone();
-            std::thread::spawn(move || {
-                let reader = BufReader::new(stdout);
-                let mut seen = false;
-                for line in reader.lines().map_while(Result::ok) {
-                    {
-                        let mut b = err_buf.lock().unwrap();
-                        b.push_str(&line);
-                        b.push('\n');
-                    }
-                    if !seen {
-                        if let Some(code) = login::extract_device_code(&line) {
-                            let mut ev = LoginEvent::phase(&login_id, "awaitingCode");
-                            ev.code = Some(code);
-                            ev.url = Some(url.clone());
-                            events::emit_login(&app, &ev);
-                            seen = true;
-                        }
-                    }
-                }
-            })
+            spawn_login_reader(app.clone(), login_id.to_string(), url.clone(), err_buf.clone(), stdout, None)
         });
 
         // Poll for completion while honoring cancellation.
@@ -619,7 +561,41 @@ impl GithubManager {
     }
 }
 
-/// Current time in epoch milliseconds (for inbox `refreshedAt`).
-fn now_ms() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+/// Drain one of the `gh auth login` child's output pipes on its own thread:
+/// append every line to `err_buf` (for the failure tail) and scan for the
+/// one-time device code, surfacing it to the UI once. When the reader owns the
+/// child's stdin, it also presses Enter (letting gh open the browser) and
+/// advances the login to "polling".
+fn spawn_login_reader(
+    app: AppHandle,
+    login_id: String,
+    url: String,
+    err_buf: Arc<Mutex<String>>,
+    reader: impl Read + Send + 'static,
+    mut stdin: Option<ChildStdin>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut seen = false;
+        for line in BufReader::new(reader).lines().map_while(Result::ok) {
+            {
+                let mut b = err_buf.lock().unwrap();
+                b.push_str(&line);
+                b.push('\n');
+            }
+            if !seen {
+                if let Some(code) = login::extract_device_code(&line) {
+                    let mut ev = LoginEvent::phase(&login_id, "awaitingCode");
+                    ev.code = Some(code);
+                    ev.url = Some(url.clone());
+                    events::emit_login(&app, &ev);
+                    if let Some(si) = stdin.as_mut() {
+                        let _ = si.write_all(b"\n");
+                        let _ = si.flush();
+                        events::emit_login(&app, &LoginEvent::phase(&login_id, "polling"));
+                    }
+                    seen = true;
+                }
+            }
+        }
+    })
 }

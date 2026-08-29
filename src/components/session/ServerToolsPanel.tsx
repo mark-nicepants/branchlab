@@ -4,9 +4,9 @@ import {
   logPath,
   mcpConnect,
   mcpDisconnect,
-  openExternal,
   workspaceTools,
 } from "../../lib/api";
+import { revealPath } from "../../lib/links";
 import type { LspStatus, McpStatus } from "../../lib/types";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
@@ -52,7 +52,7 @@ export function ServerToolsPanel({ workspaceId, onRestart }: Props) {
 
   const openLogs = useCallback(async () => {
     const p = await logPath();
-    if (p) void openExternal(p);
+    if (p) void revealPath(p);
   }, []);
 
   useEffect(() => {

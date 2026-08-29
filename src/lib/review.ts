@@ -2,7 +2,7 @@
 // chat message built from them (a typed display payload rendered as a review
 // card in the transcript, full context for the AI).
 
-import { encodeTypedDisplay } from "./chatDisplay";
+import { encodeTypedDisplay, plural } from "./chatDisplay";
 
 export interface ReviewComment {
   id: string;
@@ -21,8 +21,7 @@ export type NewReviewComment = Omit<ReviewComment, "id">;
 
 /** Last path segment, for compact `name:line` labels. */
 export function fileName(path: string): string {
-  const slash = path.lastIndexOf("/");
-  return slash >= 0 ? path.slice(slash + 1) : path;
+  return path.split("/").pop() ?? path;
 }
 
 /** Whether a changed file was edited in the given turn's file list. The turn
@@ -67,7 +66,6 @@ export function buildReviewMessage(comments: ReviewComment[]): {
   sent: string;
 } {
   const n = comments.length;
-  const plural = (k: number, w: string) => `${k} ${w}${k === 1 ? "" : "s"}`;
 
   const display = encodeTypedDisplay({
     $kind: "review",

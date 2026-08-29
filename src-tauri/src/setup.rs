@@ -26,6 +26,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::chat::manager::{ChatManager, SetupCard};
 use crate::chat::model::{SetupStep, SystemKind, ToolStatus};
 use crate::project::{Registry, SetupState};
+use crate::util::now_ms;
 
 /// Setup scripts (installs) get plenty of time; teardown stays snappy so
 /// deleting a workspace can never hang the UI for long.
@@ -170,41 +171,20 @@ impl SetupManager {
         let (tx, rx) = std::sync::mpsc::channel::<String>();
         pipe_output(&mut child, tx);
 
-        let deadline = Instant::now() + SETUP_TIMEOUT;
         let mut last_flush = Instant::now();
-        loop {
-            // Drain pending output into the bounded tail.
-            let mut dirty = false;
-            while let Ok(line) = rx.try_recv() {
-                crate::logf!("setup", "[{ws_id}] {line}");
-                steps[i].log.push(line);
-                if steps[i].log.len() > LOG_TAIL {
-                    let drop = steps[i].log.len() - LOG_TAIL;
-                    steps[i].log.drain(..drop);
-                }
-                dirty = true;
+        wait_bounded(child, rx, Instant::now() + SETUP_TIMEOUT, |line| {
+            crate::logf!("setup", "[{ws_id}] {line}");
+            // Drain output into the bounded tail.
+            steps[i].log.push(line);
+            if steps[i].log.len() > LOG_TAIL {
+                let drop = steps[i].log.len() - LOG_TAIL;
+                steps[i].log.drain(..drop);
             }
-            if dirty && last_flush.elapsed() >= CARD_FLUSH {
+            if last_flush.elapsed() >= CARD_FLUSH {
                 chat.update_setup_card(ws_id, card, SystemKind::Info, "Setting up workspace".into(), steps.to_vec());
                 last_flush = Instant::now();
             }
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    let code = status.code().unwrap_or(-1);
-                    if code != 0 {
-                        steps[i].log.push(format!("exited with {code}"));
-                    }
-                    return code == 0;
-                }
-                _ if Instant::now() >= deadline => {
-                    kill_group(&child);
-                    let _ = child.wait();
-                    steps[i].log.push("timed out — killed".into());
-                    return false;
-                }
-                _ => std::thread::sleep(Duration::from_millis(200)),
-            }
-        }
+        })
     }
 
     /// Best-effort teardown before workspace removal. Blocking, bounded by
@@ -226,22 +206,9 @@ impl SetupManager {
         };
         let (tx, rx) = std::sync::mpsc::channel::<String>();
         pipe_output(&mut child, tx);
-        let deadline = Instant::now() + TEARDOWN_TIMEOUT;
-        loop {
-            while let Ok(line) = rx.try_recv() {
-                crate::logf!("setup", "[{workspace_id}] {line}");
-            }
-            match child.try_wait() {
-                Ok(Some(status)) => return Some(status.code() == Some(0)),
-                _ if Instant::now() >= deadline => {
-                    kill_group(&child);
-                    let _ = child.wait();
-                    crate::logf!("setup", "teardown timed out ws={workspace_id} — killed");
-                    return Some(false);
-                }
-                _ => std::thread::sleep(Duration::from_millis(200)),
-            }
-        }
+        Some(wait_bounded(child, rx, Instant::now() + TEARDOWN_TIMEOUT, |line| {
+            crate::logf!("setup", "[{workspace_id}] {line}");
+        }))
     }
 
     fn emit(&self, workspace_id: &str, running: bool, ok: Option<bool>) {
@@ -309,16 +276,43 @@ fn step(label: &str, status: ToolStatus) -> SetupStep {
     SetupStep { label: label.to_string(), status, log: Vec::new(), started_at: Some(now_ms()), ended_at: None }
 }
 
-fn now_ms() -> i64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
-}
-
 fn fmt_secs(secs: i64) -> String {
     if secs >= 60 {
         format!("{}m {}s", secs / 60, secs % 60)
     } else {
         format!("{secs}s")
+    }
+}
+
+/// Drain `rx` line-wise into `on_line` while polling the child, killing the
+/// whole process group at `deadline`. A non-zero exit and a timeout each get a
+/// final `on_line` note. Returns success (exit code 0).
+fn wait_bounded(
+    mut child: Child,
+    rx: std::sync::mpsc::Receiver<String>,
+    deadline: Instant,
+    mut on_line: impl FnMut(String),
+) -> bool {
+    loop {
+        while let Ok(line) = rx.try_recv() {
+            on_line(line);
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let code = status.code().unwrap_or(-1);
+                if code != 0 {
+                    on_line(format!("exited with {code}"));
+                }
+                return code == 0;
+            }
+            _ if Instant::now() >= deadline => {
+                kill_group(&child);
+                let _ = child.wait();
+                on_line("timed out — killed".into());
+                return false;
+            }
+            _ => std::thread::sleep(Duration::from_millis(200)),
+        }
     }
 }
 

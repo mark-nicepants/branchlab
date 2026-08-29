@@ -126,7 +126,7 @@ impl ChatDb {
         self.conn
             .execute("UPDATE engine_sessions SET active = 0 WHERE conversation_id = ?1", params![conversation_id])
             .map_err(|e| e.to_string())?;
-        let reason_s = reason_str(reason);
+        let reason_s = enum_str(&reason);
         self.conn
             .execute(
                 "INSERT INTO engine_sessions (conversation_id, acp_session_id, engine, reason, started_at, active)
@@ -234,7 +234,7 @@ impl ChatDb {
         for row in rows {
             let (seq, data) = row.map_err(|e| e.to_string())?;
             let mut entry: Entry = serde_json::from_str(&data).map_err(|e| e.to_string())?;
-            set_seq(&mut entry, seq); // the column is authoritative
+            entry.set_seq(seq); // the column is authoritative
             out.push(entry);
         }
         out.reverse(); // DESC query -> ascending result
@@ -261,7 +261,7 @@ impl ChatDb {
             if let Entry::Assistant(a) = &mut entry {
                 a.status = TurnStatus::Failed;
                 a.summary = crate::chat::model::compute_collapse(&a.blocks, true);
-                set_seq(&mut entry, seq);
+                entry.set_seq(seq);
                 self.update_entry(&entry)?;
                 n += 1;
             }
@@ -270,52 +270,18 @@ impl ChatDb {
     }
 }
 
-fn reason_str(r: SessionReason) -> &'static str {
-    match r {
-        SessionReason::Started => "started",
-        SessionReason::Compacted => "compacted",
-        SessionReason::Cleared => "cleared",
-        SessionReason::Reloaded => "reloaded",
-    }
-}
-
-fn status_str(s: TurnStatus) -> &'static str {
-    match s {
-        TurnStatus::Queued => "queued",
-        TurnStatus::Streaming => "streaming",
-        TurnStatus::AwaitingPermission => "awaitingPermission",
-        TurnStatus::Completed => "completed",
-        TurnStatus::Cancelled => "cancelled",
-        TurnStatus::Failed => "failed",
-    }
+/// The serde-derived wire string of a unit enum variant (the same string the
+/// entry's JSON blob uses, so the queryable columns can never drift from it).
+fn enum_str<T: serde::Serialize>(v: &T) -> String {
+    serde_json::to_value(v).ok().and_then(|s| s.as_str().map(str::to_string)).unwrap_or_default()
 }
 
 /// Column values (kind, status, origin, created_at) derived from an entry.
-fn entry_columns(entry: &Entry) -> (&'static str, Option<&'static str>, Option<&'static str>, i64) {
+fn entry_columns(entry: &Entry) -> (&'static str, Option<String>, Option<String>, i64) {
     match entry {
-        Entry::User(e) => ("user", None, Some(origin_str(e.origin)), e.created_at),
-        Entry::Assistant(e) => ("assistant", Some(status_str(e.status)), Some(origin_str(e.origin)), e.started_at),
+        Entry::User(e) => ("user", None, Some(enum_str(&e.origin)), e.created_at),
+        Entry::Assistant(e) => ("assistant", Some(enum_str(&e.status)), Some(enum_str(&e.origin)), e.started_at),
         Entry::System(e) => ("system", None, None, e.created_at),
-    }
-}
-
-fn origin_str(o: crate::chat::model::TurnOrigin) -> &'static str {
-    use crate::chat::model::TurnOrigin::*;
-    match o {
-        User => "user",
-        Slash => "slash",
-        Lifecycle => "lifecycle",
-        Init => "init",
-        Autofix => "autofix",
-        Task => "task",
-    }
-}
-
-fn set_seq(entry: &mut Entry, seq: i64) {
-    match entry {
-        Entry::User(e) => e.seq = seq,
-        Entry::Assistant(e) => e.seq = seq,
-        Entry::System(e) => e.seq = seq,
     }
 }
 

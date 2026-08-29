@@ -149,6 +149,30 @@ pub struct Workspace {
     pub setup: SetupState,
 }
 
+impl Workspace {
+    /// A workspace row with the common defaults; call sites override what
+    /// differs via struct-update syntax.
+    fn new(id: String, project_id: String, kind: WorkspaceKind, path: String) -> Self {
+        Self {
+            id,
+            project_id,
+            kind,
+            path,
+            branch: None,
+            name: None,
+            base_branch: None,
+            init_prompt: None,
+            autofix_mode: AutofixMode::default(),
+            model: None,
+            effort: None,
+            pr_number: None,
+            pr_is_fork: false,
+            pr: None,
+            setup: SetupState::Ready,
+        }
+    }
+}
+
 /// Workspace provisioning state. `Provisioning` covers the whole background
 /// pipeline (worktree checkout + setup script); `Failed` is recoverable via
 /// the chat card's Retry.
@@ -211,27 +235,21 @@ pub struct PrWorkspaceMeta {
 }
 
 fn default_branch_for(repo: &Path) -> Option<String> {
+    let repo = repo.to_str().unwrap_or("");
     // 1. symbolic ref (e.g. refs/remotes/origin/HEAD -> origin/main)
-    if let Ok(out) = std::process::Command::new("git")
-        .args(["symbolic-ref", "refs/remotes/origin/HEAD", "--short"])
-        .current_dir(repo)
-        .output()
-    {
-        if out.status.success() {
-            let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if let Some(b) = branch.strip_prefix("origin/") {
-                return Some(b.to_string());
-            }
+    if let Ok(out) = git::git(repo, &["symbolic-ref", "refs/remotes/origin/HEAD", "--short"]) {
+        if let Some(b) = out.trim().strip_prefix("origin/") {
+            return Some(b.to_string());
         }
     }
     // 2. known primary branches
     for candidate in ["main", "master", "develop"] {
-        if git::has_branch(repo.to_str().unwrap_or(""), candidate) {
+        if git::has_branch(repo, candidate) {
             return Some(candidate.to_string());
         }
     }
     // 3. fall back to current branch
-    current_branch(repo)
+    git::current_branch(repo).ok()
 }
 
 pub struct Registry {
@@ -268,21 +286,8 @@ impl Registry {
         let backfilled = !missing.is_empty();
         for (id, root) in missing {
             data.workspaces.push(Workspace {
-                id: format!("{id}-base"),
-                project_id: id,
-                kind: WorkspaceKind::Base,
-                branch: current_branch(std::path::Path::new(&root)),
-                path: root,
-                name: None,
-                base_branch: None,
-                init_prompt: None,
-                autofix_mode: AutofixMode::default(),
-                model: None,
-                effort: None,
-                pr_number: None,
-                pr_is_fork: false,
-                pr: None,
-                setup: SetupState::Ready,
+                branch: git::current_branch(&root).ok(),
+                ..Workspace::new(format!("{id}-base"), id, WorkspaceKind::Base, root)
             });
         }
         let registry = Self { data: Mutex::new(data), file, worktrees_dir, quick_chats_dir };
@@ -298,6 +303,15 @@ impl Registry {
         }
         if let Ok(json) = serde_json::to_string_pretty(data) {
             let _ = std::fs::write(&self.file, json);
+        }
+    }
+
+    /// Apply `f` to a workspace and persist when it reports a change.
+    fn update_ws(&self, workspace_id: &str, f: impl FnOnce(&mut Workspace) -> bool) {
+        let mut data = self.data.lock().unwrap();
+        let changed = data.workspaces.iter_mut().find(|w| w.id == workspace_id).map(f).unwrap_or(false);
+        if changed {
+            self.persist(&data);
         }
     }
 
@@ -325,21 +339,8 @@ impl Registry {
                 estimate_unit: None,
             });
             data.workspaces.push(Workspace {
-                id: format!("{id}-base"),
-                project_id: id.clone(),
-                kind: WorkspaceKind::Base,
-                path: root.clone(),
-                branch: current_branch(&canonical),
-                name: None,
-                base_branch: None,
-                init_prompt: None,
-                autofix_mode: AutofixMode::default(),
-                model: None,
-                effort: None,
-                pr_number: None,
-                pr_is_fork: false,
-                pr: None,
-                setup: SetupState::Ready,
+                branch: git::current_branch(&root).ok(),
+                ..Workspace::new(format!("{id}-base"), id.clone(), WorkspaceKind::Base, root.clone())
             });
             self.persist(&data);
         }
@@ -350,12 +351,7 @@ impl Registry {
     /// the prompt has been successfully delivered to the agent, so it is sent
     /// at most once; an undelivered prompt survives for the next open.
     pub fn clear_init_prompt(&self, workspace_id: &str) {
-        let mut data = self.data.lock().unwrap();
-        let cleared =
-            data.workspaces.iter_mut().find(|w| w.id == workspace_id).is_some_and(|w| w.init_prompt.take().is_some());
-        if cleared {
-            self.persist(&data);
-        }
+        self.update_ws(workspace_id, |w| w.init_prompt.take().is_some());
     }
 
     /// Rename a fresh worktree's codename branch to the AI-proposed name
@@ -391,8 +387,7 @@ impl Registry {
     /// merge/push/PR flows read the branch from the registry. Called by the
     /// git watcher on every recompute; only writes when the value changed.
     pub fn set_workspace_branch(&self, workspace_id: &str, branch: &str) {
-        let mut data = self.data.lock().unwrap();
-        let changed = data.workspaces.iter_mut().find(|w| w.id == workspace_id).is_some_and(|w| {
+        self.update_ws(workspace_id, |w| {
             if w.branch.as_deref() == Some(branch) {
                 false
             } else {
@@ -400,52 +395,49 @@ impl Registry {
                 true
             }
         });
-        if changed {
-            self.persist(&data);
-        }
     }
 
     /// Set a workspace's display name (AI-generated once, or manual).
     pub fn rename_workspace(&self, workspace_id: &str, name: &str) {
-        let mut data = self.data.lock().unwrap();
-        if let Some(w) = data.workspaces.iter_mut().find(|w| w.id == workspace_id) {
+        self.update_ws(workspace_id, |w| {
             w.name = Some(name.to_string());
-        }
-        self.persist(&data);
+            true
+        });
     }
 
     /// Set a workspace's PR autofix mode (persisted).
     pub fn set_autofix_mode(&self, workspace_id: &str, mode: AutofixMode) {
-        let mut data = self.data.lock().unwrap();
-        if let Some(w) = data.workspaces.iter_mut().find(|w| w.id == workspace_id) {
+        self.update_ws(workspace_id, |w| {
             w.autofix_mode = mode;
-        }
-        self.persist(&data);
+            true
+        });
     }
 
     /// Persist the last polled PR snapshot for a workspace so the UI can seed
     /// its pipeline instantly on restart (before the first live poll). Only
     /// writes when the value actually changed, to avoid churning the file.
     pub fn set_workspace_pr(&self, workspace_id: &str, pr: Option<git::PrStatus>) {
-        let mut data = self.data.lock().unwrap();
-        if let Some(w) = data.workspaces.iter_mut().find(|w| w.id == workspace_id) {
-            if w.pr != pr {
+        self.update_ws(workspace_id, |w| {
+            if w.pr == pr {
+                false
+            } else {
                 w.pr = pr;
-                self.persist(&data);
+                true
             }
-        }
+        });
     }
 
     /// Persist a workspace's last selected model (`None` = global default).
     /// Only writes when the value actually changed, to avoid churning the file.
     pub fn set_workspace_model(&self, workspace_id: &str, model: Option<String>) {
-        let mut data = self.data.lock().unwrap();
-        if let Some(w) = data.workspaces.iter_mut().find(|w| w.id == workspace_id) {
-            if w.model != model {
+        self.update_ws(workspace_id, |w| {
+            if w.model == model {
+                false
+            } else {
                 w.model = model;
-                self.persist(&data);
+                true
             }
-        }
+        });
     }
 
     /// A workspace's persisted model, if any.
@@ -457,13 +449,14 @@ impl Registry {
     /// Persist a workspace's preferred thinking level (`None` = model default).
     /// Only writes when the value actually changed, to avoid churning the file.
     pub fn set_workspace_effort(&self, workspace_id: &str, effort: Option<String>) {
-        let mut data = self.data.lock().unwrap();
-        if let Some(w) = data.workspaces.iter_mut().find(|w| w.id == workspace_id) {
-            if w.effort != effort {
+        self.update_ws(workspace_id, |w| {
+            if w.effort == effort {
+                false
+            } else {
                 w.effort = effort;
-                self.persist(&data);
+                true
             }
-        }
+        });
     }
 
     /// A workspace's persisted thinking level, if any.
@@ -589,7 +582,7 @@ impl Registry {
         let root = self.repo_root(project_id).ok_or("unknown project")?;
         let base = match base {
             Some(b) if !b.is_empty() => b,
-            _ => current_branch(Path::new(&root)).ok_or("cannot determine base branch")?,
+            _ => git::current_branch(&root).map_err(|_| "cannot determine base branch")?,
         };
 
         let existing = git::list_branches(&root).unwrap_or_default();
@@ -619,21 +612,11 @@ impl Registry {
         // create path, in `provision_worktree` — the workspace registers as
         // `Provisioning` so the UI can open it instantly.
         let ws = Workspace {
-            id: id_for(&path),
-            project_id: project_id.to_string(),
-            kind: WorkspaceKind::Worktree,
-            path,
             branch: Some(branch),
-            name: None,
             base_branch: Some(base),
             init_prompt,
-            autofix_mode: AutofixMode::default(),
-            model: None,
-            effort: None,
-            pr_number: None,
-            pr_is_fork: false,
-            pr: None,
             setup: SetupState::Provisioning,
+            ..Workspace::new(id_for(&path), project_id.to_string(), WorkspaceKind::Worktree, path)
         };
         let mut data = self.data.lock().unwrap();
         data.workspaces.push(ws.clone());
@@ -702,13 +685,14 @@ impl Registry {
     }
 
     pub fn set_setup_state(&self, workspace_id: &str, state: SetupState) {
-        let mut data = self.data.lock().unwrap();
-        if let Some(w) = data.workspaces.iter_mut().find(|w| w.id == workspace_id) {
-            if w.setup != state {
+        self.update_ws(workspace_id, |w| {
+            if w.setup == state {
+                false
+            } else {
                 w.setup = state;
-                self.persist(&data);
+                true
             }
-        }
+        });
     }
 
     /// Create a quick chat: an app-managed empty scratch directory (no git
@@ -730,21 +714,8 @@ impl Registry {
         let path = dir.to_string_lossy().into_owned();
 
         let ws = Workspace {
-            id: id_for(&path),
-            project_id: QUICK_CHAT_PROJECT_ID.to_string(),
-            kind: WorkspaceKind::QuickChat,
-            path,
-            branch: None,
-            name: None,
-            base_branch: None,
             init_prompt,
-            autofix_mode: AutofixMode::default(),
-            model: None,
-            effort: None,
-            pr_number: None,
-            pr_is_fork: false,
-            pr: None,
-            setup: SetupState::Ready,
+            ..Workspace::new(id_for(&path), QUICK_CHAT_PROJECT_ID.to_string(), WorkspaceKind::QuickChat, path)
         };
         let mut data = self.data.lock().unwrap();
         data.workspaces.push(ws.clone());
@@ -771,21 +742,13 @@ impl Registry {
             }
         }
         let ws = Workspace {
-            id: id_for(&path),
-            project_id: project_id.to_string(),
-            kind: WorkspaceKind::Worktree,
-            path,
             branch: Some(branch),
             name: Some(meta.title),
             base_branch: Some(meta.base_ref),
-            init_prompt: None,
-            autofix_mode: AutofixMode::default(),
-            model: None,
-            effort: None,
             pr_number: Some(meta.number),
             pr_is_fork: meta.is_fork,
-            pr: None,
             setup: SetupState::Provisioning,
+            ..Workspace::new(id_for(&path), project_id.to_string(), WorkspaceKind::Worktree, path)
         };
         let mut data = self.data.lock().unwrap();
         data.workspaces.push(ws.clone());
@@ -901,19 +864,6 @@ fn unique_codename(existing: &[String]) -> String {
 fn is_git_repo(path: &Path) -> bool {
     // A plain repo has `.git`; a worktree has a `.git` *file* pointing elsewhere.
     path.join(".git").exists()
-}
-
-fn current_branch(path: &Path) -> Option<String> {
-    let out = std::process::Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(path)
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    (!branch.is_empty()).then_some(branch)
 }
 
 #[cfg(test)]

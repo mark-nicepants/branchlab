@@ -31,6 +31,21 @@ export async function openExternal(url: string): Promise<void> {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
+/** Reveal a path in the OS file manager (Finder). No-op under `dev:browser`. */
+export async function revealPath(path: string): Promise<void> {
+  if (!isTauri) return;
+  const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
+  await revealItemInDir(path);
+}
+
+/** Open a path with an app by name (macOS `open -a`), or the system default
+ *  handler when `app` is omitted. No-op under `dev:browser`. */
+export async function openPathWith(path: string, app?: string): Promise<void> {
+  if (!isTauri) return;
+  const { openPath } = await import("@tauri-apps/plugin-opener");
+  await openPath(path, app);
+}
+
 /**
  * Install a single capture-phase click listener that intercepts every anchor
  * click in the app. Any link to an external protocol is opened out-of-process;

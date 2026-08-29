@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { onWorkspaceTodos } from "../lib/events";
+import { listenAll, onWorkspaceTodos } from "../lib/events";
 import type { Todo } from "../lib/types";
 
 /** Equal when content+status match in order. */
@@ -35,18 +35,12 @@ export function useTodos(workspaceId: string) {
   }, []);
 
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    let cancelled = false;
-    void onWorkspaceTodos((p) => {
-      if (p.workspaceId === workspaceId) apply(p.todos);
-    }).then((fn) => {
-      if (cancelled) fn();
-      else unlisten = fn;
-    });
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
+    const subs = listenAll(
+      onWorkspaceTodos((p) => {
+        if (p.workspaceId === workspaceId) apply(p.todos);
+      }),
+    );
+    return subs.dispose;
   }, [workspaceId, apply]);
 
   /** Call when the user starts a new turn while every todo is `completed`. */

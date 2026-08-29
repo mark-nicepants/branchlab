@@ -143,12 +143,11 @@ impl GithubClient {
     }
 }
 
-/// Map a GraphQL PR node (shared shape of both status queries) to `PrStatus`.
-fn parse_pr_status(pr: &serde_json::Value) -> crate::git::PrStatus {
-    // Flatten each rollup context to the shape git::parse_rollup expects
-    // (CheckRun.workflowName lives at a nested path in GraphQL).
-    let contexts: Vec<serde_json::Value> = pr
-        .pointer("/commits/nodes/0/commit/statusCheckRollup/contexts/nodes")
+/// Flatten a GraphQL PR node's `statusCheckRollup` contexts to the shape
+/// `git::parse_rollup` expects (CheckRun.workflowName lives at a nested path
+/// in GraphQL).
+fn rollup_contexts(node: &serde_json::Value) -> Vec<serde_json::Value> {
+    node.pointer("/commits/nodes/0/commit/statusCheckRollup/contexts/nodes")
         .and_then(|x| x.as_array())
         .cloned()
         .unwrap_or_default()
@@ -163,8 +162,12 @@ fn parse_pr_status(pr: &serde_json::Value) -> crate::git::PrStatus {
             }
             c
         })
-        .collect();
-    let (checks, rollup) = crate::git::parse_rollup(&contexts);
+        .collect()
+}
+
+/// Map a GraphQL PR node (shared shape of both status queries) to `PrStatus`.
+fn parse_pr_status(pr: &serde_json::Value) -> crate::git::PrStatus {
+    let (checks, rollup) = crate::git::parse_rollup(&rollup_contexts(pr));
 
     crate::git::PrStatus {
         number: pr.get("number").and_then(|x| x.as_i64()).unwrap_or(0),
@@ -333,24 +336,7 @@ impl GithubClient {
 fn parse_review_node(n: &serde_json::Value, reason: ReviewReason) -> Option<ReviewItem> {
     let repo = n.pointer("/repository/nameWithOwner").and_then(|x| x.as_str())?.to_string();
     let number = n.get("number").and_then(|x| x.as_i64())?;
-    let contexts: Vec<serde_json::Value> = n
-        .pointer("/commits/nodes/0/commit/statusCheckRollup/contexts/nodes")
-        .and_then(|x| x.as_array())
-        .cloned()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|mut c| {
-            if let Some(name) =
-                c.pointer("/checkSuite/workflowRun/workflow/name").and_then(|x| x.as_str()).map(str::to_string)
-            {
-                if let Some(obj) = c.as_object_mut() {
-                    obj.insert("workflowName".into(), serde_json::Value::String(name));
-                }
-            }
-            c
-        })
-        .collect();
-    let (_checks, rollup) = crate::git::parse_rollup(&contexts);
+    let (_checks, rollup) = crate::git::parse_rollup(&rollup_contexts(n));
     Some(ReviewItem {
         id: format!("{repo}#{number}"),
         account_id: String::new(),

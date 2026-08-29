@@ -32,20 +32,7 @@ export function CommitButton({ workspace, project, onAction }: Props) {
   const canOpenPr = !workspace.pr_is_fork;
 
   function send(kind: "commit" | "merge" | "push") {
-    const prompt = prompts[kind] ?? "";
-    const display = DISPLAY[kind];
-    onAction({
-      kind,
-      prompt,
-      display,
-      onFinish:
-        kind === "merge"
-          ? {
-              kind: "remove_workspace",
-              message: "Merge successful! Do you want to remove the workspace?",
-            }
-          : undefined,
-    });
+    onAction({ prompt: prompts[kind] ?? "", display: DISPLAY[kind] });
   }
 
   return (

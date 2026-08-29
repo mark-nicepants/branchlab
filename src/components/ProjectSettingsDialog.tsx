@@ -20,9 +20,9 @@ import type {
 import {
   generateSetupScripts,
   githubDetectAccount,
-  openExternal,
   updateProject,
 } from "../lib/api";
+import { openPathWith, revealPath } from "../lib/links";
 import { useGitHub } from "../hooks/useGitHub";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -41,7 +41,6 @@ interface Props {
   onUpdated: (project: ProjectView) => void;
   /** Workspace used to read project-scoped opencode config. */
   workspaceId: string;
-  onConfigRestarted: () => void;
   /** Tab to show when the dialog opens (e.g. "scripts" right after adding a
    *  project, so lifecycle scripts are discoverable). Default "general". */
   initialTab?: Tab;
@@ -58,7 +57,6 @@ export function ProjectSettingsDialog({
   onOpenChange,
   onUpdated,
   workspaceId,
-  onConfigRestarted,
   initialTab,
 }: Props) {
   const [tab, setTab] = useState<Tab>(initialTab ?? "general");
@@ -157,10 +155,7 @@ export function ProjectSettingsDialog({
                 <h2 className="text-lg font-semibold">OpenCode config</h2>
               </div>
               <div className="min-h-0 flex-1">
-                <ConfigView
-                  workspaceId={workspaceId}
-                  onRestarted={onConfigRestarted}
-                />
+                <ConfigView workspaceId={workspaceId} />
               </div>
             </div>
           ) : (
@@ -275,7 +270,7 @@ function GeneralTab({
             size="icon"
             title="Open in Finder"
             onClick={() =>
-              openExternal(project.root_path).catch((e) =>
+              revealPath(project.root_path).catch((e) =>
                 toast.error(String(e)),
               )
             }
@@ -287,7 +282,7 @@ function GeneralTab({
             size="icon"
             title="Open in terminal"
             onClick={() =>
-              openExternal(project.root_path, "Terminal").catch((e) =>
+              openPathWith(project.root_path, "Terminal").catch((e) =>
                 toast.error(String(e)),
               )
             }

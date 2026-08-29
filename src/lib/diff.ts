@@ -58,7 +58,7 @@ export function parseDiff(diff: string): DiffHunk[] {
   return hunks;
 }
 
-export interface SplitRow {
+interface SplitRow {
   left: DiffLine | null;
   right: DiffLine | null;
 }

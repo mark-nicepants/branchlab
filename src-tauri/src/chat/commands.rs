@@ -16,17 +16,6 @@ fn workspace_cwd(registry: &Registry, workspace_id: &str) -> Result<PathBuf, Str
     registry.workspace_path(workspace_id).map(PathBuf::from).ok_or_else(|| "unknown workspace".to_string())
 }
 
-fn parse_origin(origin: Option<String>) -> TurnOrigin {
-    match origin.as_deref() {
-        Some("slash") => TurnOrigin::Slash,
-        Some("lifecycle") => TurnOrigin::Lifecycle,
-        Some("init") => TurnOrigin::Init,
-        Some("autofix") => TurnOrigin::Autofix,
-        Some("task") => TurnOrigin::Task,
-        _ => TurnOrigin::User,
-    }
-}
-
 /// Ensure the conversation + engine exist and return the initial snapshot
 /// (newest page of entries + advertised config options). Async: it does
 /// SQLite reads and possibly an engine spawn — neither belongs on the main
@@ -64,7 +53,7 @@ pub fn chat_send(
     display: String,
     sent: String,
     attachments: Option<Vec<Attachment>>,
-    origin: Option<String>,
+    origin: Option<TurnOrigin>,
     model: Option<String>,
     variant: Option<String>,
     agent: Option<String>,
@@ -78,7 +67,7 @@ pub fn chat_send(
         display,
         sent,
         attachments.unwrap_or_default(),
-        parse_origin(origin),
+        origin.unwrap_or(TurnOrigin::User),
         model,
         variant,
         agent,

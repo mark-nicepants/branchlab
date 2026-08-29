@@ -263,7 +263,7 @@ pub async fn task_suggest_plan(
         .one_shot(&base.id, std::path::Path::new(&base.path), prompt)
         .await
         .ok_or("the model did not return a usable plan")?;
-    let parsed = parse_suggested_plan(&raw).ok_or("the model did not return a usable plan")?;
+    let parsed: RawPlan = crate::util::json_blob(&raw).ok_or("the model did not return a usable plan")?;
 
     let by_number: std::collections::HashMap<u64, String> = children.iter().map(|c| (c.number, c.id.clone())).collect();
     let plan: Vec<(String, Vec<String>, Option<f64>)> = parsed
@@ -305,12 +305,6 @@ struct RawPlanTask {
     blocked_by: Vec<u64>,
     #[serde(default)]
     estimate: Option<f64>,
-}
-
-fn parse_suggested_plan(raw: &str) -> Option<RawPlan> {
-    let start = raw.find('{')?;
-    let end = raw.rfind('}')?;
-    serde_json::from_str(&raw[start..=end]).ok()
 }
 
 /// AI intake: split pasted raw content (client email, meeting notes, Excel
@@ -364,7 +358,7 @@ pub async fn task_intake(
         .one_shot(&base.id, std::path::Path::new(&base.path), prompt)
         .await
         .ok_or("the model did not return a usable split")?;
-    let parsed = parse_intake(&raw).ok_or("the model did not return a usable split")?;
+    let parsed: RawIntake = crate::util::json_blob(&raw).ok_or("the model did not return a usable split")?;
     if parsed.tasks.is_empty() {
         return Err("the model found nothing actionable in that content".into());
     }
@@ -419,12 +413,6 @@ struct RawIntakeTask {
     estimate: Option<f64>,
     #[serde(default)]
     blocked_by: Vec<usize>,
-}
-
-fn parse_intake(raw: &str) -> Option<RawIntake> {
-    let start = raw.find('{')?;
-    let end = raw.rfind('}')?;
-    serde_json::from_str(&raw[start..=end]).ok()
 }
 
 /// Attach a file to a task from raw base64 (HTML5 drop / paste — WKWebview
@@ -834,15 +822,6 @@ pub async fn mcp_disconnect(
     opencode_http::mcp_disconnect(&base, &name).await
 }
 
-#[tauri::command]
-pub fn start_server(
-    workspace_id: String,
-    registry: State<Registry>,
-    servers: State<ServerManager>,
-) -> Result<ServerInfo, String> {
-    with_workspace_path(&registry, &workspace_id, |path| servers.start(&workspace_id, path))
-}
-
 /// Restart a workspace's server (used after editing config to apply it).
 #[tauri::command]
 pub fn restart_server(
@@ -921,20 +900,4 @@ pub fn log_path() -> Option<String> {
 #[tauri::command]
 pub fn perf_mark(name: String) {
     crate::logf!("perf", "{name} +{}ms", crate::logx::boot_ms());
-}
-
-/// Open a path in an external app. `app` is a macOS application name for
-/// `open -a` (e.g. "Terminal", "Visual Studio Code"); omit it to reveal the
-/// path in Finder. (Windows/Linux equivalents land with the portability pass.)
-// macOS-only: shells out to `open`. Needs `#[cfg(target_os = "macos")]` plus
-// Windows/Linux branches before this can ship cross-platform.
-#[tauri::command]
-pub fn open_external(path: String, app: Option<String>) -> Result<(), String> {
-    use std::process::Command;
-    let mut cmd = Command::new("open");
-    if let Some(app) = app {
-        cmd.arg("-a").arg(app);
-    }
-    cmd.arg(&path);
-    cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
 }

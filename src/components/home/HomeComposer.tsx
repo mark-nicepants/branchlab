@@ -101,23 +101,11 @@ export function HomeComposer({
         value={text}
         onChange={setText}
         onKeyDown={(e) => {
-          // Enter sends; Shift/⌘/Ctrl+Enter inserts a newline (same
-          // convention as the session composer).
+          // Enter sends; Shift+Enter (native) and ⌘/Ctrl+Enter (the
+          // composer's handler) insert a newline.
           if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
             e.preventDefault();
             submit();
-            return;
-          }
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-            // Textareas don't insert a newline on ⌘/Ctrl+Enter natively.
-            e.preventDefault();
-            const el = e.currentTarget;
-            const start = el.selectionStart ?? text.length;
-            const end = el.selectionEnd ?? text.length;
-            setText(text.slice(0, start) + "\n" + text.slice(end));
-            requestAnimationFrame(() => {
-              el.selectionStart = el.selectionEnd = start + 1;
-            });
           }
         }}
         placeholder={

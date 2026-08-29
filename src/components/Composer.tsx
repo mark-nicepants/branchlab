@@ -78,6 +78,23 @@ export function Composer({
 }: Props) {
   const fileInput = useRef<HTMLInputElement>(null);
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    onKeyDown?.(e);
+    if (e.defaultPrevented) return;
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      // Textareas don't insert a newline on ⌘/Ctrl+Enter natively — do it by
+      // hand so the modifier means "literal newline".
+      e.preventDefault();
+      const el = e.currentTarget;
+      const start = el.selectionStart ?? value.length;
+      const end = el.selectionEnd ?? value.length;
+      onChange(value.slice(0, start) + "\n" + value.slice(end));
+      requestAnimationFrame(() => {
+        el.selectionStart = el.selectionEnd = start + 1;
+      });
+    }
+  };
+
   return (
     <div className="mx-auto max-w-4xl">
       <div
@@ -123,7 +140,7 @@ export function Composer({
         <Textarea
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          onKeyDown={onKeyDown}
+          onKeyDown={handleKeyDown}
           onPaste={onPaste}
           onBlur={onBlur}
           placeholder={placeholder}

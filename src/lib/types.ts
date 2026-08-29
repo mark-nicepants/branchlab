@@ -13,7 +13,7 @@ export interface EnvReport {
   gh: ToolStatus;
 }
 
-export type WorkspaceKind = "Base" | "Worktree" | "QuickChat";
+type WorkspaceKind = "Base" | "Worktree" | "QuickChat";
 
 export interface Workspace {
   id: string;
@@ -236,7 +236,6 @@ export interface Account {
   login: string;
   name: string | null;
   avatarUrl: string | null;
-  orgs: string[];
   /** True when authenticated and usable; false → re-auth needed. */
   active: boolean;
   /** Human-readable status detail when not active. */
@@ -247,7 +246,7 @@ export interface Account {
 export type CiRollup = "success" | "failure" | "pending" | "none";
 
 /** Why a PR is in the review inbox. */
-export type ReviewReason = "review_requested" | "assigned";
+type ReviewReason = "review_requested" | "assigned";
 
 /** One PR in the cross-repo review inbox (PRs awaiting your review). */
 export interface ReviewInboxItem {
@@ -353,7 +352,6 @@ export interface Todo {
   content: string;
   /** "pending" | "in_progress" | "completed" | "cancelled" */
   status: string;
-  priority: string;
 }
 
 /** One MCP server's runtime status (from /mcp). */
@@ -380,7 +378,7 @@ export interface ContextInfo {
 //    The frontend renders these normalized DTOs; it never sees ACP/OpenCode
 //    shapes. Field names are camelCase (serde rename_all). ──
 
-export type TurnStatus =
+type TurnStatus =
   | "queued"
   | "streaming"
   | "awaitingPermission"
@@ -388,7 +386,7 @@ export type TurnStatus =
   | "cancelled"
   | "failed";
 
-export type TurnOrigin =
+type TurnOrigin =
   | "user"
   | "slash"
   | "lifecycle"
@@ -396,7 +394,7 @@ export type TurnOrigin =
   | "autofix"
   | "task";
 
-export type BlockToolStatus = "pending" | "running" | "completed" | "failed";
+type BlockToolStatus = "pending" | "running" | "completed" | "failed";
 
 /** A file edit surfaced by a tool call (ACP diff → rendered via DiffBody).
  *  The unified diff is synthesized on the frontend from old/new text. */
@@ -407,7 +405,7 @@ export interface DiffBlock {
 }
 
 /** A file location a tool touched (ACP `ToolCallLocation`). */
-export interface ToolLocation {
+interface ToolLocation {
   path: string;
   line: number | null;
 }
@@ -446,7 +444,7 @@ export type Block =
     };
 
 /** Deterministic collapse summary for a finished assistant turn. */
-export interface CollapseSummary {
+interface CollapseSummary {
   collapsed: boolean;
   stepCount: number;
   filesEdited: string[];
@@ -460,7 +458,7 @@ export interface ChatAttachment {
   filename: string | null;
 }
 
-export interface UsageInfo {
+interface UsageInfo {
   input?: number | null;
   output?: number | null;
   reasoning?: number | null;
@@ -488,7 +486,6 @@ export interface AssistantEntry {
   type: "assistant";
   seq: number;
   entryId: string;
-  engineSessionId: number | null;
   status: TurnStatus;
   origin: TurnOrigin;
   blocks: Block[];
@@ -544,9 +541,7 @@ export interface ConfigOption {
 
 /** The initial payload loaded on mount / paged for history. */
 export interface ChatSnapshot {
-  conversationId: string;
   entries: Entry[];
-  headSeq: number;
   hasMore: boolean;
   config: ConfigOption[];
   /** Slash commands / skills advertised by the engine (seeded so a re-mount
@@ -579,7 +574,7 @@ export interface ChatTurnEvent {
   endedAt?: number | null;
 }
 
-export interface ChatPermChoice {
+interface ChatPermChoice {
   optionId: string;
   name: string;
   /** "allowOnce" | "allowAlways" | "rejectOnce" | "rejectAlways". */

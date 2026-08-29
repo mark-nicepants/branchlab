@@ -317,9 +317,7 @@ fn setup_scripts_prompt(context: &str) -> String {
 
 /// Tolerant parse: take the first `{{` .. last `}}` span (models love fences).
 fn parse_generated_setup(raw: &str) -> Option<crate::engine::GeneratedSetup> {
-    let start = raw.find('{')?;
-    let end = raw.rfind('}')?;
-    let parsed: crate::engine::GeneratedSetup = serde_json::from_str(&raw[start..=end]).ok()?;
+    let parsed: crate::engine::GeneratedSetup = crate::util::json_blob(raw)?;
     let clean = |s: Option<String>| s.filter(|s| !s.trim().is_empty());
     let setup = clean(parsed.setup_script);
     let teardown = clean(parsed.teardown_script);

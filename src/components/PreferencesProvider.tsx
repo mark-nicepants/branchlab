@@ -2,8 +2,6 @@ import { createContext, useCallback, useContext, useState } from "react";
 
 const STORAGE_KEY = "branchlab.prefs";
 
-export type ChatDensity = "tight" | "loose" | "roomy";
-
 /** Preferences stored per workspace. */
 export interface WorkspacePreferences {
   /** Draft text in the composer input box. */
@@ -27,8 +25,6 @@ export interface Preferences {
   workspace: Record<string, WorkspacePreferences>;
   /** Collapsed state of project stats panels in the sidebar (project id → boolean). */
   collapsedProjects: Record<string, boolean>;
-  /** Vertical spacing density for chat messages. */
-  chatDensity: ChatDensity;
   /** Width of the session changes panel in pixels (shared across sessions).
    *  Pixel-based so window resizes keep the panel stable and only the chat
    *  column flexes. */
@@ -45,7 +41,6 @@ const DEFAULTS: Preferences = {
   modelCatalog: [],
   workspace: {},
   collapsedProjects: {},
-  chatDensity: "loose",
   changesPanelWidthPx: 420,
   changesPanelOpen: false,
 };
@@ -147,8 +142,8 @@ export function usePreferences() {
   return useContext(PrefsCtx);
 }
 
-// macOS-only: these are application names passed to `open -a` in
-// commands.rs::open_external. Cross-platform support will need a different
+// macOS-only: these are application names handed to the opener plugin's
+// openPath (macOS `open -a`). Cross-platform support will need a different
 // integration model (e.g. exec paths or freedesktop xdg-open).
 export const TERMINAL_APPS = [
   "Terminal",

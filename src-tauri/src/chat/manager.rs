@@ -9,7 +9,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use agent_client_protocol::schema::v1 as acp;
 use serde::Serialize;
@@ -25,6 +24,7 @@ use crate::chat::model::{
 };
 use crate::chat::store::ChatDb;
 use crate::engine::{acp as acp_engine, EngineCommand, EngineEvent, EngineHandle, PromptInput, StopKind};
+use crate::util::{new_id, now_ms};
 
 /// Coarse per-turn signal for the supervisor (activity + autofix hand-off).
 #[derive(Debug, Clone)]
@@ -119,14 +119,6 @@ struct Inner {
 #[derive(Clone)]
 pub struct ChatManager {
     inner: Arc<Inner>,
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
-}
-
-fn new_id() -> String {
-    ulid::Ulid::generate().to_string()
 }
 
 impl ChatManager {
@@ -284,6 +276,25 @@ impl ChatManager {
         Ok(())
     }
 
+    /// Ensure→lock→oneshot→await plumbing shared by the throwaway-session
+    /// requests (title, setup proposal, one-shot). None on any failure.
+    async fn engine_request<T>(
+        &self,
+        workspace_id: &str,
+        cwd: &Path,
+        make: impl FnOnce(oneshot::Sender<Option<T>>) -> EngineCommand,
+    ) -> Option<T> {
+        self.ensure(workspace_id, cwd).ok()?;
+        let rx = {
+            let convs = self.inner.convs.lock().unwrap();
+            let engine = convs.get(workspace_id)?.engine.as_ref()?;
+            let (tx, rx) = oneshot::channel();
+            engine.send(make(tx));
+            rx
+        };
+        rx.await.ok().flatten()
+    }
+
     /// Generate an AI title + branch name from the first message via a
     /// throwaway session on the workspace's existing ACP connection. Returns
     /// None on failure (caller falls back to a deterministic title).
@@ -293,15 +304,7 @@ impl ChatManager {
         cwd: &Path,
         text: String,
     ) -> Option<crate::engine::GeneratedTitle> {
-        self.ensure(workspace_id, cwd).ok()?;
-        let rx = {
-            let convs = self.inner.convs.lock().unwrap();
-            let engine = convs.get(workspace_id)?.engine.as_ref()?;
-            let (tx, rx) = oneshot::channel();
-            engine.send(EngineCommand::GenerateTitle { text, reply: tx });
-            rx
-        };
-        rx.await.ok().flatten()
+        self.engine_request(workspace_id, cwd, |reply| EngineCommand::GenerateTitle { text, reply }).await
     }
 
     /// Propose setup/teardown scripts from a pre-collected repo context, via a
@@ -312,29 +315,13 @@ impl ChatManager {
         cwd: &Path,
         context: String,
     ) -> Option<crate::engine::GeneratedSetup> {
-        self.ensure(workspace_id, cwd).ok()?;
-        let rx = {
-            let convs = self.inner.convs.lock().unwrap();
-            let engine = convs.get(workspace_id)?.engine.as_ref()?;
-            let (tx, rx) = oneshot::channel();
-            engine.send(EngineCommand::GenerateSetup { context, reply: tx });
-            rx
-        };
-        rx.await.ok().flatten()
+        self.engine_request(workspace_id, cwd, |reply| EngineCommand::GenerateSetup { context, reply }).await
     }
 
     /// One prompt → raw reply text over a throwaway session on the
     /// workspace's engine (booting it if needed). None on any failure.
     pub async fn one_shot(&self, workspace_id: &str, cwd: &Path, prompt: String) -> Option<String> {
-        self.ensure(workspace_id, cwd).ok()?;
-        let rx = {
-            let convs = self.inner.convs.lock().unwrap();
-            let engine = convs.get(workspace_id)?.engine.as_ref()?;
-            let (tx, rx) = oneshot::channel();
-            engine.send(EngineCommand::OneShot { prompt, reply: tx });
-            rx
-        };
-        rx.await.ok().flatten()
+        self.engine_request(workspace_id, cwd, |reply| EngineCommand::OneShot { prompt, reply }).await
     }
 
     pub fn abort(&self, workspace_id: &str) {
@@ -930,11 +917,7 @@ impl Inner {
 }
 
 fn with_seq(mut entry: Entry, seq: Seq) -> Entry {
-    match &mut entry {
-        Entry::User(e) => e.seq = seq,
-        Entry::Assistant(e) => e.seq = seq,
-        Entry::System(e) => e.seq = seq,
-    }
+    entry.set_seq(seq);
     entry
 }
 

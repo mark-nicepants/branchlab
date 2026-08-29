@@ -41,6 +41,27 @@ export function mockEmit(name: string, payload: unknown): void {
   handlers[name]?.forEach((h) => h(payload));
 }
 
+/** Same contract as events.ts `listenAll`. */
+export function listenAll(...subs: Array<Promise<UnlistenFn>>): {
+  ready: Promise<boolean>;
+  dispose: () => void;
+  readonly disposed: boolean;
+} {
+  const fns: UnlistenFn[] = [];
+  let disposed = false;
+  for (const p of subs) void p.then((fn) => (disposed ? fn() : fns.push(fn)));
+  return {
+    ready: Promise.all(subs).then(() => !disposed),
+    dispose: () => {
+      disposed = true;
+      fns.forEach((fn) => fn());
+    },
+    get disposed() {
+      return disposed;
+    },
+  };
+}
+
 export function onWorkspaceGit(cb: (p: GitPayload) => void) {
   return on<GitPayload>("workspace:git", cb);
 }

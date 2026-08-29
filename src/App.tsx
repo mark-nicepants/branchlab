@@ -15,6 +15,7 @@ import { MyWorkScreen } from "./components/mywork/MyWorkScreen";
 import { SessionsSidebar } from "./components/shell/SessionsSidebar";
 import { useAppRouter } from "./hooks/useAppRouter";
 import { EmptyState } from "./components/ui/empty-state";
+import { deleteWorkspaceWithConfirm } from "./lib/deleteWorkspace";
 import { onWorkspaceNotify, onWorkspaceSetup } from "./lib/events";
 import { offerMarkTaskDone } from "./lib/taskDone";
 import { useDesktopBehaviors } from "./hooks/useDesktopBehaviors";
@@ -39,7 +40,6 @@ import {
   type EnvReport,
   type ProjectView,
   type Task,
-  type UnlinkedTask,
   type Workspace,
 } from "./lib/types";
 
@@ -70,7 +70,6 @@ function App() {
   const [settingsInitialTab, setSettingsInitialTab] = useState<
     "general" | "scripts"
   >("general");
-  const [reloadNonce, setReloadNonce] = useState(0);
   // Card to focus when My work opens via a session's task chip.
   const [focusTaskId, setFocusTaskId] = useState<string | null>(null);
 
@@ -306,40 +305,13 @@ function App() {
   // Delete from inside the chat (the "PR merged" notice). Mirrors the
   // sidebar's delete flow, plus closing the session view being deleted.
   const deleteWorkspaceFromChat = useCallback(
-    async (id: string) => {
-      const finish = (unlinked: UnlinkedTask | null) => {
+    (id: string) =>
+      deleteWorkspaceWithConfirm(id, (unlinked) => {
         router.closeSession(id);
         void refreshProjects();
         toast.success("Workspace deleted");
         offerMarkTaskDone(unlinked);
-      };
-      try {
-        finish(await removeWorkspace(id, false));
-      } catch (e) {
-        const uncommitted = String(e).includes("uncommitted changes");
-        toast.error(
-          uncommitted
-            ? "Workspace has uncommitted changes"
-            : "Could not delete workspace",
-          {
-            description: uncommitted
-              ? "Deleting it will discard them."
-              : String(e),
-            action: {
-              label: "Delete anyway",
-              onClick: () =>
-                void removeWorkspace(id, true)
-                  .then(finish)
-                  .catch((e2) =>
-                    toast.error("Could not delete workspace", {
-                      description: String(e2),
-                    }),
-                  ),
-            },
-          },
-        );
-      }
-    },
+      }),
     [router, refreshProjects],
   );
 
@@ -420,7 +392,6 @@ function App() {
                 workspace={selected}
                 project={selectedProject}
                 onRenamed={onRenamed}
-                reloadNonce={reloadNonce}
                 sidebarCollapsed={sidebarCollapsed}
                 onManageModels={() => router.openSettings("models")}
                 onDeleteWorkspace={(id) => void deleteWorkspaceFromChat(id)}
@@ -445,8 +416,6 @@ function App() {
                 focusTaskId={focusTaskId}
                 onFocusTaskHandled={() => setFocusTaskId(null)}
               />
-            ) : view === "automations" ? (
-              <StubScreen label="Automations" />
             ) : (
               <HomeScreen
                 projects={projects}
@@ -517,31 +486,11 @@ function App() {
               workspaceId={
                 selected?.id ?? settingsProject.workspaces[0]?.id ?? ""
               }
-              onConfigRestarted={() => setReloadNonce((n) => n + 1)}
             />
           )}
         </div>
       </WorkspaceDataProvider>
     </GitHubProvider>
-  );
-}
-
-function StubScreen({
-  label,
-  icon,
-}: {
-  label: string;
-  icon?: React.ReactNode;
-}) {
-  return (
-    <div className="flex h-full items-center justify-center">
-      <EmptyState icon={icon}>
-        <span className="text-base font-medium text-foreground">{label}</span>
-        <span className="mt-1 block text-sm">
-          This area isn't available yet.
-        </span>
-      </EmptyState>
-    </div>
   );
 }
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-export interface ShortcutHandlers {
+interface ShortcutHandlers {
   toggleLeft: () => void;
   toggleRight: () => void;
   openSettings: () => void;

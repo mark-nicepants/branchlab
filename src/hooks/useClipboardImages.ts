@@ -1,5 +1,15 @@
 import { useState } from "react";
 
+/** Read a File as a data: URL. */
+export function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error ?? new Error("read failed"));
+    reader.readAsDataURL(file);
+  });
+}
+
 export interface ClipboardImage {
   id: string;
   mime: string;
@@ -19,21 +29,20 @@ export function useClipboardImages() {
   function addFiles(files: Iterable<File>) {
     for (const blob of files) {
       if (!blob.type.startsWith("image/")) continue;
-      const reader = new FileReader();
-      reader.onload = () => {
-        const url = reader.result as string;
-        const ext = blob.type.split("/")[1] ?? "png";
-        setAttachments((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            mime: blob.type,
-            url,
-            filename: blob.name || `pasted-${Date.now()}.${ext}`,
-          },
-        ]);
-      };
-      reader.readAsDataURL(blob);
+      void fileToDataUrl(blob)
+        .then((url) => {
+          const ext = blob.type.split("/")[1] ?? "png";
+          setAttachments((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              mime: blob.type,
+              url,
+              filename: blob.name || `pasted-${Date.now()}.${ext}`,
+            },
+          ]);
+        })
+        .catch(() => {});
     }
   }
 

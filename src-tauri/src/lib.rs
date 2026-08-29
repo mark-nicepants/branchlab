@@ -15,6 +15,7 @@ mod setup;
 mod supervisor;
 mod tasks;
 mod telemetry;
+mod util;
 mod watcher;
 
 use github::GithubManager;
@@ -165,7 +166,6 @@ pub fn run() {
             tasks::task_update,
             tasks::task_delete,
             tasks::task_move,
-            tasks::task_link_workspace,
             tasks::task_mark_done,
             tasks::task_activity,
             tasks::board_set_estimate_unit,
@@ -189,14 +189,12 @@ pub fn run() {
             commands::workspace_tools,
             commands::mcp_connect,
             commands::mcp_disconnect,
-            commands::start_server,
             commands::restart_server,
             commands::read_config,
             commands::write_config,
             commands::get_default_model,
             commands::set_default_model,
             commands::open_devtools,
-            commands::open_external,
             commands::log_path,
             commands::perf_mark,
             github::commands::github_list_accounts,

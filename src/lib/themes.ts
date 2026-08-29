@@ -1,6 +1,6 @@
 // Theme registry. Each id has a matching `[data-theme="id"]` block in index.css.
 
-export interface ThemeDef {
+interface ThemeDef {
   id: string;
   label: string;
   group: "Dark" | "Light";

@@ -18,7 +18,7 @@ pub struct DiffStat {
     pub deletions: u32,
 }
 
-fn git(repo: &str, args: &[&str]) -> Result<String, String> {
+pub(crate) fn git(repo: &str, args: &[&str]) -> Result<String, String> {
     let out =
         Command::new("git").args(args).current_dir(repo).output().map_err(|e| format!("git failed to run: {e}"))?;
     if !out.status.success() {

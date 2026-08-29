@@ -32,7 +32,6 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 tokio = { version = "1", features = ["time", "rt", "macros", "sync"] }
 # Filesystem watching for git state (replaces frontend diff-stat/changes polling).
 notify = "8"
-notify-debouncer-full = "0.7"
 # Persistent chat cache — a BranchLab-owned SQLite store, independent of the
 # OpenCode engine, so the transcript survives restarts and engine session
 # compaction/clear. `bundled` compiles SQLite in-tree (no system libsqlite dep).

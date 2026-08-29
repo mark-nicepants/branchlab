@@ -12,14 +12,14 @@ import { ExternalLink, Loader2, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { useWorkspaceData } from "../hooks/useWorkspaceData";
-import { commitWorkspace, createWorkspacePr, openExternal } from "../lib/api";
+import { commitWorkspace, createWorkspacePr } from "../lib/api";
+import { openExternal } from "../lib/links";
 import { workspaceLabel, type Workspace } from "../lib/types";
 
 interface Props {
   workspace: Workspace;
   onClose: () => void;
   /** Called after the PR is opened, with its URL (parent may offer to remove). */
-  onCreated?: (url: string) => void;
 }
 
 /**
@@ -27,7 +27,7 @@ interface Props {
  * old AI-prompted flow). Gates on uncommitted changes — the API pushes an
  * existing branch, so anything uncommitted wouldn't be in the PR.
  */
-export function CreatePrDialog({ workspace, onClose, onCreated }: Props) {
+export function CreatePrDialog({ workspace, onClose }: Props) {
   const { diffStats } = useWorkspaceData();
   const dirty = (diffStats[workspace.id]?.files ?? 0) > 0;
   const base = workspace.base_branch ?? "main";
@@ -47,7 +47,6 @@ export function CreatePrDialog({ workspace, onClose, onCreated }: Props) {
       toast.success("Pull request opened", {
         action: { label: "Open", onClick: () => void openExternal(res.url) },
       });
-      onCreated?.(res.url);
       onClose();
     } catch (e) {
       toast.error("Could not open PR", { description: String(e) });

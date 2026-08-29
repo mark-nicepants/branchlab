@@ -128,6 +128,8 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { MarkdownEditor } from "@/components/MarkdownEditor";
+import { Kbd } from "@/components/Composer";
+import { fileToDataUrl } from "@/hooks/useClipboardImages";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
@@ -2416,15 +2418,7 @@ function fmtSize(bytes: number): string {
 /** Chunk-safe base64 of a File: readAsDataURL then strip the data: prefix
  *  (avoids building huge strings from Uint8Array one char at a time). */
 function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const url = reader.result as string;
-      resolve(url.slice(url.indexOf(",") + 1));
-    };
-    reader.onerror = () => reject(reader.error ?? new Error("read failed"));
-    reader.readAsDataURL(file);
-  });
+  return fileToDataUrl(file).then((url) => url.slice(url.indexOf(",") + 1));
 }
 
 /** Attachment chip list + the Attach affordance. Clicking a chip opens the
@@ -2575,26 +2569,6 @@ function InlineEstimateInput({
       placeholder={unit === "hours" ? "Hours…" : "Points…"}
       className={className}
     />
-  );
-}
-
-/** Tiny keyboard-shortcut chip (matches the mock's kbd styling). */
-function Kbd({
-  children,
-  className,
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <kbd
-      className={cn(
-        "shrink-0 rounded border border-border px-1 font-mono text-[9.5px] leading-4 text-muted-foreground",
-        className,
-      )}
-    >
-      {children}
-    </kbd>
   );
 }
 

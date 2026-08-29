@@ -20,8 +20,8 @@ import {
   addAccountWithToken,
   beginAccountLogin,
   cancelAccountLogin,
-  openExternal,
 } from "../../lib/api";
+import { openExternal } from "../../lib/links";
 import { onGitHubLogin } from "../../lib/events";
 import type { GitHubLoginEvent, LoginPhase } from "../../lib/types";
 

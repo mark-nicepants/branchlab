@@ -38,40 +38,14 @@ import { retrySetup } from "../lib/api";
 import { toast } from "sonner";
 import { UnifiedDiff } from "./DiffBody";
 import { Button } from "@/components/ui/button";
-import { usePreferences, type ChatDensity } from "./PreferencesProvider";
 
 // ── Message base ──────────────────────────────────────────────────────────
 //
 // Every transcript entry renders inside a `MessageShell` (side, width, and
-// density spacing — the one thing all message types share), then picks its
+// spacing — the one thing all message types share), then picks its
 // chrome: the classic user bubble, a structured `SectionCard`, or bare
 // content (assistant prose). New typed messages compose these primitives so
 // user / assistant / system variants stay coherent.
-
-/** Single source of truth for vertical spacing, keyed by chat density. */
-const DENSITY: Record<
-  ChatDensity,
-  { assistant: string; userMargin: string; userPad: string; gap: string }
-> = {
-  tight: {
-    assistant: "py-1",
-    userMargin: "my-1",
-    userPad: "py-2",
-    gap: "gap-2",
-  },
-  loose: {
-    assistant: "py-3",
-    userMargin: "my-3",
-    userPad: "py-2.5",
-    gap: "gap-6",
-  },
-  roomy: {
-    assistant: "py-5",
-    userMargin: "my-5",
-    userPad: "py-3",
-    gap: "gap-10",
-  },
-};
 
 interface ShellProps {
   role: "user" | "assistant" | "system";
@@ -82,8 +56,6 @@ interface ShellProps {
 }
 
 export function MessageShell({ role, chrome = "none", children }: ShellProps) {
-  const { prefs } = usePreferences();
-  const d = DENSITY[prefs.chatDensity] ?? DENSITY.loose;
   const isUser = role === "user";
   return (
     <div
@@ -100,21 +72,17 @@ export function MessageShell({ role, chrome = "none", children }: ShellProps) {
     >
       <div
         className={cn(
-          "flex flex-col select-text text-sm",
-          d.gap,
+          "flex flex-col select-text gap-6 text-sm",
           // Both participant lanes cap at 80% of the column, so the agent's
           // answer reads as "from the agent" rather than page furniture.
           isUser &&
-            cn("max-w-[80%]", chrome === "none" && "w-full", d.userMargin),
-          role === "assistant" && cn("w-full max-w-[80%]", d.assistant),
-          role === "system" && d.assistant,
+            cn("max-w-[80%]", chrome === "none" && "w-full", "my-3"),
+          role === "assistant" && "w-full max-w-[80%] py-3",
+          role === "system" && "py-3",
           // The user bubble is the shared surface, one tint step up, with the
           // top-right corner sharpened (speech direction).
           chrome === "bubble" &&
-            cn(
-              "self-end rounded-2xl rounded-tr-sm border border-border bg-secondary px-4",
-              d.userPad,
-            ),
+            "self-end rounded-2xl rounded-tr-sm border border-border bg-secondary px-4 py-2.5",
         )}
       >
         {children}

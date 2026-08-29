@@ -2,14 +2,14 @@
 // labels), used by both the composer ModelSelector and the Models settings tab.
 
 /** The minimal shape both an ACP `ConfigChoice` and a cached catalog entry share. */
-export interface ModelEntry {
+interface ModelEntry {
   value: string;
   name: string;
   group?: string | null;
 }
 
 /** Provider label for a model: its ACP group, else the name/value prefix. */
-export function providerOf(c: ModelEntry): string {
+function providerOf(c: ModelEntry): string {
   if (c.group) return c.group;
   const nameSlash = c.name.lastIndexOf("/");
   if (nameSlash > 0) return c.name.slice(0, nameSlash);

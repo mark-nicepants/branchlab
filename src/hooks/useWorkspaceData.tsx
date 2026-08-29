@@ -22,6 +22,7 @@ import {
   setActiveWorkspace,
 } from "../lib/api";
 import {
+  listenAll,
   onWorkspaceGit,
   onWorkspacePr,
   onWorkspaceSession,
@@ -91,22 +92,13 @@ export function WorkspaceDataProvider({
   // leave a workspace blank; events only apply deltas afterwards. The backend
   // computes session state (including `needsAttention`) — no client derivation.
   useEffect(() => {
-    const unlisteners: Array<() => void> = [];
-    let cancelled = false;
-    const track = (p: Promise<() => void>) =>
-      void p.then((fn) => (cancelled ? fn() : unlisteners.push(fn)));
-
-    track(
+    const subs = listenAll(
       onWorkspaceGit((p) =>
         setById((prev) => ({ ...prev, [p.workspaceId]: p })),
       ),
-    );
-    track(
       onWorkspacePr((p) =>
         setPrByWorkspace((prev) => ({ ...prev, [p.workspaceId]: p })),
       ),
-    );
-    track(
       onWorkspaceSession((p) =>
         setSessionByWorkspace((prev) => ({ ...prev, [p.workspaceId]: p })),
       ),
@@ -114,7 +106,7 @@ export function WorkspaceDataProvider({
     // Seed AFTER subscribing, so a delta arriving in between isn't lost (a
     // stale snapshot entry would just be overwritten by the newer event).
     void getSidebarSnapshot().then((snapshot) => {
-      if (cancelled) return;
+      if (subs.disposed) return;
       setById((prev) => {
         const next = { ...prev };
         for (const w of snapshot) {
@@ -140,10 +132,7 @@ export function WorkspaceDataProvider({
         return next;
       });
     });
-    return () => {
-      cancelled = true;
-      unlisteners.forEach((fn) => fn());
-    };
+    return subs.dispose;
   }, []);
 
   // Window focus → immediate PR re-poll (throttled): the user is looking, so

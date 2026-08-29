@@ -1,16 +1,11 @@
-import {
-  CheckCircle2,
-  GitPullRequest,
-  Loader2,
-  Sparkles,
-  TriangleAlert,
-} from "lucide-react";
+import { GitPullRequest, Loader2, Sparkles } from "lucide-react";
 import {
   HoverCard,
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/ui/hover-card";
 import { cn } from "@/lib/utils";
+import { CiIcon } from "../github/CiIcon";
 import type {
   AutofixMode,
   PipelinePhase,
@@ -39,27 +34,6 @@ const MODES: { value: AutofixMode; label: string; hint: string }[] = [
     hint: "On failure, the AI fixes, commits, and pushes until green",
   },
 ];
-
-/** Colored icon for a coarse check bucket. */
-function BucketIcon({
-  bucket,
-  className,
-}: {
-  bucket: string;
-  className?: string;
-}) {
-  if (bucket === "success")
-    return (
-      <CheckCircle2
-        className={cn("text-emerald-600 dark:text-emerald-500", className)}
-      />
-    );
-  if (bucket === "failure")
-    return <TriangleAlert className={cn("text-destructive", className)} />;
-  if (bucket === "skipped")
-    return <span className={cn("text-muted-foreground", className)}>—</span>;
-  return <Loader2 className={cn("animate-spin text-warning", className)} />;
-}
 
 /** Summary line for the rollup, e.g. "2 checks failing". Skipped checks are
  *  excluded from the totals — same accounting as the sidebar's PR chip. */
@@ -148,7 +122,7 @@ export function PrPipeline({
 
       <HoverCard openDelay={120}>
         <HoverCardTrigger className="flex min-w-0 items-center gap-1.5">
-          <BucketIcon bucket={status.rollup} className="size-3.5 shrink-0" />
+          <CiIcon rollup={status.rollup} className="size-3.5 shrink-0" />
           <span className="truncate text-muted-foreground">
             {summary(status)}
           </span>
@@ -171,7 +145,7 @@ export function PrPipeline({
                   rel="noreferrer"
                   className="flex items-center gap-2 rounded px-1 py-1 hover:bg-accent"
                 >
-                  <BucketIcon bucket={c.bucket} className="size-3.5 shrink-0" />
+                  <CiIcon rollup={c.bucket} className="size-3.5 shrink-0" />
                   <span className="min-w-0 flex-1 truncate">{c.name}</span>
                   {c.workflow && (
                     <span className="shrink-0 text-[10px] text-muted-foreground">

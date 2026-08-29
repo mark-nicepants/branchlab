@@ -16,7 +16,7 @@ import type { NavView } from "@/components/shell/SessionsSidebar";
 // vite.config.ts — aliases match exact import forms).
 import { telemetryPageview } from "../lib/api";
 
-export type AppView = NavView | "session";
+type AppView = NavView | "session";
 
 interface RouterState {
   view: AppView;

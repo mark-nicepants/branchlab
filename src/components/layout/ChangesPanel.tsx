@@ -18,7 +18,8 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useWorkspaceData } from "../../hooks/useWorkspaceData";
-import { openExternal, workspaceFiles } from "../../lib/api";
+import { workspaceFiles } from "../../lib/api";
+import { openPathWith } from "../../lib/links";
 import {
   turnFilePaths,
   type ChangeScope,
@@ -30,7 +31,7 @@ import { usePreferences } from "../PreferencesProvider";
 import { ServerToolsPanel } from "../session/ServerToolsPanel";
 
 interface Props {
-  workspace: Workspace | null;
+  workspace: Workspace;
   viewed: Set<string>;
   onToggleViewed: (path: string) => void;
   onOpenFile: (path: string) => void;
@@ -80,9 +81,7 @@ export function ChangesPanel({
         {actions && <div className="ml-auto py-1">{actions}</div>}
       </header>
 
-      {!workspace ? (
-        <EmptyIcon>Select a workspace to see its changes.</EmptyIcon>
-      ) : tab === "changes" ? (
+      {tab === "changes" ? (
         <ChangesTab
           workspace={workspace}
           viewed={viewed}
@@ -266,7 +265,7 @@ function FilesTab({
   }
 
   function openExternally(path: string) {
-    openExternal(`${workspace.path}/${path}`, prefs.editorApp).catch((e) =>
+    openPathWith(`${workspace.path}/${path}`, prefs.editorApp).catch((e) =>
       toast.error("Could not open", { description: String(e) }),
     );
   }

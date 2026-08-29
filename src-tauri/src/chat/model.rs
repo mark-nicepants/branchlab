@@ -298,6 +298,14 @@ impl Entry {
         }
     }
 
+    pub fn set_seq(&mut self, seq: Seq) {
+        match self {
+            Entry::User(e) => e.seq = seq,
+            Entry::Assistant(e) => e.seq = seq,
+            Entry::System(e) => e.seq = seq,
+        }
+    }
+
     pub fn entry_id(&self) -> &str {
         match self {
             Entry::User(e) => &e.entry_id,
