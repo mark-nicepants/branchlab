@@ -17,6 +17,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::util::LockExt;
 use serde::Serialize;
 
 /// How long to wait for the server to announce its listen address.
@@ -74,7 +75,7 @@ impl ServerManager {
         let servers = Arc::clone(&self.servers);
         std::thread::spawn(move || loop {
             std::thread::sleep(REAP_INTERVAL);
-            let mut map = servers.0.lock().unwrap();
+            let mut map = servers.0.lock_safe();
             // Starting slots are skipped — they're seconds old by definition.
             let idle: Vec<String> = map
                 .iter()
@@ -97,7 +98,7 @@ impl ServerManager {
     pub fn start(&self, workspace_id: &str, cwd: &str) -> Result<ServerInfo, String> {
         let (lock, cvar) = &*self.servers;
         {
-            let mut map = lock.lock().unwrap();
+            let mut map = lock.lock_safe();
             loop {
                 match map.get_mut(workspace_id) {
                     // Reuse a live server; reap a dead one before re-spawning.
@@ -126,7 +127,7 @@ impl ServerManager {
         // workspace; every exit path below must resolve the reservation.
         let result = spawn_and_await_ready(workspace_id, cwd);
 
-        let mut map = lock.lock().unwrap();
+        let mut map = lock.lock_safe();
         let out = match result {
             Ok((child, info)) => {
                 map.insert(
@@ -148,7 +149,7 @@ impl ServerManager {
     /// out an in-flight start first, so a booting server can't survive a stop.
     pub fn stop(&self, workspace_id: &str) {
         let (lock, cvar) = &*self.servers;
-        let mut map = lock.lock().unwrap();
+        let mut map = lock.lock_safe();
         while matches!(map.get(workspace_id), Some(Slot::Starting)) {
             map = cvar.wait(map).unwrap();
         }
@@ -163,7 +164,7 @@ impl ServerManager {
     /// lock until the boot finished).
     pub fn status(&self, workspace_id: &str) -> Option<ServerInfo> {
         let (lock, cvar) = &*self.servers;
-        let mut map = lock.lock().unwrap();
+        let mut map = lock.lock_safe();
         while matches!(map.get(workspace_id), Some(Slot::Starting)) {
             map = cvar.wait(map).unwrap();
         }
@@ -185,7 +186,7 @@ impl ServerManager {
     /// starts so a server that finishes booting after this can't leak.
     pub fn shutdown_all(&self) {
         let (lock, cvar) = &*self.servers;
-        let mut map = lock.lock().unwrap();
+        let mut map = lock.lock_safe();
         while map.values().any(|s| matches!(s, Slot::Starting)) {
             map = cvar.wait(map).unwrap();
         }

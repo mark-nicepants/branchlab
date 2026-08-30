@@ -21,7 +21,8 @@ import {
   SystemMessageView,
   UserMessageView,
 } from "./ChatMessage";
-import { Composer, Kbd } from "./Composer";
+import { Composer } from "./Composer";
+import { Kbd } from "./ui/kbd";
 import { ConfigSelect } from "./ConfigSelect";
 import { ModelSelector } from "./ModelSelector";
 import { usePreferences } from "./PreferencesProvider";

@@ -9,6 +9,7 @@
 //!
 //! Use the [`logf!`] macro: `logf!("acp", "update {label}")`.
 
+use crate::util::LockExt;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
@@ -44,7 +45,7 @@ pub fn init(path: PathBuf) {
     let file = OpenOptions::new().create(true).write(true).truncate(true).open(&path);
     match file {
         Ok(file) => {
-            *cell().lock().unwrap() = Some(LogState { file, path: path.clone() });
+            *cell().lock_safe() = Some(LogState { file, path: path.clone() });
             log("logx", &format!("log initialized at {}", path.display()));
         }
         Err(e) => eprintln!("logx: could not open {}: {e}", path.display()),
@@ -53,14 +54,14 @@ pub fn init(path: PathBuf) {
 
 /// The active logfile path, if logging was initialized.
 pub fn path() -> Option<PathBuf> {
-    cell().lock().unwrap().as_ref().map(|s| s.path.clone())
+    cell().lock_safe().as_ref().map(|s| s.path.clone())
 }
 
 /// Append one line: `HH:MM:SS.mmm [area] message`. Mirrored to stderr.
 pub fn log(area: &str, msg: &str) {
     let line = format!("{} [{}] {}\n", timestamp(), area, msg);
     eprint!("{line}");
-    if let Some(state) = cell().lock().unwrap().as_mut() {
+    if let Some(state) = cell().lock_safe().as_mut() {
         let _ = state.file.write_all(line.as_bytes());
         let _ = state.file.flush();
     }

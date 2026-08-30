@@ -27,6 +27,7 @@ use crate::chat::manager::{ChatManager, SetupCard};
 use crate::chat::model::{SetupStep, SystemKind, ToolStatus};
 use crate::project::{Registry, SetupState};
 use crate::util::now_ms;
+use crate::util::LockExt;
 
 /// Setup scripts (installs) get plenty of time; teardown stays snappy so
 /// deleting a workspace can never hang the UI for long.
@@ -51,25 +52,30 @@ pub struct SetupManager {
     app: AppHandle,
     /// Workspaces with a pipeline in flight (guards double-starts from Retry).
     active: Arc<Mutex<HashSet<String>>>,
+    /// PIDs of running setup/teardown scripts. Each is its own process-group
+    /// leader (`process_group(0)`), so the pid doubles as the pgid to kill.
+    /// Tracked because these run on plain threads: nothing enforces the
+    /// timeout — or reaps the tree — once the app itself goes away.
+    live: Arc<Mutex<HashSet<u32>>>,
 }
 
 impl SetupManager {
     pub fn new(app: AppHandle) -> Self {
-        Self { app, active: Arc::new(Mutex::new(HashSet::new())) }
+        Self { app, active: Arc::new(Mutex::new(HashSet::new())), live: Arc::new(Mutex::new(HashSet::new())) }
     }
 
     /// Kick off (or retry) the provisioning pipeline for a workspace.
     /// Non-blocking; no-op if a pipeline is already running or the workspace
     /// has no project (quick chats).
     pub fn start(&self, workspace_id: &str) {
-        if !self.active.lock().unwrap().insert(workspace_id.to_string()) {
+        if !self.active.lock_safe().insert(workspace_id.to_string()) {
             return;
         }
         let mgr = self.clone();
         let ws_id = workspace_id.to_string();
         std::thread::spawn(move || {
             mgr.pipeline(&ws_id);
-            mgr.active.lock().unwrap().remove(&ws_id);
+            mgr.active.lock_safe().remove(&ws_id);
         });
     }
 
@@ -168,11 +174,12 @@ impl SetupManager {
                 return false;
             }
         };
+        let pid = self.track(&child);
         let (tx, rx) = std::sync::mpsc::channel::<String>();
         pipe_output(&mut child, tx);
 
         let mut last_flush = Instant::now();
-        wait_bounded(child, rx, Instant::now() + SETUP_TIMEOUT, |line| {
+        let ok = wait_bounded(child, rx, Instant::now() + SETUP_TIMEOUT, |line| {
             crate::logf!("setup", "[{ws_id}] {line}");
             // Drain output into the bounded tail.
             steps[i].log.push(line);
@@ -184,7 +191,9 @@ impl SetupManager {
                 chat.update_setup_card(ws_id, card, SystemKind::Info, "Setting up workspace".into(), steps.to_vec());
                 last_flush = Instant::now();
             }
-        })
+        });
+        self.untrack(pid);
+        ok
     }
 
     /// Best-effort teardown before workspace removal. Blocking, bounded by
@@ -204,11 +213,37 @@ impl SetupManager {
                 return Some(false);
             }
         };
+        let pid = self.track(&child);
         let (tx, rx) = std::sync::mpsc::channel::<String>();
         pipe_output(&mut child, tx);
-        Some(wait_bounded(child, rx, Instant::now() + TEARDOWN_TIMEOUT, |line| {
+        let ok = wait_bounded(child, rx, Instant::now() + TEARDOWN_TIMEOUT, |line| {
             crate::logf!("setup", "[{workspace_id}] {line}");
-        }))
+        });
+        self.untrack(pid);
+        Some(ok)
+    }
+
+    /// Kill the process group of every script still running. Called from the
+    /// app's `RunEvent::Exit`: the scripts are watched from plain threads that
+    /// die with the process, so without this an in-flight `npm install` (and
+    /// its whole tree) would outlive the app. Mirrors
+    /// `ServerManager::shutdown_all`.
+    pub fn shutdown_all(&self) {
+        for pid in self.live.lock_safe().drain() {
+            crate::logf!("setup", "shutdown: killing script process group {pid}");
+            kill_pgid(pid);
+        }
+    }
+
+    /// Register/unregister a running script so [`Self::shutdown_all`] can reach it.
+    fn track(&self, child: &Child) -> u32 {
+        let pid = child.id();
+        self.live.lock_safe().insert(pid);
+        pid
+    }
+
+    fn untrack(&self, pid: u32) {
+        self.live.lock_safe().remove(&pid);
     }
 
     fn emit(&self, workspace_id: &str, running: bool, ok: Option<bool>) {
@@ -306,7 +341,7 @@ fn wait_bounded(
                 return code == 0;
             }
             _ if Instant::now() >= deadline => {
-                kill_group(&child);
+                kill_pgid(child.id());
                 let _ = child.wait();
                 on_line("timed out — killed".into());
                 return false;
@@ -358,15 +393,16 @@ fn pipe_output(child: &mut Child, tx: std::sync::mpsc::Sender<String>) {
     }
 }
 
-/// Kill the child's whole process group (scripts spawn their own trees).
-fn kill_group(child: &Child) {
+/// Kill a whole process group (scripts spawn their own trees). `pgid` is the
+/// script child's pid — it is its own group leader.
+fn kill_pgid(pgid: u32) {
     #[cfg(unix)]
     {
-        let _ = Command::new("/bin/kill").args(["-KILL", "--", &format!("-{}", child.id())]).output();
+        let _ = Command::new("/bin/kill").args(["-KILL", "--", &format!("-{pgid}")]).output();
     }
     #[cfg(not(unix))]
     {
-        let _ = child;
+        let _ = pgid;
     }
 }
 

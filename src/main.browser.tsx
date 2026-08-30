@@ -8,6 +8,7 @@ import App from "./App";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { PreferencesProvider } from "@/components/PreferencesProvider";
 import { UpdateProvider } from "@/hooks/useUpdateChecker";
+import { ProjectsProvider } from "@/hooks/useProjects";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import "./index.css";
@@ -43,7 +44,9 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <PreferencesProvider>
         <UpdateProvider>
           <TooltipProvider delayDuration={300}>
-            <App />
+            <ProjectsProvider>
+              <App />
+            </ProjectsProvider>
             <Toaster />
           </TooltipProvider>
         </UpdateProvider>

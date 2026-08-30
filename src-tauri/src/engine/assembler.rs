@@ -1,10 +1,12 @@
 //! Maps ACP `session/update` notifications into our normalized block model.
 //!
-//! This is the transform layer — the one place that understands ACP shapes.
-//! Everything downstream (store, events, frontend) sees only `crate::chat::model`
-//! types. The assembler holds one live assistant turn's blocks in memory and
-//! upserts them as chunks/tool updates stream in; the manager reads the changed
-//! block out and emits a `chat:block` delta, then persists.
+//! This is the transform layer: it lives under `engine/` (with `acp.rs`) so ACP
+//! shapes stay on this side of the boundary, but the assembler *value* is owned
+//! by the chat manager, because it holds one live assistant turn's blocks and
+//! therefore belongs with the rest of that turn's state. It upserts blocks as
+//! chunks/tool updates stream in; the manager reads the changed block out and
+//! emits a `chat:block` delta, then persists. Everything downstream (store,
+//! events, frontend) sees only `crate::chat::model` types.
 //!
 //! Text/reasoning chunks are coalesced by `messageId` (a change in `messageId`
 //! starts a new block, per ACP), so streamed prose accumulates into one block
@@ -16,6 +18,13 @@ use agent_client_protocol::schema::v1 as acp;
 
 use crate::chat::model::{Block, ConfigChoice, ConfigOption, DiffBlock, ToolBlock, ToolLocation, ToolStatus};
 use crate::util::now_ms;
+
+/// The single ACP type that crosses out of `engine/`: a block-producing
+/// session update. [`crate::engine::EngineEvent::Update`] carries one to the
+/// chat manager, which hands it straight back to [`TurnAssembler::apply`]
+/// without inspecting it — so ACP *shapes* stay knowledge of this module while
+/// the per-turn assembler state stays with the turn that owns it.
+pub type RawUpdate = acp::SessionUpdate;
 
 /// What changed in the block list after applying one update. The manager reads
 /// `blocks[index]` for the current state and emits a `chat:block`.

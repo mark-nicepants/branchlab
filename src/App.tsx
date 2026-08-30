@@ -18,10 +18,11 @@ import { Button } from "./components/ui/button";
 import { EmptyState } from "./components/ui/empty-state";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { deleteWorkspaceWithConfirm } from "./lib/deleteWorkspace";
-import { onWorkspaceNotify, onWorkspaceSetup } from "./lib/events";
+import { onWorkspaceNotify } from "./lib/events";
 import { offerMarkTaskDone } from "./lib/taskDone";
 import { useDesktopBehaviors } from "./hooks/useDesktopBehaviors";
 import { GitHubProvider } from "./hooks/useGitHub";
+import { useProjects } from "./hooks/useProjects";
 import { useShortcuts } from "./hooks/useShortcuts";
 import { WorkspaceDataProvider } from "./hooks/useWorkspaceData";
 import {
@@ -29,8 +30,6 @@ import {
   createQuickChat,
   createWorkspace,
   createWorkspaceFromPr,
-  listProjects,
-  listWorkspaces,
   openDevtools,
   perfMark,
   probeEnvironment,
@@ -77,8 +76,13 @@ function ScreenErrorFallback({ reset }: { reset: () => void }) {
 function App() {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const [rechecking, setRechecking] = useState(false);
-  const [projects, setProjects] = useState<ProjectView[]>([]);
-  const [quickChats, setQuickChats] = useState<Workspace[]>([]);
+  const {
+    workspaceById,
+    projectById,
+    refresh: refreshProjects,
+    addWorkspace,
+    applyProject,
+  } = useProjects();
   // All screen changes flow through the router (also feeds telemetry).
   const router = useAppRouter();
   const { view, selectedId, settingsTab } = router;
@@ -109,17 +113,6 @@ function App() {
     } finally {
       setRechecking(false);
     }
-  }, []);
-
-  const refreshProjects = useCallback(async () => {
-    // Quick chats live in the same registry but under no project, so they
-    // come from the flat workspace list rather than the project views.
-    const [projs, workspaces] = await Promise.all([
-      listProjects(),
-      listWorkspaces(),
-    ]);
-    setProjects(projs);
-    setQuickChats(workspaces.filter((w) => w.kind === "QuickChat"));
   }, []);
 
   const pickProject = useCallback(async () => {
@@ -163,16 +156,6 @@ function App() {
     if (phase.kind !== "blocked") void refreshProjects();
   }, [phase.kind, refreshProjects]);
 
-  // When a workspace finishes provisioning, refresh the registry snapshot so
-  // every consumer of `Workspace.setup` (sidebar rows, etc.) heals even if a
-  // live overlay missed the event.
-  useEffect(() => {
-    const unlisten = onWorkspaceSetup((p) => {
-      if (!p.running) void refreshProjects();
-    });
-    return () => void unlisten.then((f) => f());
-  }, [refreshProjects]);
-
   // The puppeteer's tap on the shoulder: a linked task finished a turn and
   // its card moved to the review column. Suppressed while that session is
   // already on screen; the stable toast id makes re-delivery replace instead
@@ -198,15 +181,9 @@ function App() {
     return () => void unlisten.then((f) => f());
   }, []);
 
-  const allWorkspaces = useMemo(
-    () => [...projects.flatMap((p) => p.workspaces), ...quickChats],
-    [projects, quickChats],
-  );
-  const selected = selectedId
-    ? (allWorkspaces.find((w) => w.id === selectedId) ?? null)
-    : null;
+  const selected = selectedId ? (workspaceById.get(selectedId) ?? null) : null;
   const selectedProject = selected
-    ? (projects.find((p) => p.id === selected.project_id) ?? null)
+    ? (projectById.get(selected.project_id) ?? null)
     : null;
 
   // The backend supervisor keeps the active (and all autofix-enabled) servers
@@ -230,21 +207,11 @@ function App() {
    *  the registry refresh catch up in the background. */
   const openNewWorkspace = useCallback(
     (ws: Workspace) => {
-      if (ws.kind === "QuickChat") {
-        setQuickChats((prev) => [...prev, ws]);
-      } else {
-        setProjects((prev) =>
-          prev.map((p) =>
-            p.id === ws.project_id
-              ? { ...p, workspaces: [...p.workspaces, ws] }
-              : p,
-          ),
-        );
-      }
+      addWorkspace(ws);
       openSession(ws);
       void refreshProjects();
     },
-    [openSession, refreshProjects],
+    [addWorkspace, openSession, refreshProjects],
   );
 
   const createSession = useCallback(
@@ -382,11 +349,8 @@ function App() {
               onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
               onOpenSettings={() => router.openSettings("general")}
               onOpenAccounts={() => router.openSettings("accounts")}
-              projects={projects}
-              quickChats={quickChats}
               selectedWorkspaceId={view === "session" ? selectedId : null}
               onSelectWorkspace={openSession}
-              onProjectsChanged={refreshProjects}
               onRenamed={onRenamed}
               onQuickCreate={(p) => void quickCreate(p)}
               onNewFromBranch={setBranchModalProject}
@@ -430,15 +394,9 @@ function App() {
                   }}
                 />
               ) : view === "search" ? (
-                <SearchScreen
-                  projects={projects}
-                  quickChats={quickChats}
-                  onSelect={openSession}
-                />
+                <SearchScreen onSelect={openSession} />
               ) : view === "my-work" ? (
                 <MyWorkScreen
-                  projects={projects}
-                  quickChats={quickChats}
                   onOpenSession={(id) => router.openSession(id)}
                   onStartTask={(task) => void startTaskSession(task)}
                   onCleanupWorkspace={(id) => void deleteWorkspaceFromChat(id)}
@@ -447,7 +405,6 @@ function App() {
                 />
               ) : (
                 <HomeScreen
-                  projects={projects}
                   onCreateSession={(pid, base, prompt) =>
                     void createSession(pid, base, prompt)
                   }
@@ -469,8 +426,6 @@ function App() {
             }
             initialTab={settingsTab ?? "general"}
             onTabChange={router.settingsTabChanged}
-            projects={projects}
-            onProjectsChanged={refreshProjects}
             onAddProject={() => void pickProject()}
             onOpenProjectSettings={(p) => {
               router.closeSettings();
@@ -502,13 +457,7 @@ function App() {
               open
               onOpenChange={(o) => !o && setSettingsProject(null)}
               onUpdated={(updated) => {
-                setProjects((prev) =>
-                  prev.map((p) =>
-                    p.id === updated.id
-                      ? { ...updated, workspaces: p.workspaces }
-                      : p,
-                  ),
-                );
+                applyProject(updated);
                 setSettingsProject((cur) =>
                   cur?.id === updated.id
                     ? { ...updated, workspaces: cur.workspaces }
@@ -526,15 +475,8 @@ function App() {
   );
 }
 
-function SearchScreen({
-  projects,
-  quickChats,
-  onSelect,
-}: {
-  projects: ProjectView[];
-  quickChats: Workspace[];
-  onSelect: (w: Workspace) => void;
-}) {
+function SearchScreen({ onSelect }: { onSelect: (w: Workspace) => void }) {
+  const { projects, quickChats } = useProjects();
   const [q, setQ] = useState("");
   const all = useMemo(
     () => [

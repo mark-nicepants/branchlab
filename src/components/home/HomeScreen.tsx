@@ -1,12 +1,11 @@
 import { CalendarClock, Blocks } from "lucide-react";
-import type { ProjectView } from "../../lib/types";
+import { useProjects } from "@/hooks/useProjects";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Logo } from "../Logo";
 import { HomeComposer } from "./HomeComposer";
 import { ReviewInbox } from "./ReviewInbox";
 
 interface Props {
-  projects: ProjectView[];
   onCreateSession: (
     projectId: string,
     base: string | undefined,
@@ -25,13 +24,13 @@ interface Props {
  * review inbox ("Up next"), and cards for extending the app.
  */
 export function HomeScreen({
-  projects,
   onCreateSession,
   onQuickChat,
   onAddProject,
   onCheckoutPr,
   onOpenAccounts,
 }: Props) {
+  const { projects } = useProjects();
   return (
     <div className="relative h-full">
       {/* Top strip acts as a window-drag region (there's no header here). */}

@@ -34,15 +34,6 @@ interface Props {
   frameClassName?: string;
 }
 
-/** A boxed keystroke for the hint line under the composer. */
-export function Kbd({ children }: { children: ReactNode }) {
-  return (
-    <kbd className="rounded border border-b-2 border-border bg-card px-1 font-mono text-[10px] text-muted-foreground">
-      {children}
-    </kbd>
-  );
-}
-
 /** Rough decoded size of a base64 data URL, for the attachment chip label. */
 function dataUrlKb(url: string): string {
   const b64 = url.slice(url.indexOf(",") + 1);

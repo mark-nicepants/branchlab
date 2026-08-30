@@ -6,10 +6,16 @@
 //! instantly on workspace switch (no re-fetch), and span multiple engine
 //! sessions under one conversation.
 //!
-//! `ChatDb` wraps a single `rusqlite::Connection`; SQLite is single-threaded, so
-//! the manager runs it behind a store-actor thread (see `manager.rs`) — never
-//! shared across threads. Time and id generation are the caller's job so this
-//! layer stays deterministic and unit-testable.
+//! `ChatDb` wraps a single `rusqlite::Connection`. SQLite is single-threaded,
+//! so the manager holds it in a `Mutex<ChatDb>` shared by the command threads
+//! and the engine event loop — every call serializes on that mutex. Time and id
+//! generation are the caller's job so this layer stays deterministic and
+//! unit-testable.
+//!
+//! The schema carries a `user_version` ([`SCHEMA_VERSION`]), checked on open:
+//! there are no migrations yet, but the mechanism exists so the first one has
+//! something to branch on — and so a database written by a newer build is
+//! refused instead of silently mangled.
 //!
 //! Simplification vs. a fully-normalized schema: each entry is one row with its
 //! blocks inline as JSON (`data`). Ordering/pagination use the `seq` rowid; the
@@ -22,6 +28,10 @@ use std::path::Path;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::chat::model::{Conversation, Entry, SessionReason, TurnStatus};
+
+/// Current on-disk schema version, stamped into SQLite's `user_version`.
+/// Bump it when the schema changes and migrate from the stored value.
+const SCHEMA_VERSION: i64 = 1;
 
 pub struct ChatDb {
     conn: Connection,
@@ -42,9 +52,19 @@ impl ChatDb {
     }
 
     fn init(conn: Connection) -> Result<Self, String> {
-        // WAL keeps reads (snapshots) from blocking the store actor's writes.
+        // WAL keeps reads (snapshots) from blocking writes.
         conn.pragma_update(None, "journal_mode", "WAL").map_err(|e| e.to_string())?;
         conn.pragma_update(None, "foreign_keys", "ON").map_err(|e| e.to_string())?;
+        // 0 = fresh file, or one written before versioning existed (the schema
+        // is identical either way — `CREATE TABLE IF NOT EXISTS` below covers
+        // both). Anything above what we know is a downgrade: refuse it rather
+        // than write v1 rows into a newer schema.
+        let found: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).map_err(|e| e.to_string())?;
+        if found > SCHEMA_VERSION {
+            return Err(format!(
+                "chat.db has schema v{found}, newer than this build understands (v{SCHEMA_VERSION}) —                  update BranchLab or move chat.db aside"
+            ));
+        }
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS conversations (
                id TEXT PRIMARY KEY,
@@ -76,6 +96,9 @@ impl ChatDb {
              CREATE INDEX IF NOT EXISTS idx_entries_conv_seq ON entries(conversation_id, seq);",
         )
         .map_err(|e| e.to_string())?;
+        if found != SCHEMA_VERSION {
+            conn.pragma_update(None, "user_version", SCHEMA_VERSION).map_err(|e| e.to_string())?;
+        }
         Ok(Self { conn })
     }
 

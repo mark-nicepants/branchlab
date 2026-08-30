@@ -25,19 +25,22 @@ export function ActiveTodoStrip({ todos, busy }: Props) {
   const [prev, setPrev] = useState<string | null>(null);
   const lastContent = useRef<string | null>(null);
 
+  // Only the text matters here — re-running because the todo *object* was
+  // rebuilt would replay the animation on every unrelated push.
+  const activeContent = active?.content ?? null;
   useEffect(() => {
-    if (!active) {
+    if (activeContent === null) {
       lastContent.current = null;
       return;
     }
-    if (lastContent.current && lastContent.current !== active.content) {
+    if (lastContent.current && lastContent.current !== activeContent) {
       setPrev(lastContent.current);
       const t = setTimeout(() => setPrev(null), 220);
-      lastContent.current = active.content;
+      lastContent.current = activeContent;
       return () => clearTimeout(t);
     }
-    lastContent.current = active.content;
-  }, [active?.content]);
+    lastContent.current = activeContent;
+  }, [activeContent]);
 
   // Collapse when the strip disappears so the next run starts collapsed.
   useEffect(() => {

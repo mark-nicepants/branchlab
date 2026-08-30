@@ -35,6 +35,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useGitHub } from "@/hooks/useGitHub";
+import { useProjects } from "@/hooks/useProjects";
 import { cn } from "@/lib/utils";
 import {
   BotMessageSquare,
@@ -112,12 +113,9 @@ interface Props {
   onOpenSettings: () => void;
   /** Open Settings on the Accounts tab (from the identity indicator). */
   onOpenAccounts: () => void;
-  projects: ProjectView[];
-  quickChats: Workspace[];
   /** Highlighted only while the session view is active. */
   selectedWorkspaceId: string | null;
   onSelectWorkspace: (w: Workspace) => void;
-  onProjectsChanged: () => void;
   onRenamed: (workspaceId: string, name: string) => void;
   onQuickCreate: (project: ProjectView) => void;
   onNewFromBranch: (project: ProjectView) => void;
@@ -142,11 +140,8 @@ export function SessionsSidebar({
   onToggleCollapse,
   onOpenSettings,
   onOpenAccounts,
-  projects,
-  quickChats,
   selectedWorkspaceId,
   onSelectWorkspace,
-  onProjectsChanged,
   onRenamed,
   onQuickCreate,
   onNewFromBranch,
@@ -156,6 +151,7 @@ export function SessionsSidebar({
   onAddProject,
   onOpenProjectSettings,
 }: Props) {
+  const { projects, quickChats, refresh: refreshProjects } = useProjects();
   const { prefs, setPref } = usePreferences();
   const updateAvailable = useAppUpdate().availableVersion !== null;
   const [renaming, setRenaming] = useState<Workspace | null>(null);
@@ -216,7 +212,7 @@ export function SessionsSidebar({
   async function deleteWorkspace(w: Workspace) {
     setDeleting(w.id, true);
     await deleteWorkspaceWithConfirm(w.id, (unlinked) => {
-      onProjectsChanged();
+      void refreshProjects();
       toast.success(`Deleted workspace ${workspaceLabel(w)}`);
       offerMarkTaskDone(unlinked);
     });
@@ -464,7 +460,7 @@ export function SessionsSidebar({
                           variant="destructive"
                           onClick={() =>
                             void removeProject(p.id)
-                              .then(onProjectsChanged)
+                              .then(refreshProjects)
                               .catch((e) =>
                                 toast.error("Could not remove project", {
                                   description: String(e),

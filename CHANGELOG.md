@@ -113,6 +113,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Quitting BranchLab now shuts down the agent engines and any running setup
+  scripts it started, instead of leaving them alive in the background.
 - Streamed text and reasoning segments no longer overwrite each other in a
   live turn: every block now reaches the transcript under its own id, so a
   turn with several thinking/text passages shows all of them while streaming

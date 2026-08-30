@@ -1,16 +1,24 @@
 //! The engine boundary — BranchLab's abstraction over a coding agent.
 //!
-//! The manager talks to an engine only through [`EngineCommand`] (outbound) and
-//! [`EngineEvent`] (inbound), never in ACP terms. The one concession: block-level
-//! updates are forwarded as the raw ACP `SessionUpdate` (in [`EngineEvent::Update`])
-//! because the per-turn assembler that folds them lives in the manager alongside
-//! turn state. Everything else the engine pre-digests. A non-ACP engine could be
-//! added by producing the same `EngineEvent` stream.
+//! **Every `agent-client-protocol` type in this crate lives under `engine/`**
+//! (`acp.rs` drives the protocol, `assembler.rs` folds block updates into the
+//! domain model) — `grep -r agent_client_protocol src | grep -v ^src/engine/`
+//! must stay empty. The manager talks to an engine through [`EngineCommand`]
+//! (outbound) and [`EngineEvent`] (inbound), all BranchLab types.
+//!
+//! One deliberate seam: block-producing updates ride opaquely as
+//! [`assembler::RawUpdate`] in [`EngineEvent::Update`], because the
+//! [`assembler::TurnAssembler`] that folds them holds the live turn's blocks
+//! and so is owned by the manager alongside the rest of that turn's state. The
+//! manager passes the value straight back into the assembler and never
+//! inspects it. Every other update kind the engine pre-digests (plan,
+//! commands, usage, config). A non-ACP engine could be added by producing the
+//! same `EngineEvent` stream.
 
 pub mod acp;
+pub mod assembler;
 pub mod opencode_http;
 
-use agent_client_protocol::schema::v1 as acp_schema;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::chat::model::{ConfigOption, UsageInfo};
@@ -109,13 +117,40 @@ pub struct PermissionReq {
     pub options: Vec<PermChoice>,
 }
 
+/// One entry of the agent's plan. `status` is the wire string the frontend
+/// expects: "pending" | "in_progress" | "completed".
+#[derive(Debug, Clone)]
+pub struct PlanItem {
+    pub content: String,
+    pub status: String,
+}
+
+/// A slash command / skill the agent advertises.
+#[derive(Debug, Clone)]
+pub struct SlashCommand {
+    pub name: String,
+    pub description: String,
+}
+
 /// An event from a running engine to the manager. Tagged with the workspace id
 /// by the manager's fan-in channel.
 pub enum EngineEvent {
     /// Session initialized; carries the ACP session id and advertised config options.
     Ready { session_id: String, config: Vec<ConfigOption> },
-    /// A streaming session update (blocks, plan, config, title, usage, commands).
-    Update(Box<acp_schema::SessionUpdate>),
+    /// A block-producing session update (message/thought chunks, tool calls),
+    /// opaque to the manager: it goes straight into [`assembler::TurnAssembler`].
+    /// Every other update kind is pre-digested into the variants below.
+    Update(Box<assembler::RawUpdate>),
+    /// The agent's plan/todo list (ACP `Plan`).
+    Plan(Vec<PlanItem>),
+    /// Slash commands / skills the agent advertises (ACP `AvailableCommandsUpdate`).
+    Commands(Vec<SlashCommand>),
+    /// Context-window usage pushed mid-session (ACP `UsageUpdate`): tokens used
+    /// out of the window size.
+    Context { used: u64, size: u64 },
+    /// Config options the agent pushed unprompted (ACP `ConfigOptionUpdate`),
+    /// e.g. after the user switched mode inside the agent.
+    ConfigAdvertised(Vec<ConfigOption>),
     /// The refreshed full config-option set returned by a `set_config_option`
     /// call. opencode does NOT emit a `config_option_update` notification for
     /// its own response — the new options (e.g. the dynamic `effort` /

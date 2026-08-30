@@ -19,6 +19,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
+use crate::util::LockExt;
 use crate::util::{new_id, now_ms};
 
 /// Gap between positions when (re)numbering from scratch.
@@ -217,7 +218,7 @@ impl TaskStore {
         let migrated = canonicalize(&mut data) | backfill_numbers(&mut data);
         let store = Self { data: Mutex::new(data), file };
         if migrated {
-            store.persist(&store.data.lock().unwrap());
+            store.persist(&store.data.lock_safe());
         }
         store
     }
@@ -239,7 +240,7 @@ impl TaskStore {
     }
 
     pub fn snapshot(&self) -> BoardSnapshot {
-        let data = self.data.lock().unwrap();
+        let data = self.data.lock_safe();
         let mut columns: Vec<Column> = data.columns.iter().filter(|c| c.deleted_at.is_none()).cloned().collect();
         let mut tasks: Vec<Task> = data.tasks.iter().filter(|t| t.deleted_at.is_none()).cloned().collect();
         columns.sort_by(|a, b| a.position.total_cmp(&b.position));
@@ -248,11 +249,11 @@ impl TaskStore {
     }
 
     pub fn estimate_unit(&self) -> EstimateUnit {
-        self.data.lock().unwrap().estimate_unit
+        self.data.lock_safe().estimate_unit
     }
 
     pub fn set_estimate_unit(&self, unit: EstimateUnit) {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         data.estimate_unit = unit;
         self.persist(&data);
     }
@@ -269,7 +270,7 @@ impl TaskStore {
         if title.is_empty() {
             return Err("task title is empty".into());
         }
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         // Subtasks inherit their parent's project so dispatch never needs
         // hierarchy awareness; a subtask of a subtask is refused (one level).
         let mut project_id = project_id;
@@ -314,7 +315,7 @@ impl TaskStore {
     }
 
     pub fn update_task(&self, id: &str, patch: TaskPatch) -> Result<(), String> {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         let live: std::collections::HashSet<String> =
             data.tasks.iter().filter(|t| t.deleted_at.is_none()).map(|t| t.id.clone()).collect();
         let task = live_task(&mut data, id)?;
@@ -345,7 +346,7 @@ impl TaskStore {
     }
 
     pub fn delete_task(&self, id: &str) -> Result<(), String> {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         let now = now_ms();
         {
             let task = live_task(&mut data, id)?;
@@ -365,7 +366,7 @@ impl TaskStore {
     /// fractional index; when the target column's gaps are exhausted the
     /// column is renumbered and the task appended at the requested rank.
     pub fn move_task(&self, id: &str, column_id: &str, position: f64) -> Result<(), String> {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         if !data.columns.iter().any(|c| c.id == column_id && c.deleted_at.is_none()) {
             return Err("unknown column".into());
         }
@@ -421,7 +422,7 @@ impl TaskStore {
     /// Link a task to a freshly started session and move it to the active
     /// column (when one is assigned).
     pub fn link_workspace(&self, id: &str, workspace_id: &str) -> Result<(), String> {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         let active = role_column(&data, ColumnRole::Active);
         let max = active.as_ref().map(|c| max_position(&data, c)).unwrap_or(0.0);
         let task = live_task(&mut data, id)?;
@@ -440,7 +441,7 @@ impl TaskStore {
     /// The linked session finished its arc (PR merged). Move to the done
     /// column. Quiet no-op when nothing is linked.
     pub fn on_workspace_done(&self, workspace_id: &str) -> bool {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         let done = role_column(&data, ColumnRole::Done);
         let max = done.as_ref().map(|c| max_position(&data, c)).unwrap_or(0.0);
         let Some(task) =
@@ -468,7 +469,7 @@ impl TaskStore {
     pub fn on_workspace_removed(&self, workspace_id: &str) -> Option<UnlinkedTask> {
         // The link is KEPT: the chat.db transcript is keyed by this workspace
         // id and survives deletion, so the card can open the archived chat.
-        let data = self.data.lock().unwrap();
+        let data = self.data.lock_safe();
         let done = role_column(&data, ColumnRole::Done);
         let task =
             data.tasks.iter().find(|t| t.deleted_at.is_none() && t.workspace_id.as_deref() == Some(workspace_id))?;
@@ -478,7 +479,7 @@ impl TaskStore {
 
     /// Move a task to the done-role column (the "mark as done" toast action).
     pub fn mark_done(&self, id: &str) -> Result<(), String> {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         let done = role_column(&data, ColumnRole::Done).ok_or("no done column")?;
         let max = max_position(&data, &done);
         let task = live_task(&mut data, id)?;
@@ -498,7 +499,7 @@ impl TaskStore {
     /// among the parent's live children are ignored; dep ids are validated
     /// the same way `update_task` does. Returns how many tasks changed.
     pub fn apply_plan(&self, parent_id: &str, plan: Vec<(String, Vec<String>, Option<f64>)>) -> usize {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         let children: std::collections::HashSet<String> = data
             .tasks
             .iter()
@@ -534,7 +535,7 @@ impl TaskStore {
     /// A task's activity feed, oldest first (insertion order — created_at has
     /// millisecond ties within one action).
     pub fn activity(&self, task_id: &str) -> Vec<ActivityEntry> {
-        self.data.lock().unwrap().activity.iter().filter(|a| a.task_id == task_id).cloned().collect()
+        self.data.lock_safe().activity.iter().filter(|a| a.task_id == task_id).cloned().collect()
     }
 
     /// `create_task` for the agent bridge: same semantics, but the "created"
@@ -546,7 +547,7 @@ impl TaskStore {
         parent_id: Option<String>,
     ) -> Result<Task, String> {
         let task = self.create_task(title, description, None, None, parent_id)?;
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         if let Some(a) = data.activity.iter_mut().rev().find(|a| a.task_id == task.id && a.kind == "created") {
             a.actor = "agent".into();
         }
@@ -577,7 +578,7 @@ impl TaskStore {
         let name = if name.is_empty() { "file" } else { name };
         let att =
             TaskAttachment { id: new_id(), name: name.to_string(), size: bytes.len() as u64, created_at: now_ms() };
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         if !data.tasks.iter().any(|t| t.id == task_id && t.deleted_at.is_none()) {
             return Err("unknown task".into());
         }
@@ -595,7 +596,7 @@ impl TaskStore {
 
     /// Remove an attachment (metadata + bytes).
     pub fn remove_attachment(&self, task_id: &str, attachment_id: &str) -> Result<(), String> {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         let file = {
             let task = live_task(&mut data, task_id)?;
             let Some(pos) = task.attachments.iter().position(|a| a.id == attachment_id) else {
@@ -614,12 +615,12 @@ impl TaskStore {
 
     /// Look a live task up by its human #number.
     pub fn find_by_number(&self, number: u64) -> Option<Task> {
-        self.data.lock().unwrap().tasks.iter().find(|t| t.number == number && t.deleted_at.is_none()).cloned()
+        self.data.lock_safe().tasks.iter().find(|t| t.number == number && t.deleted_at.is_none()).cloned()
     }
 
     /// Record a board event from the command layer (e.g. AI intake).
     pub fn record_event(&self, task_id: &str, kind: &str, actor: &str, body: &str) {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         record(&mut data, task_id, kind, actor, body);
         self.persist(&data);
     }
@@ -630,7 +631,7 @@ impl TaskStore {
         if body.is_empty() {
             return Err("empty comment".into());
         }
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         if !data.tasks.iter().any(|t| t.id == task_id && t.deleted_at.is_none()) {
             return Err("unknown task".into());
         }
@@ -645,7 +646,7 @@ impl TaskStore {
     /// THIS subtask instead of rediscovering the whole batch.
     pub fn kickoff_prompt(&self, task: &Task, project_name: Option<&str>) -> (String, String) {
         let (display, mut sent) = task_prompt(task, project_name);
-        let data = self.data.lock().unwrap();
+        let data = self.data.lock_safe();
         if let Some(pid) = &task.parent_id {
             if let Some(parent) = data.tasks.iter().find(|t| &t.id == pid && t.deleted_at.is_none()) {
                 sent.push_str(&format!("\nThis is a SUBTASK of #{} {}.", parent.number, parent.title));
@@ -728,7 +729,7 @@ impl TaskStore {
     }
 
     fn move_between_roles(&self, workspace_id: &str, from: ColumnRole, to: ColumnRole) -> Option<(String, String)> {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         let from_col = role_column(&data, from)?;
         let to_col = role_column(&data, to)?;
         let max = max_position(&data, &to_col);
@@ -754,7 +755,7 @@ impl TaskStore {
     /// deps count as satisfied — a deleted dep must never deadlock the queue).
     /// Project-less tasks dispatch as quick chats.
     pub fn next_queued(&self) -> Option<Task> {
-        let data = self.data.lock().unwrap();
+        let data = self.data.lock_safe();
         let queued = role_column(&data, ColumnRole::Active)?;
         let done = role_column(&data, ColumnRole::Done);
         let dep_done = |dep: &String| {
@@ -783,7 +784,7 @@ impl TaskStore {
     /// measure. `is_live` filters out archived links (workspace deleted but
     /// the id kept for the chat archive), so dead sessions never eat a slot.
     pub fn active_count(&self, is_live: impl Fn(&str) -> bool) -> usize {
-        let data = self.data.lock().unwrap();
+        let data = self.data.lock_safe();
         let Some(active) = role_column(&data, ColumnRole::Active) else { return 0 };
         data.tasks
             .iter()
@@ -1204,7 +1205,7 @@ mod tests {
         let no_project = s.create_task("np".into(), None, None, Some(queued.clone()), None).unwrap();
         // b depends on a: not dispatchable until a is done.
         {
-            let mut data = s.data.lock().unwrap();
+            let mut data = s.data.lock_safe();
             data.tasks.iter_mut().find(|t| t.id == b.id).unwrap().depends_on = vec![a.id.clone()];
         }
 
@@ -1221,7 +1222,7 @@ mod tests {
         assert_eq!(s.next_queued().unwrap().id, b.id);
         // A tombstoned dep never deadlocks the queue.
         {
-            let mut data = s.data.lock().unwrap();
+            let mut data = s.data.lock_safe();
             data.tasks.iter_mut().find(|t| t.id == b.id).unwrap().depends_on = vec!["gone".into(), a.id.clone()];
         }
         assert_eq!(s.next_queued().unwrap().id, b.id);
@@ -1364,7 +1365,7 @@ mod tests {
 
         // Pre-numbering rows (number=0) get backfilled oldest-first on load.
         {
-            let mut data = s.data.lock().unwrap();
+            let mut data = s.data.lock_safe();
             data.tasks.iter_mut().for_each(|t| t.number = 0);
             data.next_task_number = 0;
             s.persist(&data);
@@ -1383,7 +1384,7 @@ mod tests {
         let parent = s.create_task("parent".into(), None, None, None, None).unwrap();
         let child = s.create_task("child".into(), None, None, None, None).unwrap();
         {
-            let mut data = s.data.lock().unwrap();
+            let mut data = s.data.lock_safe();
             data.tasks.iter_mut().find(|t| t.id == child.id).unwrap().parent_id = Some(parent.id.clone());
         }
         s.delete_task(&parent.id).unwrap();

@@ -8,6 +8,7 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use crate::util::LockExt;
 use serde::{Deserialize, Serialize};
 
 /// Runtime auth health of an account. Persisted best-effort so the UI can show
@@ -196,16 +197,16 @@ impl AccountStore {
     }
 
     pub fn list(&self) -> Vec<Account> {
-        self.data.lock().unwrap().clone()
+        self.data.lock_safe().clone()
     }
 
     pub fn get(&self, id: &str) -> Option<Account> {
-        self.data.lock().unwrap().iter().find(|a| a.id == id).cloned()
+        self.data.lock_safe().iter().find(|a| a.id == id).cloned()
     }
 
     /// Insert or replace an account by id.
     pub fn upsert(&self, account: Account) {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         if let Some(existing) = data.iter_mut().find(|a| a.id == account.id) {
             *existing = account;
         } else {
@@ -216,7 +217,7 @@ impl AccountStore {
 
     /// Update just the auth status of an account (e.g. on a 401).
     pub fn set_status(&self, id: &str, status: AccountStatus) {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         if let Some(a) = data.iter_mut().find(|a| a.id == id) {
             a.status = status;
             self.persist(&data);
@@ -225,7 +226,7 @@ impl AccountStore {
 
     /// Remove an account, returning it (so the caller can clean up its config dir).
     pub fn remove(&self, id: &str) -> Option<Account> {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         let idx = data.iter().position(|a| a.id == id)?;
         let removed = data.remove(idx);
         self.persist(&data);

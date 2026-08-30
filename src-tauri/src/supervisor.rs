@@ -24,6 +24,7 @@ use crate::chat::model::{TurnOrigin, TurnStatus};
 use crate::git::{self, CheckBucket, PrStatus, Rollup};
 use crate::github::GithubManager;
 use crate::project::{AutofixMode, Registry, WorkspaceKind};
+use crate::util::LockExt;
 
 /// Reconcile cadence: PR pipeline poll for driven worktrees.
 const TICK: Duration = Duration::from_secs(5);
@@ -150,12 +151,24 @@ struct DesiredWs {
     persisted_pr: Option<PrStatus>,
 }
 
+/// Coalescing gate for [`Inner::reconcile_coalesced`]. A reconcile round only
+/// stamps `last_pr_poll` *after* its GitHub round-trip, so two overlapping
+/// rounds would both see the same workspaces as due and duplicate every API
+/// call. Requests that arrive while a round runs therefore set `rerun`, which
+/// the running round drains before finishing — coalesced, never dropped.
+#[derive(Default)]
+struct ReconcileGate {
+    running: bool,
+    rerun: bool,
+}
+
 struct Inner {
     app: AppHandle,
     chat: ChatManager,
     github: GithubManager,
     runtimes: Mutex<HashMap<String, WsRuntime>>,
     active: Mutex<Option<String>>,
+    reconcile: Mutex<ReconcileGate>,
 }
 
 #[derive(Clone)]
@@ -172,6 +185,7 @@ impl Supervisor {
                 github,
                 runtimes: Mutex::new(HashMap::new()),
                 active: Mutex::new(None),
+                reconcile: Mutex::new(ReconcileGate::default()),
             }),
         }
     }
@@ -179,9 +193,9 @@ impl Supervisor {
     /// Spawn the PR reconcile loop and the turn-event consumer. Call once.
     pub fn spawn(&self) {
         let inner = Arc::clone(&self.inner);
-        tauri::async_runtime::spawn(async move {
+        crate::util::spawn_watched("supervisor", "reconcile", async move {
             loop {
-                Inner::reconcile(&inner).await;
+                Inner::reconcile_coalesced(&inner).await;
                 tokio::time::sleep(TICK).await;
             }
         });
@@ -189,7 +203,7 @@ impl Supervisor {
         // Turn-event consumer: coarse activity + autofix hand-off.
         let inner2 = Arc::clone(&self.inner);
         let mut rx = self.inner.chat.subscribe_turns();
-        tauri::async_runtime::spawn(async move {
+        crate::util::spawn_watched("supervisor", "turn-events", async move {
             while let Ok(ev) = rx.recv().await {
                 inner2.on_turn_event(ev);
             }
@@ -199,9 +213,9 @@ impl Supervisor {
     /// The workspace currently shown on screen. Clears its needs-attention and
     /// re-pushes snapshots so the just-mounted view gets current state.
     pub fn set_active(&self, workspace_id: Option<String>) {
-        *self.inner.active.lock().unwrap() = workspace_id.clone();
+        *self.inner.active.lock_safe() = workspace_id.clone();
         if let Some(id) = &workspace_id {
-            if let Some(rt) = self.inner.runtimes.lock().unwrap().get_mut(id) {
+            if let Some(rt) = self.inner.runtimes.lock_safe().get_mut(id) {
                 rt.needs_attention = false;
                 rt.last_pr_emit = None;
                 rt.last_session_emit = None;
@@ -222,17 +236,19 @@ impl Supervisor {
         Ok(ws)
     }
 
+    /// Request a reconcile round now. Coalesces with one already in flight
+    /// instead of overlapping it (see [`ReconcileGate`]).
     pub fn reconcile_now(&self) {
         let inner = Arc::clone(&self.inner);
         tauri::async_runtime::spawn(async move {
-            Inner::reconcile(&inner).await;
+            Inner::reconcile_coalesced(&inner).await;
         });
     }
 
     /// Apply a new autofix mode and re-push the PR snapshot immediately.
     pub fn note_autofix_mode(&self, workspace_id: &str, mode: AutofixMode) {
         {
-            let mut rts = self.inner.runtimes.lock().unwrap();
+            let mut rts = self.inner.runtimes.lock_safe();
             let rt = rts.entry(workspace_id.to_string()).or_default();
             rt.mode = mode;
             rt.last_pr_emit = None;
@@ -247,7 +263,7 @@ impl Supervisor {
     /// populated at t=0 without waiting for any poll or event.
     pub fn sidebar_snapshot(&self) -> Vec<WorkspaceStatus> {
         let registry = self.inner.app.state::<Registry>();
-        let rts = self.inner.runtimes.lock().unwrap();
+        let rts = self.inner.runtimes.lock_safe();
         registry
             .all_workspaces()
             .into_iter()
@@ -287,7 +303,7 @@ impl Supervisor {
     /// Schedule an immediate PR re-poll for one workspace (lifecycle actions:
     /// push / merge / PR created — the remote state just changed).
     pub fn poke(&self, workspace_id: &str) {
-        if let Some(rt) = self.inner.runtimes.lock().unwrap().get_mut(workspace_id) {
+        if let Some(rt) = self.inner.runtimes.lock_safe().get_mut(workspace_id) {
             rt.last_pr_poll = None;
         }
         self.reconcile_now();
@@ -296,7 +312,7 @@ impl Supervisor {
     /// Schedule an immediate PR re-poll for every workspace (window focus —
     /// the user is looking, make it fresh).
     pub fn poke_all(&self) {
-        for rt in self.inner.runtimes.lock().unwrap().values_mut() {
+        for rt in self.inner.runtimes.lock_safe().values_mut() {
             rt.last_pr_poll = None;
         }
         self.reconcile_now();
@@ -316,7 +332,7 @@ impl Inner {
     /// cadence, the rest in the background.
     fn snapshot_desired(&self) -> Vec<DesiredWs> {
         let registry = self.app.state::<Registry>();
-        let active = self.active.lock().unwrap().clone();
+        let active = self.active.lock_safe().clone();
         let mut out = Vec::new();
         for w in registry.all_workspaces() {
             let is_active = Some(&w.id) == active.as_ref();
@@ -340,14 +356,40 @@ impl Inner {
         out
     }
 
+    /// Run a reconcile round, coalescing concurrent requests: at most one round
+    /// runs at a time, and a request that arrives during one is served by an
+    /// immediate extra round rather than being dropped or overlapped.
+    async fn reconcile_coalesced(inner: &Arc<Inner>) {
+        {
+            let mut gate = inner.reconcile.lock_safe();
+            if gate.running {
+                gate.rerun = true;
+                return;
+            }
+            gate.running = true;
+        }
+        loop {
+            Inner::reconcile(inner).await;
+            let mut gate = inner.reconcile.lock_safe();
+            if !std::mem::take(&mut gate.rerun) {
+                gate.running = false;
+                return;
+            }
+        }
+    }
+
     async fn reconcile(inner: &Arc<Inner>) {
         inner.dispatch_queued();
+        // Per-workspace polls run concurrently: each is one GitHub round-trip,
+        // and awaiting them in sequence let a single slow/hung repo delay every
+        // other workspace's status for the whole round.
+        let mut polls = tokio::task::JoinSet::new();
         for d in inner.snapshot_desired() {
             // Seed the runtime from the persisted PR so the UI has state before
             // the first live poll (survives restarts). Release the lock before
             // emitting — emit_pr re-locks `runtimes`.
             let seeded = {
-                let mut rts = inner.runtimes.lock().unwrap();
+                let mut rts = inner.runtimes.lock_safe();
                 let fresh = !rts.contains_key(&d.id);
                 let rt = rts.entry(d.id.clone()).or_default();
                 rt.mode = d.mode;
@@ -372,13 +414,19 @@ impl Inner {
                 if let Some(branch) = d.branch.clone() {
                     let interval = if d.background { BG_PR_POLL_INTERVAL } else { PR_POLL_INTERVAL };
                     let due = {
-                        let rts = inner.runtimes.lock().unwrap();
+                        let rts = inner.runtimes.lock_safe();
                         rts.get(&d.id).is_none_or(|rt| rt.last_pr_poll.is_none_or(|t| t.elapsed() >= interval))
                     };
                     if due {
-                        inner.poll_pipeline(&d, &branch).await;
+                        let inner = Arc::clone(inner);
+                        polls.spawn(async move { inner.poll_pipeline(&d, &branch).await });
                     }
                 }
+            }
+        }
+        while let Some(res) = polls.join_next().await {
+            if let Err(e) = res {
+                crate::logf!("pr", "poll task DIED: {e}");
             }
         }
     }
@@ -432,7 +480,7 @@ impl Inner {
                     return;
                 }
                 crate::logf!("pr", "poll ws={} {what} ERR: {e}", d.id);
-                if let Some(rt) = self.runtimes.lock().unwrap().get_mut(&d.id) {
+                if let Some(rt) = self.runtimes.lock_safe().get_mut(&d.id) {
                     rt.last_error = Some(e);
                     rt.last_pr_poll = Some(Instant::now());
                 }
@@ -444,7 +492,7 @@ impl Inner {
         // Fork PRs are read-only here — never drive autofix back to the fork.
         let mode = if d.is_fork { AutofixMode::Off } else { d.mode };
         let (action, just_merged) = {
-            let mut rts = self.runtimes.lock().unwrap();
+            let mut rts = self.runtimes.lock_safe();
             let Some(rt) = rts.get_mut(&d.id) else {
                 return;
             };
@@ -514,7 +562,7 @@ impl Inner {
                 // Re-check the phase under the lock: a concurrent turn event
                 // may have moved it since.
                 {
-                    let mut rts = self.runtimes.lock().unwrap();
+                    let mut rts = self.runtimes.lock_safe();
                     if let Some(rt) = rts.get_mut(&d.id) {
                         if rt.phase == Phase::Fixing {
                             rt.phase = Phase::Failing;
@@ -538,7 +586,12 @@ impl Inner {
         let inner = Arc::clone(self);
         tauri::async_runtime::spawn(async move {
             use tauri::Manager as _;
-            let Ok(snap) = inner.chat.snapshot(&workspace_id, None, 12) else { return };
+            // `snapshot` takes the conversation + db mutexes and reads SQLite —
+            // blocking work, so keep it off the runtime worker.
+            let chat = inner.chat.clone();
+            let ws = workspace_id.clone();
+            let snap = tauri::async_runtime::spawn_blocking(move || chat.snapshot(&ws, None, 12)).await;
+            let Ok(Ok(snap)) = snap else { return };
             let last = snap.entries.iter().rev().find_map(|e| match e {
                 crate::chat::model::Entry::Assistant(a) => Some(a),
                 _ => None,
@@ -658,11 +711,11 @@ impl Inner {
     }
 
     fn on_turn_event(self: &Arc<Inner>, ev: TurnEvent) {
-        let is_active = self.active.lock().unwrap().as_deref() == Some(ev.workspace_id.as_str());
+        let is_active = self.active.lock_safe().as_deref() == Some(ev.workspace_id.as_str());
         let mut notify: Option<&'static str> = None;
         let mut pr_changed = false;
         {
-            let mut rts = self.runtimes.lock().unwrap();
+            let mut rts = self.runtimes.lock_safe();
             let rt = rts.entry(ev.workspace_id.clone()).or_default();
             match ev.status {
                 TurnStatus::Queued | TurnStatus::Streaming => {
@@ -748,7 +801,7 @@ impl Inner {
 
     fn emit_session(&self, wsid: &str) {
         let payload = {
-            let mut rts = self.runtimes.lock().unwrap();
+            let mut rts = self.runtimes.lock_safe();
             let Some(rt) = rts.get_mut(wsid) else {
                 return;
             };
@@ -770,7 +823,7 @@ impl Inner {
 
     fn emit_pr(&self, wsid: &str) {
         let payload = {
-            let mut rts = self.runtimes.lock().unwrap();
+            let mut rts = self.runtimes.lock_safe();
             let Some(rt) = rts.get_mut(wsid) else {
                 return;
             };

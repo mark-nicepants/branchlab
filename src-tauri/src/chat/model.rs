@@ -4,7 +4,7 @@
 //! OpenCode HTTP API and the raw ACP wire protocol. They are the single schema
 //! shared by the SQLite store, the delta events, and the frontend (`types.ts`
 //! mirrors them, camelCase). Engine-specific data is mapped into this model in
-//! `crate::chat::assembler`; nothing downstream sees ACP or OpenCode shapes.
+//! `crate::engine::assembler`; nothing downstream sees ACP or OpenCode shapes.
 
 use serde::{Deserialize, Serialize};
 

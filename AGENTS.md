@@ -61,6 +61,7 @@ before pushing — they must all pass:
 ```bash
 # Frontend
 npm run build                 # tsc strict type-check + vite build (our JS/TS lint gate)
+npm run lint                  # ESLint — React Hooks rules only
 npm test
 
 # Rust (from src-tauri/)
@@ -73,10 +74,24 @@ npm audit --audit-level=high
 cargo audit                   # from src-tauri/; needs `cargo install cargo-audit`
 ```
 
-There is no ESLint/Prettier yet — TypeScript `strict` (incl.
-`noUnusedLocals`/`noUnusedParameters`) is the frontend lint gate. Rust style is
-enforced by `rustfmt` (`max_width = 120`, compact heuristics); run `cargo fmt`
-before committing.
+TypeScript `strict` (incl. `noUnusedLocals`/`noUnusedParameters`) is the main
+frontend gate. (`noUncheckedIndexedAccess` is deliberately **off**: turning it on
+produces ~90 errors across 18 files — mostly `grid[ci][ri]`-style board indexing,
+`parts[0]` parser code, and test assertions — so it's a standalone cleanup, not a
+free flip.) ESLint (`eslint.config.js`,
+run by `npm run lint` and in CI) exists purely for what tsc can't see: it enables
+**only** `react-hooks/rules-of-hooks` and `react-hooks/exhaustive-deps`, both as
+errors — no stylistic rules. A handful of effects deliberately narrow their dep
+list and carry an `eslint-disable-next-line react-hooks/exhaustive-deps` with a
+comment saying why; don't add new ones without the same justification. Prettier
+is available (`npm run format` / `format:check`) but is **not** a CI gate. Rust
+style is enforced by `rustfmt` (`max_width = 120`, compact heuristics); run
+`cargo fmt` before committing.
+
+Note on the ESLint parser: `@typescript-eslint/parser` needs TypeScript's
+JavaScript API, which `typescript@7` (the native compiler) no longer ships, so
+the config parses with `@babel/eslint-parser` instead. Nothing here is
+type-aware, so that costs us nothing.
 
 ## Architecture & boundaries
 
@@ -106,10 +121,22 @@ before committing.
   `TurnEvent` broadcast for coarse session state (`workspace:session`/`notify`)
   and runs the PR autofix/superfix loop, sending fix prompts _through the chat
   manager_ (origin=Autofix). No second engine connection.
+- **ACP stops at `engine/`.** `engine/acp.rs` (the `opencode acp` driver) and
+  `engine/assembler.rs` are the only files that may name an
+  `agent-client-protocol` type — `grep -r agent_client_protocol src | grep -v
+  ^src/engine/` must stay empty. The chat manager sees BranchLab `EngineEvent`s
+  only; the single seam is `EngineEvent::Update`, which carries an opaque
+  `engine::assembler::RawUpdate` straight back into the engine-owned
+  `TurnAssembler` (the assembler _value_ lives in per-turn state in
+  `chat/manager.rs` because it holds the live turn's blocks — the ACP _types_ do
+  not). A new session-update kind gets pre-digested in `digest_update`, never
+  matched in `chat/`.
 - **Backend modules** are single-purpose: `git.rs` (git CLI), `project.rs`
-  (registry), `chat/` (ACP chat layer: `model`/`store`/`assembler`/`manager`/
-  `events`/`commands`), `engine/acp.rs` (the `opencode acp` driver — the only
-  place ACP crate types appear), `watcher.rs` (filesystem watch → `workspace:git`),
+  (registry), `chat/` (the BranchLab chat layer: `model`/`store`/`manager`/
+  `events`/`commands` — no ACP types), `engine/` (the engine boundary: `acp.rs`
+  drives `opencode acp`, `assembler.rs` folds session updates into the domain
+  model), `tasks.rs` (the "My work" board store), `planning.rs` (AI plan/intake
+  prompts over that board), `watcher.rs` (filesystem watch → `workspace:git`),
   `supervisor.rs` (turn-state ingest + PR autofix → `workspace:{pr,session,notify}`),
   `setup.rs` (background workspace provisioning: worktree checkout + project
   setup/teardown scripts, progress into the chat's setup card — creation

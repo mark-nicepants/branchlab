@@ -11,6 +11,7 @@ mod github;
 mod logx;
 mod mcp;
 mod path;
+mod planning;
 mod project;
 mod server;
 mod setup;
@@ -20,9 +21,11 @@ mod telemetry;
 mod util;
 mod watcher;
 
+use chat::manager::ChatManager;
 use github::GithubManager;
 use project::Registry;
 use server::ServerManager;
+use setup::SetupManager;
 use supervisor::Supervisor;
 use tauri::Manager;
 use watcher::GitWatcher;
@@ -221,9 +224,13 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
-            // Kill all opencode servers when the app exits.
+            // Nothing this app spawned may outlive it: the `opencode serve`
+            // helpers, the per-workspace `opencode acp` engines, and any setup
+            // script still running in its own process group.
             if let tauri::RunEvent::Exit = event {
                 app.state::<ServerManager>().shutdown_all();
+                app.state::<ChatManager>().shutdown_all();
+                app.state::<SetupManager>().shutdown_all();
             }
         });
 }

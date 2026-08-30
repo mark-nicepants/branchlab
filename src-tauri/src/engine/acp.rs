@@ -1,11 +1,17 @@
 //! The OpenCode ACP engine: drives `opencode acp` over stdio JSON-RPC.
 //!
-//! All `agent-client-protocol` crate types are confined to this file. It spawns
-//! one subprocess per conversation, forwards streaming `session/update`
-//! notifications and permission requests to the manager as [`EngineEvent`]s, and
-//! runs a command loop that sends prompts / config changes / cancels. Prompt
-//! turns are spawned as their own task so a cancel or config change can be sent
-//! while a turn is in flight (JSON-RPC allows concurrent in-flight requests).
+//! This file owns the protocol itself: it spawns one subprocess per
+//! conversation, forwards streaming `session/update` notifications and
+//! permission requests to the manager as [`EngineEvent`]s, and runs a command
+//! loop that sends prompts / config changes / cancels. Prompt turns are spawned
+//! as their own task so a cancel or config change can be sent while a turn is
+//! in flight (JSON-RPC allows concurrent in-flight requests).
+//!
+//! `agent-client-protocol` types appear only here and in the sibling
+//! [`super::assembler`] (see `engine/mod.rs` for the boundary rule):
+//! [`digest_update`] pre-digests every update kind the manager acts on into a
+//! BranchLab [`EngineEvent`], so only the opaque block-producing updates cross
+//! into `chat/`, straight back into the assembler.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -13,7 +19,7 @@ use std::sync::{Arc, Mutex};
 
 use agent_client_protocol::schema::v1::{
     CancelNotification, ContentBlock, ImageContent, InitializeRequest, NewSessionRequest, PermissionOptionKind,
-    PromptRequest, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
+    PlanEntryStatus, PromptRequest, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
     SelectedPermissionOutcome, SessionConfigId, SessionConfigValueId, SessionNotification, SessionUpdate,
     SetSessionConfigOptionRequest, StopReason, TextContent, Usage,
 };
@@ -21,8 +27,11 @@ use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{Agent, ConnectionTo};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::chat::assembler::map_config_options;
-use crate::engine::{EngineCommand, EngineEvent, EngineHandle, PermChoice, PermissionReq, PromptInput, StopKind};
+use crate::engine::assembler::map_config_options;
+use crate::engine::{
+    EngineCommand, EngineEvent, EngineHandle, PermChoice, PermissionReq, PlanItem, PromptInput, SlashCommand, StopKind,
+};
+use crate::util::LockExt;
 
 /// Start an `opencode acp` engine for a workspace. Returns immediately; the
 /// connection is established on the async runtime and reports readiness via an
@@ -82,7 +91,7 @@ async fn run_connection(
                     // instead of forwarding it as transcript.
                     let sid = n.session_id.0.to_string();
                     {
-                        let mut guard = bufs.lock().unwrap();
+                        let mut guard = bufs.lock_safe();
                         if let Some(buf) = guard.get_mut(&sid) {
                             if let SessionUpdate::AgentMessageChunk(c) = &n.update {
                                 if let ContentBlock::Text(t) = &c.content {
@@ -98,7 +107,7 @@ async fn run_connection(
                     if let Some(label) = describe_update(&n.update) {
                         crate::logf!("acp", "update ws={ws} {label}");
                     }
-                    let _ = tx.send((ws, EngineEvent::Update(Box::new(n.update))));
+                    let _ = tx.send((ws, digest_update(n.update)));
                     Ok(())
                 }
             },
@@ -264,12 +273,12 @@ async fn throwaway_prompt(
 ) -> Option<String> {
     let ns = conn.send_request(NewSessionRequest::new(cwd)).block_task().await.ok()?;
     let sid = ns.session_id.0.to_string();
-    title_bufs.lock().unwrap().insert(sid.clone(), String::new());
+    title_bufs.lock_safe().insert(sid.clone(), String::new());
     let _ = conn
         .send_request(PromptRequest::new(ns.session_id, vec![ContentBlock::Text(TextContent::new(prompt.to_string()))]))
         .block_task()
         .await;
-    let raw = title_bufs.lock().unwrap().remove(&sid).unwrap_or_default();
+    let raw = title_bufs.lock_safe().remove(&sid).unwrap_or_default();
     (!raw.trim().is_empty()).then_some(raw)
 }
 
@@ -329,6 +338,39 @@ fn parse_generated_setup(raw: &str) -> Option<crate::engine::GeneratedSetup> {
         return None;
     }
     Some(crate::engine::GeneratedSetup { setup_script: setup, teardown_script: teardown, notes: clean(parsed.notes) })
+}
+
+/// Pre-digest a session update into a BranchLab [`EngineEvent`]. Only the
+/// block-producing kinds stay in ACP form (the manager hands those straight to
+/// the [`crate::engine::assembler::TurnAssembler`]); plan / commands / usage /
+/// config updates are mapped here so no ACP shape is matched outside `engine/`.
+fn digest_update(u: SessionUpdate) -> EngineEvent {
+    match u {
+        SessionUpdate::Plan(p) => EngineEvent::Plan(
+            p.entries
+                .iter()
+                .map(|e| PlanItem {
+                    content: e.content.clone(),
+                    status: match e.status {
+                        PlanEntryStatus::Pending => "pending",
+                        PlanEntryStatus::InProgress => "in_progress",
+                        PlanEntryStatus::Completed => "completed",
+                        _ => "pending",
+                    }
+                    .to_string(),
+                })
+                .collect(),
+        ),
+        SessionUpdate::AvailableCommandsUpdate(c) => EngineEvent::Commands(
+            c.available_commands
+                .iter()
+                .map(|a| SlashCommand { name: a.name.clone(), description: a.description.clone() })
+                .collect(),
+        ),
+        SessionUpdate::UsageUpdate(u) => EngineEvent::Context { used: u.used, size: u.size },
+        SessionUpdate::ConfigOptionUpdate(c) => EngineEvent::ConfigAdvertised(map_config_options(&c.config_options)),
+        other => EngineEvent::Update(Box::new(other)),
+    }
 }
 
 /// A concise one-line label for a session update, for the debug log. Returns

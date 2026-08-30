@@ -20,6 +20,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::git::{self, DiffStat, FileChange};
+use crate::util::LockExt;
 
 /// Quiet window after the last fs event before we recompute.
 const DEBOUNCE: Duration = Duration::from_millis(300);
@@ -90,7 +91,7 @@ impl GitWatcher {
             let inner = Arc::clone(&inner);
             std::thread::spawn(move || loop {
                 std::thread::sleep(RESCAN_INTERVAL);
-                let ids: Vec<String> = inner.entries.lock().unwrap().keys().cloned().collect();
+                let ids: Vec<String> = inner.entries.lock_safe().keys().cloned().collect();
                 for id in ids {
                     inner.recompute_and_emit(&id);
                 }
@@ -105,7 +106,7 @@ impl GitWatcher {
         let path_buf = PathBuf::from(path);
         let git_dir = git::resolve_git_dir(path).map(PathBuf::from);
         {
-            let mut w = self.inner.watcher.lock().unwrap();
+            let mut w = self.inner.watcher.lock_safe();
             let _ = w.watch(&path_buf, RecursiveMode::Recursive);
             if let Some(gd) = &git_dir {
                 // A worktree's git dir lives outside the working tree; watch it
@@ -116,8 +117,7 @@ impl GitWatcher {
         }
         self.inner
             .entries
-            .lock()
-            .unwrap()
+            .lock_safe()
             .insert(workspace_id.to_string(), WatchEntry { path: path_buf, git_dir, last: None });
         // Emit an initial snapshot so the UI isn't blank until the first change.
         self.inner.recompute_and_emit(workspace_id);
@@ -125,8 +125,8 @@ impl GitWatcher {
 
     /// Stop watching a workspace (e.g. it was removed).
     pub fn unwatch(&self, workspace_id: &str) {
-        if let Some(entry) = self.inner.entries.lock().unwrap().remove(workspace_id) {
-            let mut w = self.inner.watcher.lock().unwrap();
+        if let Some(entry) = self.inner.entries.lock_safe().remove(workspace_id) {
+            let mut w = self.inner.watcher.lock_safe();
             let _ = w.unwatch(&entry.path);
             if let Some(gd) = &entry.git_dir {
                 let _ = w.unwatch(gd);
@@ -137,7 +137,7 @@ impl GitWatcher {
     /// Set the active workspace (the one that also gets the full `changes`
     /// list). Triggers an immediate snapshot for it.
     pub fn set_active(&self, workspace_id: Option<String>) {
-        *self.inner.active.lock().unwrap() = workspace_id.clone();
+        *self.inner.active.lock_safe() = workspace_id.clone();
         if let Some(id) = workspace_id {
             self.inner.recompute_and_emit(&id);
         }
@@ -152,7 +152,7 @@ impl GitWatcher {
     /// watcher's cached last emit when available, else computed on the spot —
     /// so the snapshot never depends on the watch-seeding thread having run.
     pub fn diff_stat_snapshot(&self, workspace_id: &str, path: &str) -> DiffStat {
-        if let Some(e) = self.inner.entries.lock().unwrap().get(workspace_id) {
+        if let Some(e) = self.inner.entries.lock_safe().get(workspace_id) {
             if let Some(last) = &e.last {
                 return last.diff_stat.clone();
             }
@@ -199,7 +199,7 @@ impl Inner {
         if s.contains("/node_modules/") || s.contains("/target/") {
             return None;
         }
-        let entries = self.entries.lock().unwrap();
+        let entries = self.entries.lock_safe();
         let mut best: Option<(usize, String)> = None;
         for (id, e) in entries.iter() {
             for base in [Some(&e.path), e.git_dir.as_ref()].into_iter().flatten() {
@@ -216,11 +216,11 @@ impl Inner {
 
     fn recompute_and_emit(&self, workspace_id: &str) {
         let (path, is_active) = {
-            let entries = self.entries.lock().unwrap();
+            let entries = self.entries.lock_safe();
             let Some(e) = entries.get(workspace_id) else {
                 return;
             };
-            let is_active = self.active.lock().unwrap().as_deref() == Some(workspace_id);
+            let is_active = self.active.lock_safe().as_deref() == Some(workspace_id);
             (e.path.to_string_lossy().to_string(), is_active)
         };
 
@@ -237,7 +237,7 @@ impl Inner {
         }
 
         // Dedupe against the last emit; skip if nothing changed.
-        let mut entries = self.entries.lock().unwrap();
+        let mut entries = self.entries.lock_safe();
         if let Some(e) = entries.get_mut(workspace_id) {
             if e.last.as_ref() == Some(&payload) {
                 return;

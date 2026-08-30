@@ -273,7 +273,14 @@ pub fn read_file(repo: &str, file: &str) -> Result<FileContent, String> {
     }
     let full = Path::new(repo).join(file);
     let size = std::fs::metadata(&full).map_err(|e| e.to_string())?.len();
-    let bytes = std::fs::read(&full).map_err(|e| e.to_string())?;
+    // Read only the prefix we're willing to return (+1 byte, so the truncation
+    // flag is still exact) — a multi-GB file must never land in memory just to
+    // be sliced down to MAX_FILE_BYTES afterwards.
+    use std::io::Read as _;
+    let mut bytes = Vec::new();
+    std::fs::File::open(&full)
+        .and_then(|f| f.take(MAX_FILE_BYTES as u64 + 1).read_to_end(&mut bytes))
+        .map_err(|e| e.to_string())?;
 
     // Binary heuristic: a NUL byte in the first 8 KiB (same as git's).
     if bytes[..bytes.len().min(8192)].contains(&0) {

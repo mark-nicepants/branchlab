@@ -47,6 +47,7 @@ import {
 } from "../PreferencesProvider";
 import { useTheme } from "../ThemeProvider";
 import { useAppUpdate } from "@/hooks/useUpdateChecker";
+import { useProjects } from "@/hooks/useProjects";
 
 export type SettingsTab =
   | "general"
@@ -61,8 +62,6 @@ interface Props {
   initialTab?: SettingsTab;
   /** Reports internal tab switches (feeds the router's pageview tracking). */
   onTabChange?: (tab: SettingsTab) => void;
-  projects: ProjectView[];
-  onProjectsChanged: () => void;
   onAddProject: () => void;
   onOpenProjectSettings: (project: ProjectView) => void;
 }
@@ -87,8 +86,6 @@ export function SettingsScreen({
   onOpenChange,
   initialTab = "general",
   onTabChange,
-  projects,
-  onProjectsChanged,
   onAddProject,
   onOpenProjectSettings,
 }: Props) {
@@ -149,8 +146,6 @@ export function SettingsScreen({
             {tab === "themes" && <ThemesTab />}
             {tab === "projects" && (
               <ProjectsTab
-                projects={projects}
-                onProjectsChanged={onProjectsChanged}
                 onAddProject={onAddProject}
                 onOpenProjectSettings={onOpenProjectSettings}
               />
@@ -416,16 +411,13 @@ function ThemesTab() {
 // ── Projects ──
 
 function ProjectsTab({
-  projects,
-  onProjectsChanged,
   onAddProject,
   onOpenProjectSettings,
 }: {
-  projects: ProjectView[];
-  onProjectsChanged: () => void;
   onAddProject: () => void;
   onOpenProjectSettings: (p: ProjectView) => void;
 }) {
+  const { projects, refresh: refreshProjects } = useProjects();
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
@@ -469,7 +461,7 @@ function ProjectsTab({
                 variant="ghost"
                 size="icon-sm"
                 className="text-destructive"
-                onClick={() => void removeProject(p.id).then(onProjectsChanged)}
+                onClick={() => void removeProject(p.id).then(refreshProjects)}
               >
                 <Trash2 className="size-3.5" />
               </Button>

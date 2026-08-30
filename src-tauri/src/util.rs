@@ -1,6 +1,43 @@
 //! Tiny helpers shared across subsystems.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, PoisonError};
+
+/// Poisoning-recovering mutex lock.
+///
+/// `Mutex::lock().unwrap()` panics forever once any thread panicked while
+/// holding the lock — a single bug in one subsystem would cascade into every
+/// other lock site app-wide. Every mutex in this crate guards plain state
+/// whose worst case after a mid-update panic is a stale or partial value,
+/// which is always preferable to wedging the whole app — so we deliberately
+/// enter the poisoned mutex and keep going.
+pub trait LockExt<T> {
+    fn lock_safe(&self) -> MutexGuard<'_, T>;
+}
+
+impl<T> LockExt<T> for Mutex<T> {
+    fn lock_safe(&self) -> MutexGuard<'_, T> {
+        self.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// Spawn a long-lived background task with a sibling monitor that logs when
+/// (and how) it dies. These loops are expected to run for the app's whole
+/// lifetime, so BOTH outcomes are reported loudly: a clean return means the
+/// loop broke unexpectedly, and an error means it panicked (the runtime
+/// catches the panic — without the monitor the task would just vanish).
+pub fn spawn_watched<F>(area: &'static str, name: &'static str, fut: F)
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    let task = tauri::async_runtime::spawn(fut);
+    tauri::async_runtime::spawn(async move {
+        match task.await {
+            Ok(()) => crate::logf!(area, "background task '{name}' exited unexpectedly"),
+            Err(e) => crate::logf!(area, "background task '{name}' DIED: {e}"),
+        }
+    });
+}
 
 /// Current time in epoch milliseconds.
 pub fn now_ms() -> i64 {

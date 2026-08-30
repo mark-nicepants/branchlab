@@ -19,6 +19,7 @@ import { usePrPipeline } from "../../hooks/usePrPipeline";
 import { useWorkspaceData } from "../../hooks/useWorkspaceData";
 import { chatNewSession, setAutofixMode } from "../../lib/api";
 import { displayText } from "../../lib/chatDisplay";
+import { hasOpenOverlay } from "../../lib/overlay";
 import {
   buildReviewMessage,
   type ChangeScope,
@@ -61,16 +62,6 @@ type PanelMode =
 /** Panel width bounds: the panel itself and the chat column beside it. */
 const MIN_PANEL_PX = 320;
 const MIN_CHAT_PX = 360;
-
-/** True while any popup layer is open (dialog, dropdown, select, popover,
- *  context menu…) — those own the Esc key. Radix portals its poppers into
- *  `[data-radix-popper-content-wrapper]`; dialogs carry our shadcn data-slot.
- *  Exported: the My work board's keyboard controls need the same gate. */
-export function hasOpenOverlay(): boolean {
-  return !!document.querySelector(
-    '[data-slot="dialog-content"][data-state="open"], [data-radix-popper-content-wrapper]',
-  );
-}
 
 /**
  * A session = one workspace's chat (driven by the Rust ACP engine + SQLite

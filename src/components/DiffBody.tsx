@@ -7,7 +7,7 @@ import { Plus, X } from "lucide-react";
 import { splitRows, type DiffHunk, type DiffLine, type DiffLineType } from "@/lib/diff";
 import type { NewReviewComment, ReviewComment } from "@/lib/review";
 import { fileName } from "@/lib/review";
-import { Kbd } from "./Composer";
+import { Kbd } from "./ui/kbd";
 import { cn } from "@/lib/utils";
 
 const GUTTER =

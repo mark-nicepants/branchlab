@@ -14,7 +14,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { Composer, Kbd } from "../Composer";
+import { Composer } from "../Composer";
+import { Kbd } from "../ui/kbd";
 
 interface Props {
   projects: ProjectView[];
@@ -58,18 +59,23 @@ export function HomeComposer({
     if (!projectId && projects.length) setProjectId(projects[0].id);
   }, [projects, projectId]);
 
-  // Load branches for the selected project.
+  // Load branches for the selected project. Keyed on the project's own fields
+  // rather than the object: `projects` is rebuilt on every registry refresh,
+  // and re-fetching branches (and resetting the base chip) on each of those
+  // would fight the user's selection.
+  const selectedProjectId = project?.id ?? null;
+  const selectedDefaultBranch = project?.default_branch ?? "";
   useEffect(() => {
-    if (!project) {
+    if (selectedProjectId === null) {
       setBranches([]);
       setBase("");
       return;
     }
-    setBase(project.default_branch ?? "");
-    listBranches(project.id)
+    setBase(selectedDefaultBranch);
+    listBranches(selectedProjectId)
       .then((bs) => setBranches(bs))
       .catch(() => setBranches([]));
-  }, [project?.id]);
+  }, [selectedProjectId, selectedDefaultBranch]);
 
   // ⌘K toggles quick chat from anywhere on Home; the textarea keeps focus.
   useEffect(() => {

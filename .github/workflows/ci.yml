@@ -19,7 +19,7 @@ env:
 
 jobs:
   frontend:
-    name: Frontend (typecheck, build, tests)
+    name: Frontend (typecheck, build, lint, tests)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -36,6 +36,10 @@ jobs:
       # strict mode (noUnusedLocals/Parameters), which is our frontend lint gate.
       - name: Type-check & build
         run: npm run build
+
+      # ESLint covers only what tsc can't see: the React Hooks rules.
+      - name: Lint (react-hooks)
+        run: npm run lint
 
       - name: Unit tests
         run: npm test

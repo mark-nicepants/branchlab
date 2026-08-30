@@ -131,7 +131,6 @@ export function ChangesView({
     if (!el) return;
     el.scrollIntoView({ block: "start" });
     scrolledFor.current = key;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusedFile, shown.length, diffs]);
 
   const totalIns = shown.reduce((s, f) => s + f.insertions, 0);

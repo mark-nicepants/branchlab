@@ -31,6 +31,7 @@ use crate::github::client::GithubClient;
 use crate::github::model::{AccountView, LoginEvent, LoginPhase, ReviewItem};
 use crate::project::Registry;
 use crate::util::now_ms;
+use crate::util::LockExt;
 use tauri::Manager;
 
 /// How often the cross-repo review inbox is refreshed (slower than the
@@ -100,7 +101,7 @@ impl GithubManager {
     /// slower cadence than the supervisor's per-workspace PR poll).
     pub fn spawn(&self) {
         let this = self.clone();
-        tauri::async_runtime::spawn(async move {
+        crate::util::spawn_watched("github", "inbox-poll", async move {
             loop {
                 this.refresh_inbox().await;
                 tokio::time::sleep(INBOX_POLL_INTERVAL).await;
@@ -132,8 +133,8 @@ impl GithubManager {
             auth::logout(Path::new(&acct.config_dir), &acct.host);
             let _ = std::fs::remove_dir_all(&acct.config_dir);
         }
-        self.inner.tokens.lock().unwrap().remove(id);
-        self.inner.clients.lock().unwrap().remove(id);
+        self.inner.tokens.lock_safe().remove(id);
+        self.inner.clients.lock_safe().remove(id);
         self.emit_accounts();
         self.trigger_inbox_refresh();
     }
@@ -142,7 +143,7 @@ impl GithubManager {
 
     /// Emit the current inbox snapshot to the UI.
     pub fn emit_review_inbox(&self) {
-        let inbox = self.inner.inbox.lock().unwrap();
+        let inbox = self.inner.inbox.lock_safe();
         events::emit_review_inbox(&self.inner.app, &inbox.items, inbox.refreshed_at, inbox.error.as_deref());
     }
 
@@ -150,7 +151,9 @@ impl GithubManager {
     /// (memory + `inbox.json`), and emit `github:review_inbox`.
     pub async fn refresh_inbox(&self) {
         let accounts = self.inner.store.list();
-        let pmap = self.project_repo_map();
+        // `git remote -v` per project — a subprocess each; keep it off the runtime.
+        let this = self.clone();
+        let pmap = tauri::async_runtime::spawn_blocking(move || this.project_repo_map()).await.unwrap_or_default();
         let mut items: Vec<ReviewItem> = Vec::new();
         let mut errors: Vec<String> = Vec::new();
 
@@ -182,7 +185,7 @@ impl GithubManager {
         items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
         {
-            let mut inbox = self.inner.inbox.lock().unwrap();
+            let mut inbox = self.inner.inbox.lock_safe();
             inbox.items = items;
             inbox.refreshed_at = Some(now_ms());
             inbox.error = if errors.is_empty() { None } else { Some(errors.join("; ")) };
@@ -192,7 +195,7 @@ impl GithubManager {
     }
 
     fn persist_inbox(&self) {
-        let items = self.inner.inbox.lock().unwrap().items.clone();
+        let items = self.inner.inbox.lock_safe().items.clone();
         if let Ok(json) = serde_json::to_string_pretty(&items) {
             let _ = std::fs::write(self.inner.github_dir.join("inbox.json"), json);
         }
@@ -219,13 +222,13 @@ impl GithubManager {
     /// Get (or lazily build) the API client for an account. Rebuilds the token
     /// from the account's isolated `gh` config if it isn't cached.
     pub fn client_for(&self, account_id: &str) -> Result<GithubClient, String> {
-        if let Some(c) = self.inner.clients.lock().unwrap().get(account_id) {
+        if let Some(c) = self.inner.clients.lock_safe().get(account_id) {
             return Ok(c.clone());
         }
         let acct = self.inner.store.get(account_id).ok_or("unknown account")?;
         let token = self.token_for(&acct)?;
         let client = GithubClient::build(&acct.api_base, &token)?;
-        self.inner.clients.lock().unwrap().insert(account_id.to_string(), client.clone());
+        self.inner.clients.lock_safe().insert(account_id.to_string(), client.clone());
         Ok(client)
     }
 
@@ -234,7 +237,7 @@ impl GithubManager {
     /// no alias. Lets a remote like `git@sdb.github.com:…` match a github.com
     /// account.
     fn resolve_ssh_host(&self, host: &str) -> String {
-        if let Some(cached) = self.inner.host_aliases.lock().unwrap().get(host) {
+        if let Some(cached) = self.inner.host_aliases.lock_safe().get(host) {
             return cached.clone();
         }
         let resolved = std::process::Command::new("ssh")
@@ -249,16 +252,16 @@ impl GithubManager {
             })
             .filter(|h| !h.is_empty())
             .unwrap_or_else(|| host.to_string());
-        self.inner.host_aliases.lock().unwrap().insert(host.to_string(), resolved.clone());
+        self.inner.host_aliases.lock_safe().insert(host.to_string(), resolved.clone());
         resolved
     }
 
     fn token_for(&self, acct: &Account) -> Result<String, String> {
-        if let Some(t) = self.inner.tokens.lock().unwrap().get(&acct.id) {
+        if let Some(t) = self.inner.tokens.lock_safe().get(&acct.id) {
             return Ok(t.clone());
         }
         let token = auth::fetch_token(Path::new(&acct.config_dir), &acct.host)?;
-        self.inner.tokens.lock().unwrap().insert(acct.id.clone(), token.clone());
+        self.inner.tokens.lock_safe().insert(acct.id.clone(), token.clone());
         Ok(token)
     }
 
@@ -293,6 +296,23 @@ impl GithubManager {
         }
     }
 
+    /// [`Self::resolve_account`] off the async runtime. It shells out to
+    /// `git remote -v` (and, for SSH aliases, `ssh -G`) and is awaited once per
+    /// workspace on every PR poll, so running it inline would block a runtime
+    /// worker for the whole subprocess round-trip.
+    pub async fn resolve_account_off_thread(
+        &self,
+        repo_root: &str,
+        override_id: Option<&str>,
+    ) -> Result<(Account, String, String), String> {
+        let this = self.clone();
+        let root = repo_root.to_string();
+        let over = override_id.map(str::to_string);
+        tauri::async_runtime::spawn_blocking(move || this.resolve_account(&root, over.as_deref()))
+            .await
+            .map_err(|e| e.to_string())?
+    }
+
     /// PR + CI status for a workspace's branch, resolved against the repo's
     /// bound account. `Ok(None)` = no PR; `Err` = no account / API failure.
     /// Only valid when `branch` is the PR's real head ref — PR checkouts use
@@ -303,7 +323,7 @@ impl GithubManager {
         branch: &str,
         override_id: Option<&str>,
     ) -> Result<Option<crate::git::PrStatus>, String> {
-        let (account, owner, repo) = self.resolve_account(repo_root, override_id)?;
+        let (account, owner, repo) = self.resolve_account_off_thread(repo_root, override_id).await?;
         let client = self.client_for(&account.id)?;
         let result = client.pr_status(&owner, &repo, branch).await;
         self.flag_stale_token(&account.id, &result);
@@ -318,7 +338,7 @@ impl GithubManager {
         number: i64,
         override_id: Option<&str>,
     ) -> Result<Option<crate::git::PrStatus>, String> {
-        let (account, owner, repo) = self.resolve_account(repo_root, override_id)?;
+        let (account, owner, repo) = self.resolve_account_off_thread(repo_root, override_id).await?;
         let client = self.client_for(&account.id)?;
         let result = client.pr_status_by_number(&owner, &repo, number).await;
         self.flag_stale_token(&account.id, &result);
@@ -329,8 +349,8 @@ impl GithubManager {
     fn flag_stale_token<T>(&self, account_id: &str, result: &Result<T, String>) {
         let Err(e) = result else { return };
         if e.contains("401") || e.to_lowercase().contains("bad credentials") {
-            self.inner.tokens.lock().unwrap().remove(account_id);
-            self.inner.clients.lock().unwrap().remove(account_id);
+            self.inner.tokens.lock_safe().remove(account_id);
+            self.inner.clients.lock_safe().remove(account_id);
             self.inner.store.set_status(account_id, AccountStatus::NeedsReauth);
             self.emit_accounts();
         }
@@ -347,7 +367,7 @@ impl GithubManager {
         body: &str,
         override_id: Option<&str>,
     ) -> Result<String, String> {
-        let (account, owner, repo) = self.resolve_account(repo_root, override_id)?;
+        let (account, owner, repo) = self.resolve_account_off_thread(repo_root, override_id).await?;
         let client = self.client_for(&account.id)?;
         client.create_pr(&owner, &repo, head, base, title, body).await
     }
@@ -412,8 +432,8 @@ impl GithubManager {
             config_dir: canonical.to_string_lossy().into_owned(),
             status: AccountStatus::Ok,
         };
-        self.inner.tokens.lock().unwrap().insert(id.clone(), token);
-        self.inner.clients.lock().unwrap().insert(id.clone(), client);
+        self.inner.tokens.lock_safe().insert(id.clone(), token);
+        self.inner.clients.lock_safe().insert(id.clone(), client);
         self.inner.store.upsert(account.clone());
         self.emit_accounts();
         self.trigger_inbox_refresh();
@@ -444,26 +464,26 @@ impl GithubManager {
     pub fn start_device_login(&self, host: &str) -> String {
         let login_id = self.next_login_id();
         let cancel = Arc::new(AtomicBool::new(false));
-        self.inner.logins.lock().unwrap().insert(login_id.clone(), cancel.clone());
+        self.inner.logins.lock_safe().insert(login_id.clone(), cancel.clone());
 
         let this = self.clone();
         let host = host.to_string();
         let lid = login_id.clone();
         std::thread::spawn(move || {
             this.run_device_login(&host, &lid, cancel);
-            this.inner.logins.lock().unwrap().remove(&lid);
+            this.inner.logins.lock_safe().remove(&lid);
         });
         login_id
     }
 
     /// The current cached inbox items (for the `github_review_inbox` command).
     pub fn inbox_items(&self) -> Vec<ReviewItem> {
-        self.inner.inbox.lock().unwrap().items.clone()
+        self.inner.inbox.lock_safe().items.clone()
     }
 
     /// Cancel an in-flight device login (kills the `gh` child on the next poll).
     pub fn cancel_login(&self, login_id: &str) {
-        if let Some(flag) = self.inner.logins.lock().unwrap().get(login_id) {
+        if let Some(flag) = self.inner.logins.lock_safe().get(login_id) {
             flag.store(true, Ordering::Relaxed);
         }
     }
@@ -539,7 +559,7 @@ impl GithubManager {
         if !status.success() {
             let _ = std::fs::remove_dir_all(&temp);
             let mut ev = LoginEvent::phase(login_id, LoginPhase::Failed);
-            let tail = err_buf.lock().unwrap().lines().rev().take(3).collect::<Vec<_>>().join(" ");
+            let tail = err_buf.lock_safe().lines().rev().take(3).collect::<Vec<_>>().join(" ");
             ev.error = Some(if tail.is_empty() { "GitHub sign-in failed".into() } else { tail });
             events::emit_login(app, &ev);
             return;
@@ -578,7 +598,7 @@ fn spawn_login_reader(
         let mut seen = false;
         for line in BufReader::new(reader).lines().map_while(Result::ok) {
             {
-                let mut b = err_buf.lock().unwrap();
+                let mut b = err_buf.lock_safe();
                 b.push_str(&line);
                 b.push('\n');
             }

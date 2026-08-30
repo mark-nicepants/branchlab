@@ -5,17 +5,21 @@
 //! loop folds updates into the model, persists, and emits `chat:*` deltas. It
 //! also broadcasts a coarse [`TurnEvent`] the supervisor consumes for
 //! `workspace:session` / autofix (so there is no second SSE connection).
+//!
+//! ACP boundary: nothing in `chat/` names an `agent-client-protocol` type. The
+//! manager speaks [`EngineEvent`] only; the block-producing updates arrive as
+//! the opaque [`RawUpdate`] and are handed straight back to the engine's
+//! [`TurnAssembler`] (which the manager owns because it holds the live turn's
+//! blocks). Every other update kind arrives pre-digested from `engine/acp.rs`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use agent_client_protocol::schema::v1 as acp;
 use serde::Serialize;
 use tauri::AppHandle;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-use crate::chat::assembler::{map_config_options, TurnAssembler};
 use crate::chat::events;
 use crate::chat::model::AssistantEntry;
 use crate::chat::model::{
@@ -23,7 +27,9 @@ use crate::chat::model::{
     SetupStep, SystemEntry, SystemKind, TurnOrigin, TurnStatus, UsageInfo, UserEntry,
 };
 use crate::chat::store::ChatDb;
+use crate::engine::assembler::{RawUpdate, TurnAssembler};
 use crate::engine::{acp as acp_engine, EngineCommand, EngineEvent, EngineHandle, PromptInput, StopKind};
+use crate::util::LockExt;
 use crate::util::{new_id, now_ms};
 
 /// Coarse per-turn signal for the supervisor (activity + autofix hand-off).
@@ -139,8 +145,29 @@ impl ChatManager {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let inner = Arc::new(Inner { app, db: Mutex::new(db), convs: Mutex::new(HashMap::new()), turn_tx, event_tx });
         let loop_inner = Arc::clone(&inner);
-        tauri::async_runtime::spawn(async move { Inner::event_loop(loop_inner, event_rx).await });
+        crate::util::spawn_watched(
+            "chat",
+            "engine-events",
+            async move { Inner::event_loop(loop_inner, event_rx).await },
+        );
         Ok(Self { inner })
+    }
+
+    /// Drop every live engine — the app is exiting. Each [`EngineHandle`]'s
+    /// `Drop` sends `Shutdown` and aborts its connection task, which drops the
+    /// ACP crate's `ChildGuard` and kills the `opencode acp` process tree; so
+    /// no agent subprocess outlives the window. Mirrors
+    /// `ServerManager::shutdown_all`.
+    pub fn shutdown_all(&self) {
+        let mut convs = self.inner.convs.lock_safe();
+        let mut n = 0;
+        for conv in convs.values_mut() {
+            if conv.engine.take().is_some() {
+                n += 1;
+            }
+            conv.ready = false;
+        }
+        crate::logf!("chat", "shutdown: dropped {n} engine(s)");
     }
 
     /// Subscribe to coarse turn transitions (the supervisor uses this instead of
@@ -158,13 +185,13 @@ impl ChatManager {
 
     /// Last todo list pushed for the workspace (see `ConvState::todos`).
     pub fn todos(&self, workspace_id: &str) -> Vec<events::Todo> {
-        self.inner.convs.lock().unwrap().get(workspace_id).map(|c| c.todos.clone()).unwrap_or_default()
+        self.inner.convs.lock_safe().get(workspace_id).map(|c| c.todos.clone()).unwrap_or_default()
     }
 
     /// Read a page of history (newest `limit`, or before `before_seq`).
     pub fn snapshot(&self, workspace_id: &str, before_seq: Option<Seq>, limit: i64) -> Result<ChatSnapshot, String> {
-        let convs = self.inner.convs.lock().unwrap();
-        let db = self.inner.db.lock().unwrap();
+        let convs = self.inner.convs.lock_safe();
+        let db = self.inner.db.lock_safe();
         let Some(conv) = db.get_conversation(workspace_id)? else {
             return Ok(ChatSnapshot { entries: Vec::new(), has_more: false, config: Vec::new(), commands: Vec::new() });
         };
@@ -196,7 +223,7 @@ impl ChatManager {
         agent: Option<String>,
     ) -> Result<(), String> {
         self.ensure(workspace_id, cwd)?;
-        let mut convs = self.inner.convs.lock().unwrap();
+        let mut convs = self.inner.convs.lock_safe();
         let conv = convs.get_mut(workspace_id).ok_or("no conversation")?;
         if conv.current.is_some() {
             return Err("a turn is already in progress".into());
@@ -218,7 +245,7 @@ impl ChatManager {
         });
         let assistant_id = new_id();
         let (user_seq, assistant_seq) = {
-            let db = self.inner.db.lock().unwrap();
+            let db = self.inner.db.lock_safe();
             let us = db.insert_entry(&conv.conversation_id, &user)?;
             let assistant = Entry::Assistant(AssistantEntry {
                 seq: 0,
@@ -303,7 +330,7 @@ impl ChatManager {
     ) -> Option<T> {
         self.ensure(workspace_id, cwd).ok()?;
         let rx = {
-            let convs = self.inner.convs.lock().unwrap();
+            let convs = self.inner.convs.lock_safe();
             let engine = convs.get(workspace_id)?.engine.as_ref()?;
             let (tx, rx) = oneshot::channel();
             engine.send(make(tx));
@@ -342,7 +369,7 @@ impl ChatManager {
     }
 
     pub fn abort(&self, workspace_id: &str) -> Result<(), String> {
-        let mut convs = self.inner.convs.lock().unwrap();
+        let mut convs = self.inner.convs.lock_safe();
         let conv = convs.get_mut(workspace_id).ok_or("no active conversation for this workspace")?;
         if let Some(engine) = &conv.engine {
             engine.send(EngineCommand::Cancel);
@@ -360,7 +387,7 @@ impl ChatManager {
         // response to set_config (especially outside a turn), so relying on it
         // left the selector snapping back to the old value (the §3.4 FAIL).
         let (config_snapshot, conv_id, change) = {
-            let mut convs = self.inner.convs.lock().unwrap();
+            let mut convs = self.inner.convs.lock_safe();
             let conv = convs.get_mut(workspace_id).ok_or("no active conversation for this workspace")?;
             let mut change = None;
             for opt in conv.config.iter_mut() {
@@ -418,7 +445,7 @@ impl ChatManager {
         request_id: &str,
         option_id: Option<String>,
     ) -> Result<(), String> {
-        let mut convs = self.inner.convs.lock().unwrap();
+        let mut convs = self.inner.convs.lock_safe();
         let conv = convs.get_mut(workspace_id).ok_or("no active conversation for this workspace")?;
         // Already resolved (e.g. by an abort draining the pending set) — the
         // answer had no effect, and the caller should know.
@@ -453,7 +480,7 @@ impl ChatManager {
         // would show a perpetual spinner until the next app launch.
         self.inner.finish_turn(workspace_id, StopKind::Cancelled, None);
         let conv_id = {
-            let mut convs = self.inner.convs.lock().unwrap();
+            let mut convs = self.inner.convs.lock_safe();
             let cid = convs.get(workspace_id).map(|c| c.conversation_id.clone());
             if let Some(conv) = convs.get_mut(workspace_id) {
                 // Remember the selected model so the fresh session doesn't reset
@@ -486,10 +513,10 @@ impl ChatManager {
     }
 
     fn ensure(&self, workspace_id: &str, cwd: &Path) -> Result<(), String> {
-        let mut convs = self.inner.convs.lock().unwrap();
+        let mut convs = self.inner.convs.lock_safe();
         if !convs.contains_key(workspace_id) {
             let (conv_id, has_sessions) = {
-                let db = self.inner.db.lock().unwrap();
+                let db = self.inner.db.lock_safe();
                 match db.get_conversation(workspace_id)? {
                     Some(c) => {
                         let has = db.has_engine_sessions(&c.id)?;
@@ -539,7 +566,7 @@ impl ChatManager {
     pub fn release_held(&self, workspace_id: &str, cwd: &Path) {
         let _ = self.ensure(workspace_id, cwd);
         let undeliverable = {
-            let mut convs = self.inner.convs.lock().unwrap();
+            let mut convs = self.inner.convs.lock_safe();
             let Some(conv) = convs.get_mut(workspace_id) else { return };
             match conv.held.take() {
                 Some(inputs) => match &conv.engine {
@@ -576,7 +603,7 @@ impl ChatManager {
     ) -> Result<(), String> {
         self.ensure(workspace_id, cwd)?;
         let conversation_id = {
-            let convs = self.inner.convs.lock().unwrap();
+            let convs = self.inner.convs.lock_safe();
             convs.get(workspace_id).ok_or("no conversation")?.conversation_id.clone()
         };
         let entry = Entry::System(SystemEntry {
@@ -588,7 +615,7 @@ impl ChatManager {
             steps: Vec::new(),
             action,
         });
-        let seq = self.inner.db.lock().unwrap().insert_entry(&conversation_id, &entry)?;
+        let seq = self.inner.db.lock_safe().insert_entry(&conversation_id, &entry)?;
         events::emit_entry(&self.inner.app, workspace_id, &with_seq(entry, seq));
         Ok(())
     }
@@ -598,7 +625,7 @@ impl ChatManager {
     pub fn begin_setup_card(&self, workspace_id: &str, cwd: &Path, steps: Vec<SetupStep>) -> Result<SetupCard, String> {
         self.ensure(workspace_id, cwd)?; // guarantees the conversation row exists (FK)
         let conversation_id = {
-            let convs = self.inner.convs.lock().unwrap();
+            let convs = self.inner.convs.lock_safe();
             convs.get(workspace_id).ok_or("no conversation")?.conversation_id.clone()
         };
         let card = SetupCard { entry_id: new_id(), seq: 0, created_at: now_ms() };
@@ -611,7 +638,7 @@ impl ChatManager {
             steps,
             action: None,
         });
-        let seq = self.inner.db.lock().unwrap().insert_entry(&conversation_id, &entry)?;
+        let seq = self.inner.db.lock_safe().insert_entry(&conversation_id, &entry)?;
         events::emit_entry(&self.inner.app, workspace_id, &with_seq(entry, seq));
         Ok(SetupCard { seq, ..card })
     }
@@ -635,7 +662,7 @@ impl ChatManager {
             steps,
             action: None,
         });
-        if let Err(e) = self.inner.db.lock().unwrap().update_entry(&entry) {
+        if let Err(e) = self.inner.db.lock_safe().update_entry(&entry) {
             crate::logf!("setup", "card persist failed ws={workspace_id}: {e}");
         }
         events::emit_entry(&self.inner.app, workspace_id, &entry);
@@ -669,7 +696,7 @@ impl Inner {
             steps: Vec::new(),
             action: None,
         });
-        let seq = { self.db.lock().unwrap().insert_entry(conversation_id, &entry).unwrap_or(0) };
+        let seq = { self.db.lock_safe().insert_entry(conversation_id, &entry).unwrap_or(0) };
         events::emit_entry(&self.app, workspace_id, &with_seq(entry, seq));
     }
 
@@ -699,7 +726,7 @@ impl Inner {
     fn handle_event(self: &Arc<Inner>, ws: &str, ev: EngineEvent) {
         match ev {
             EngineEvent::Ready { session_id, config } => {
-                let mut convs = self.convs.lock().unwrap();
+                let mut convs = self.convs.lock_safe();
                 let Some(conv) = convs.get_mut(ws) else { return };
                 conv.ready = true;
                 conv.config = config;
@@ -735,7 +762,7 @@ impl Inner {
                 // preferred thinking level now.
                 self.apply_desired_effort(ws, conv);
                 {
-                    let db = self.db.lock().unwrap();
+                    let db = self.db.lock_safe();
                     let _ = db.add_engine_session(
                         &conv.conversation_id,
                         &session_id,
@@ -747,8 +774,46 @@ impl Inner {
                 events::emit_config(&self.app, ws, &conv.config);
             }
             EngineEvent::Update(u) => self.handle_update(ws, *u),
+            EngineEvent::Plan(entries) => {
+                let todos: Vec<events::Todo> =
+                    entries.into_iter().map(|e| events::Todo { content: e.content, status: e.status }).collect();
+                let mut convs = self.convs.lock_safe();
+                let Some(conv) = convs.get_mut(ws) else { return };
+                crate::logf!("chat", "todos from engine plan ws={ws} n={}", todos.len());
+                events::emit_todos(&self.app, ws, &todos);
+                conv.todos = todos;
+            }
+            EngineEvent::Commands(list) => {
+                let cmds: Vec<events::CommandInfo> = list
+                    .into_iter()
+                    .map(|c| events::CommandInfo { name: c.name, description: c.description })
+                    .collect();
+                let mut convs = self.convs.lock_safe();
+                let Some(conv) = convs.get_mut(ws) else { return };
+                crate::logf!("chat", "commands ws={ws} n={}", cmds.len());
+                // Cache on the conversation so a later snapshot (re-open / switch
+                // back) carries them even though opencode only pushes them once.
+                conv.commands = cmds.clone();
+                events::emit_commands(&self.app, ws, &cmds);
+            }
+            EngineEvent::Context { used, size } => events::emit_context(&self.app, ws, used, size),
+            EngineEvent::ConfigAdvertised(config) => {
+                let mut convs = self.convs.lock_safe();
+                let Some(conv) = convs.get_mut(ws) else { return };
+                conv.config = config;
+                crate::logf!(
+                    "chat",
+                    "config update ws={ws} options=[{}]",
+                    conv.config
+                        .iter()
+                        .map(|o| format!("{}({:?})={}", o.id, o.category.as_deref().unwrap_or("-"), o.current_value))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                events::emit_config(&self.app, ws, &conv.config);
+            }
             EngineEvent::ConfigChanged(config) => {
-                let mut convs = self.convs.lock().unwrap();
+                let mut convs = self.convs.lock_safe();
                 let Some(conv) = convs.get_mut(ws) else { return };
                 conv.config = config;
                 // Re-apply the workspace's thinking level: the effort option is
@@ -759,7 +824,7 @@ impl Inner {
             }
             EngineEvent::TurnEnded { stop, usage } => self.finish_turn(ws, stop, usage),
             EngineEvent::Permission { req, reply } => {
-                let mut convs = self.convs.lock().unwrap();
+                let mut convs = self.convs.lock_safe();
                 let Some(conv) = convs.get_mut(ws) else {
                     let _ = reply.send(None);
                     return;
@@ -800,7 +865,7 @@ impl Inner {
                 self.finish_turn(ws, StopKind::Error(e), None);
             }
             EngineEvent::Closed => {
-                let mut convs = self.convs.lock().unwrap();
+                let mut convs = self.convs.lock_safe();
                 if let Some(conv) = convs.get_mut(ws) {
                     conv.engine = None;
                     conv.ready = false;
@@ -812,8 +877,8 @@ impl Inner {
         }
     }
 
-    fn handle_update(self: &Arc<Inner>, ws: &str, update: acp::SessionUpdate) {
-        let mut convs = self.convs.lock().unwrap();
+    fn handle_update(self: &Arc<Inner>, ws: &str, update: RawUpdate) {
+        let mut convs = self.convs.lock_safe();
         let Some(conv) = convs.get_mut(ws) else { return };
 
         // Block-producing updates fold into the live turn via the assembler.
@@ -867,55 +932,18 @@ impl Inner {
                             started_at: cur.started_at,
                             ended_at: None,
                         });
-                        let db = self.db.lock().unwrap();
-                        let _ = db.update_entry(&entry);
+                        let db = self.db.lock_safe();
+                        if let Err(e) = db.update_entry(&entry) {
+                            crate::logf!("chat", "streaming flush FAILED ws={ws} seq={}: {e}", cur.seq);
+                        }
                     }
                 }
             }
         }
-
-        // Non-block updates: plan/todos, config, usage/context, commands.
-        match &update {
-            acp::SessionUpdate::Plan(p) => {
-                let todos = map_plan(p);
-                crate::logf!("chat", "todos from ACP Plan ws={ws} n={}", todos.len());
-                events::emit_todos(&self.app, ws, &todos);
-                conv.todos = todos;
-            }
-            acp::SessionUpdate::ConfigOptionUpdate(c) => {
-                conv.config = map_config_options(&c.config_options);
-                crate::logf!(
-                    "chat",
-                    "config update ws={ws} options=[{}]",
-                    conv.config
-                        .iter()
-                        .map(|o| format!("{}({:?})={}", o.id, o.category.as_deref().unwrap_or("-"), o.current_value))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
-                events::emit_config(&self.app, ws, &conv.config);
-            }
-            acp::SessionUpdate::UsageUpdate(u) => {
-                events::emit_context(&self.app, ws, u.used, u.size);
-            }
-            acp::SessionUpdate::AvailableCommandsUpdate(c) => {
-                let cmds: Vec<events::CommandInfo> = c
-                    .available_commands
-                    .iter()
-                    .map(|a| events::CommandInfo { name: a.name.clone(), description: a.description.clone() })
-                    .collect();
-                crate::logf!("chat", "commands ws={ws} n={}", cmds.len());
-                // Cache on the conversation so a later snapshot (re-open / switch
-                // back) carries them even though opencode only pushes them once.
-                conv.commands = cmds.clone();
-                events::emit_commands(&self.app, ws, &cmds);
-            }
-            _ => {}
-        }
     }
 
     fn finish_turn(self: &Arc<Inner>, ws: &str, stop: StopKind, usage: Option<UsageInfo>) {
-        let mut convs = self.convs.lock().unwrap();
+        let mut convs = self.convs.lock_safe();
         let Some(conv) = convs.get_mut(ws) else { return };
         let Some(cur) = conv.current.take() else { return };
         let conv_id = conv.conversation_id.clone();
@@ -943,8 +971,12 @@ impl Inner {
             ended_at: Some(now),
         });
         {
-            let db = self.db.lock().unwrap();
-            let _ = db.update_entry(&entry);
+            // The terminal write for this turn — if it fails the transcript
+            // keeps the last streamed snapshot instead, so say so out loud.
+            let db = self.db.lock_safe();
+            if let Err(e) = db.update_entry(&entry) {
+                crate::logf!("chat", "terminal turn write FAILED ws={ws} seq={}: {e}", cur.seq);
+            }
         }
         // Resolve any dangling permissions.
         for (_id, tx) in conv.pending_perms.drain() {
@@ -1005,20 +1037,4 @@ fn todos_from_block(b: &Block) -> Option<Vec<events::Todo>> {
         })
         .collect();
     Some(todos)
-}
-
-fn map_plan(p: &acp::Plan) -> Vec<events::Todo> {
-    p.entries
-        .iter()
-        .map(|e| events::Todo {
-            content: e.content.clone(),
-            status: match e.status {
-                acp::PlanEntryStatus::Pending => "pending",
-                acp::PlanEntryStatus::InProgress => "in_progress",
-                acp::PlanEntryStatus::Completed => "completed",
-                _ => "pending",
-            }
-            .to_string(),
-        })
-        .collect()
 }

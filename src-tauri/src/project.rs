@@ -14,6 +14,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::git;
+use crate::util::LockExt;
 
 // Default lifecycle prompts seeded into every new project. Users can override
 // them per-project via the settings dialog.
@@ -294,7 +295,7 @@ impl Registry {
         }
         let registry = Self { data: Mutex::new(data), file, worktrees_dir, quick_chats_dir };
         if backfilled {
-            registry.persist(&registry.data.lock().unwrap());
+            registry.persist(&registry.data.lock_safe());
         }
         registry
     }
@@ -317,7 +318,7 @@ impl Registry {
 
     /// Apply `f` to a workspace and persist when it reports a change.
     fn update_ws(&self, workspace_id: &str, f: impl FnOnce(&mut Workspace) -> bool) {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         let changed = data.workspaces.iter_mut().find(|w| w.id == workspace_id).map(f).unwrap_or(false);
         if changed {
             self.persist(&data);
@@ -334,7 +335,7 @@ impl Registry {
         let root = canonical.to_string_lossy().into_owned();
         let id = id_for(&root);
 
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         if !data.projects.iter().any(|p| p.id == id) {
             let name = canonical.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| root.clone());
             data.projects.push(Project {
@@ -371,7 +372,7 @@ impl Registry {
     /// ref), name collisions, or an empty/unchanged result.
     pub fn rename_branch_for_title(&self, workspace_id: &str, proposed: &str) -> Result<Option<String>, String> {
         let (kind, path, old, pr_number) = {
-            let data = self.data.lock().unwrap();
+            let data = self.data.lock_safe();
             let ws = data.workspaces.iter().find(|w| w.id == workspace_id).ok_or("unknown workspace")?;
             (ws.kind.clone(), ws.path.clone(), ws.branch.clone(), ws.pr_number)
         };
@@ -451,7 +452,7 @@ impl Registry {
 
     /// A workspace's persisted model, if any.
     pub fn workspace_model(&self, workspace_id: &str) -> Option<String> {
-        let data = self.data.lock().unwrap();
+        let data = self.data.lock_safe();
         data.workspaces.iter().find(|w| w.id == workspace_id).and_then(|w| w.model.clone())
     }
 
@@ -470,18 +471,18 @@ impl Registry {
 
     /// A workspace's persisted thinking level, if any.
     pub fn workspace_effort(&self, workspace_id: &str) -> Option<String> {
-        let data = self.data.lock().unwrap();
+        let data = self.data.lock_safe();
         data.workspaces.iter().find(|w| w.id == workspace_id).and_then(|w| w.effort.clone())
     }
 
     /// The GitHub account override configured for a project (`None` = auto-detect).
     pub fn project_account_id(&self, project_id: &str) -> Option<String> {
-        self.data.lock().unwrap().projects.iter().find(|p| p.id == project_id).and_then(|p| p.account_id.clone())
+        self.data.lock_safe().projects.iter().find(|p| p.id == project_id).and_then(|p| p.account_id.clone())
     }
 
     /// Update a project's metadata and prompts.
     pub fn update_project(&self, project_id: &str, update: ProjectUpdate) -> Result<ProjectView, String> {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         let project = data.projects.iter_mut().find(|p| p.id == project_id).ok_or("unknown project")?;
         if let Some(name) = update.name {
             project.name = name;
@@ -506,25 +507,25 @@ impl Registry {
     }
 
     pub fn remove_project(&self, project_id: &str) {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         data.projects.retain(|p| p.id != project_id);
         data.workspaces.retain(|w| w.project_id != project_id);
         self.persist(&data);
     }
 
     pub fn list(&self) -> Vec<ProjectView> {
-        let data = self.data.lock().unwrap();
+        let data = self.data.lock_safe();
         data.projects.iter().map(|p| self.view_of(&data, &p.id)).collect()
     }
 
     pub fn workspace_path(&self, workspace_id: &str) -> Option<String> {
-        let data = self.data.lock().unwrap();
+        let data = self.data.lock_safe();
         data.workspaces.iter().find(|w| w.id == workspace_id).map(|w| w.path.clone())
     }
 
     /// Get the workspace and its project root together (used by merge/push).
     pub fn workspace_with_root(&self, workspace_id: &str) -> Option<(Workspace, String)> {
-        let data = self.data.lock().unwrap();
+        let data = self.data.lock_safe();
         let ws = data.workspaces.iter().find(|w| w.id == workspace_id)?.clone();
         let root = if ws.kind == WorkspaceKind::Worktree {
             data.projects.iter().find(|p| p.id == ws.project_id)?.root_path.clone()
@@ -536,14 +537,13 @@ impl Registry {
 
     /// All workspaces across all projects (for the fleet dashboard).
     pub fn all_workspaces(&self) -> Vec<Workspace> {
-        self.data.lock().unwrap().workspaces.clone()
+        self.data.lock_safe().workspaces.clone()
     }
 
     /// A project's implicit base workspace (the repo root's own row).
     pub fn base_workspace(&self, project_id: &str) -> Option<Workspace> {
         self.data
-            .lock()
-            .unwrap()
+            .lock_safe()
             .workspaces
             .iter()
             .find(|w| w.project_id == project_id && w.kind == WorkspaceKind::Base)
@@ -552,12 +552,12 @@ impl Registry {
 
     /// A project's estimate-unit override (None = use the board's global).
     pub fn project_estimate_unit(&self, project_id: &str) -> Option<crate::tasks::EstimateUnit> {
-        self.data.lock().unwrap().projects.iter().find(|p| p.id == project_id).and_then(|p| p.estimate_unit)
+        self.data.lock_safe().projects.iter().find(|p| p.id == project_id).and_then(|p| p.estimate_unit)
     }
 
     /// A project's repo root path.
     pub fn repo_root(&self, project_id: &str) -> Option<String> {
-        self.data.lock().unwrap().projects.iter().find(|p| p.id == project_id).map(|p| p.root_path.clone())
+        self.data.lock_safe().projects.iter().find(|p| p.id == project_id).map(|p| p.root_path.clone())
     }
 
     /// Create a workspace: a worktree on a freshly generated branch codename
@@ -621,7 +621,7 @@ impl Registry {
             setup: SetupState::Provisioning,
             ..Workspace::new(id_for(&path), project_id.to_string(), WorkspaceKind::Worktree, path)
         };
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         data.workspaces.push(ws.clone());
         self.persist(&data);
         Ok(ws)
@@ -634,7 +634,7 @@ impl Registry {
     /// head (`fetch --force`, retry-safe).
     pub fn provision_worktree(&self, workspace_id: &str) -> Result<(), String> {
         let (ws, root) = {
-            let data = self.data.lock().unwrap();
+            let data = self.data.lock_safe();
             let ws = data.workspaces.iter().find(|w| w.id == workspace_id).ok_or("unknown workspace")?.clone();
             let root = data
                 .projects
@@ -677,14 +677,14 @@ impl Registry {
     /// A workspace with its project's lifecycle scripts and repo root.
     /// `None` for quick chats and unknown workspaces (no project → no scripts).
     pub fn run_context(&self, workspace_id: &str) -> Option<(Workspace, RunSettings, String)> {
-        let data = self.data.lock().unwrap();
+        let data = self.data.lock_safe();
         let ws = data.workspaces.iter().find(|w| w.id == workspace_id)?.clone();
         let project = data.projects.iter().find(|p| p.id == ws.project_id)?;
         Some((ws.clone(), project.run.clone(), project.root_path.clone()))
     }
 
     pub fn setup_state(&self, workspace_id: &str) -> Option<SetupState> {
-        self.data.lock().unwrap().workspaces.iter().find(|w| w.id == workspace_id).map(|w| w.setup)
+        self.data.lock_safe().workspaces.iter().find(|w| w.id == workspace_id).map(|w| w.setup)
     }
 
     pub fn set_setup_state(&self, workspace_id: &str, state: SetupState) {
@@ -704,7 +704,7 @@ impl Registry {
     /// `name` stays `None` so the first chat message AI-titles it.
     pub fn create_quick_chat(&self, init_prompt: Option<String>) -> Result<Workspace, String> {
         let existing: Vec<String> = {
-            let data = self.data.lock().unwrap();
+            let data = self.data.lock_safe();
             data.workspaces
                 .iter()
                 .filter(|w| w.kind == WorkspaceKind::QuickChat)
@@ -720,7 +720,7 @@ impl Registry {
             init_prompt,
             ..Workspace::new(id_for(&path), QUICK_CHAT_PROJECT_ID.to_string(), WorkspaceKind::QuickChat, path)
         };
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         data.workspaces.push(ws.clone());
         self.persist(&data);
         Ok(ws)
@@ -739,7 +739,7 @@ impl Registry {
         // Guard on the registry, not the dir: a torn provisioning attempt may
         // leave a dir behind that provision_worktree knows how to clean up.
         {
-            let data = self.data.lock().unwrap();
+            let data = self.data.lock_safe();
             if data.workspaces.iter().any(|w| w.path == path) {
                 return Err(format!("a workspace for PR #{} already exists", meta.number));
             }
@@ -753,7 +753,7 @@ impl Registry {
             setup: SetupState::Provisioning,
             ..Workspace::new(id_for(&path), project_id.to_string(), WorkspaceKind::Worktree, path)
         };
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         data.workspaces.push(ws.clone());
         self.persist(&data);
         Ok(ws)
@@ -766,7 +766,7 @@ impl Registry {
     /// consider removing the project too.
     pub fn remove_workspace(&self, workspace_id: &str, force: bool) -> Result<(), String> {
         let (project_id, kind, path) = {
-            let data = self.data.lock().unwrap();
+            let data = self.data.lock_safe();
             let ws = data.workspaces.iter().find(|w| w.id == workspace_id).ok_or("unknown workspace")?;
             (ws.project_id.clone(), ws.kind.clone(), ws.path.clone())
         };
@@ -799,7 +799,7 @@ impl Registry {
             let _ = std::fs::remove_dir_all(&path);
         }
 
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock_safe();
         data.workspaces.retain(|w| w.id != workspace_id);
         self.persist(&data);
         Ok(())
@@ -883,7 +883,7 @@ mod tests {
         let file = dir.join("registry.json");
         let reg = Registry::load(file.clone(), dir.join("worktrees"), dir.join("quick-chats"));
         {
-            let mut data = reg.data.lock().unwrap();
+            let mut data = reg.data.lock_safe();
             data.workspaces.push(Workspace {
                 id: "ws1".into(),
                 project_id: "p1".into(),
@@ -1011,7 +1011,7 @@ mod tests {
 
         // PR checkouts keep their branch (it's shared state).
         {
-            let mut data = reg.data.lock().unwrap();
+            let mut data = reg.data.lock_safe();
             data.workspaces.push(Workspace {
                 id: "pr-ws".into(),
                 project_id: "p1".into(),
