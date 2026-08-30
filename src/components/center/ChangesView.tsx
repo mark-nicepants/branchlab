@@ -21,6 +21,7 @@ import {
   Undo2,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { useCancellableEffect } from "../../hooks/useCancellableEffect";
 import { useWorkspaceData } from "../../hooks/useWorkspaceData";
 import { discardFile, workspaceFileDiff } from "../../lib/api";
@@ -139,7 +140,11 @@ export function ChangesView({
   const commentFiles = new Set(comments.map((c) => c.file)).size;
 
   async function discard(path: string) {
-    await discardFile(workspaceId, path).catch(() => {});
+    try {
+      await discardFile(workspaceId, path);
+    } catch (e) {
+      toast.error("Could not discard file", { description: String(e) });
+    }
     refreshChanges();
   }
 

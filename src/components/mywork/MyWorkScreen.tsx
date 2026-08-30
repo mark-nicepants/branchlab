@@ -316,7 +316,10 @@ export function MyWorkScreen({
 
   useEffect(() => {
     let live = true;
-    void boardSnapshot().then((s) => live && setBoard(s));
+    // Passive seed: on failure the board stays empty until tasks:changed.
+    void boardSnapshot()
+      .then((s) => live && setBoard(s))
+      .catch(() => {});
     // Fresh closure per mount: the mock event bus stores handlers in a Set,
     // so passing the stable setter would let StrictMode's first-unmount
     // cleanup delete the second mount's identical subscription.

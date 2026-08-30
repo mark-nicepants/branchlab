@@ -198,6 +198,19 @@ pub struct UserEntry {
     pub created_at: i64,
 }
 
+/// Per-turn token usage, reported by the engine at end of turn (ACP's
+/// unstable `PromptResponse.usage`). Mirrors the frontend `UsageInfo` shape;
+/// `None` fields are engines/models that don't report that counter.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageInfo {
+    pub input: Option<u64>,
+    pub output: Option<u64>,
+    pub reasoning: Option<u64>,
+    pub cache_read: Option<u64>,
+    pub cache_write: Option<u64>,
+}
+
 /// An assistant turn — the collapsible unit of AI work.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -208,6 +221,10 @@ pub struct AssistantEntry {
     pub origin: TurnOrigin,
     pub blocks: Vec<Block>,
     pub summary: CollapseSummary,
+    /// Token usage for this turn, set when the engine reports it at turn end.
+    /// `serde(default)` keeps entries persisted before the field loadable.
+    #[serde(default)]
+    pub usage: Option<UsageInfo>,
     pub started_at: i64,
     pub ended_at: Option<i64>,
 }
@@ -473,6 +490,47 @@ mod tests {
         assert_eq!(v["type"], "system");
         assert_eq!(v["kind"], "success");
         assert_eq!(v["text"], "Committed changes.");
+    }
+
+    #[test]
+    fn assistant_usage_serializes_camel_case_and_defaults_when_absent() {
+        let e = Entry::Assistant(AssistantEntry {
+            seq: 1,
+            entry_id: "a1".into(),
+            status: TurnStatus::Completed,
+            origin: TurnOrigin::User,
+            blocks: vec![],
+            summary: CollapseSummary::default(),
+            usage: Some(UsageInfo {
+                input: Some(1200),
+                output: Some(340),
+                reasoning: Some(80),
+                cache_read: Some(9000),
+                cache_write: None,
+            }),
+            started_at: 0,
+            ended_at: Some(1),
+        });
+        let v = serde_json::to_value(&e).unwrap();
+        // Exactly the TS `UsageInfo` shape (types.ts): camelCase keys, null for
+        // unreported counters.
+        assert_eq!(v["usage"]["input"], 1200);
+        assert_eq!(v["usage"]["output"], 340);
+        assert_eq!(v["usage"]["reasoning"], 80);
+        assert_eq!(v["usage"]["cacheRead"], 9000);
+        assert_eq!(v["usage"]["cacheWrite"], serde_json::Value::Null);
+        let back: Entry = serde_json::from_value(v).unwrap();
+        assert_eq!(back, e);
+
+        // Entries persisted before the field existed still load (usage: None).
+        let legacy = serde_json::json!({
+            "type": "assistant", "seq": 2, "entryId": "a2", "status": "completed", "origin": "user",
+            "blocks": [], "summary": CollapseSummary::default(), "startedAt": 0, "endedAt": null
+        });
+        match serde_json::from_value::<Entry>(legacy).unwrap() {
+            Entry::Assistant(a) => assert_eq!(a.usage, None),
+            _ => panic!("expected assistant"),
+        }
     }
 
     #[test]

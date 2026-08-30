@@ -13,7 +13,7 @@ pub mod opencode_http;
 use agent_client_protocol::schema::v1 as acp_schema;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::chat::model::ConfigOption;
+use crate::chat::model::{ConfigOption, UsageInfo};
 
 /// One piece of a user prompt sent to the engine.
 #[derive(Debug, Clone)]
@@ -122,8 +122,9 @@ pub enum EngineEvent {
     /// thought-level option that appears when a variant-capable model is
     /// selected) ride only on the response, so the engine forwards them here.
     ConfigChanged(Vec<ConfigOption>),
-    /// The current prompt turn finished.
-    TurnEnded { stop: StopKind },
+    /// The current prompt turn finished. `usage` carries the engine-reported
+    /// per-turn token counts when available (ACP's unstable end-of-turn usage).
+    TurnEnded { stop: StopKind, usage: Option<UsageInfo> },
     /// The agent is asking permission; `reply` resolves with the chosen option id
     /// (or `None` to cancel/reject).
     Permission { req: PermissionReq, reply: oneshot::Sender<Option<String>> },

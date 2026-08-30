@@ -38,9 +38,12 @@ pub fn remove_project(project_id: String, registry: State<Registry>) {
     registry.remove_project(&project_id);
 }
 
+/// Async: `git branch` is a subprocess — spawn_blocking keeps it off the main
+/// thread (sync commands run there in Tauri 2 and would stall the UI).
 #[tauri::command]
-pub fn list_branches(project_id: String, registry: State<Registry>) -> Result<Vec<String>, String> {
-    registry.branches(&project_id)
+pub async fn list_branches(project_id: String, registry: State<'_, Registry>) -> Result<Vec<String>, String> {
+    let root = registry.repo_root(&project_id).ok_or("unknown project")?;
+    tauri::async_runtime::spawn_blocking(move || git::list_branches(&root)).await.map_err(|e| e.to_string())?
 }
 
 /// Create a workspace (worktree on a generated branch codename). `base` is
@@ -589,46 +592,68 @@ pub fn clear_init_prompt(workspace_id: String, registry: State<Registry>) {
     registry.clear_init_prompt(&workspace_id);
 }
 
-/// Unified diff for one file in a workspace.
+/// Unified diff for one file in a workspace. Async: `git diff` is a
+/// subprocess — spawn_blocking keeps it off the main thread.
 #[tauri::command]
-pub fn workspace_file_diff(
+pub async fn workspace_file_diff(
     workspace_id: String,
     file: String,
     against: Option<String>,
-    registry: State<Registry>,
-) -> String {
-    match registry.workspace_path(&workspace_id) {
-        Some(path) => git::file_diff(&path, &file, against.as_deref().unwrap_or("HEAD")),
-        None => String::new(),
-    }
+    registry: State<'_, Registry>,
+) -> Result<String, String> {
+    let Some(path) = registry.workspace_path(&workspace_id) else {
+        return Ok(String::new());
+    };
+    tauri::async_runtime::spawn_blocking(move || git::file_diff(&path, &file, against.as_deref().unwrap_or("HEAD")))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// All files in a workspace (tracked + untracked) for the file-tree browser.
+/// Async: `git ls-files` is a subprocess — spawn_blocking keeps it off the
+/// main thread.
 #[tauri::command]
-pub fn workspace_files(workspace_id: String, registry: State<Registry>) -> Vec<String> {
-    match registry.workspace_path(&workspace_id) {
-        Some(path) => git::list_files(&path),
-        None => vec![],
-    }
+pub async fn workspace_files(workspace_id: String, registry: State<'_, Registry>) -> Result<Vec<String>, String> {
+    let Some(path) = registry.workspace_path(&workspace_id) else {
+        return Ok(vec![]);
+    };
+    tauri::async_runtime::spawn_blocking(move || git::list_files(&path)).await.map_err(|e| e.to_string())
 }
 
-/// Read a file's contents from a workspace for the in-app viewer.
+/// Read a file's contents from a workspace for the in-app viewer. Async:
+/// filesystem reads (possibly large files) stay off the main thread.
 #[tauri::command]
-pub fn read_file(workspace_id: String, file: String, registry: State<Registry>) -> Result<FileContent, String> {
-    with_workspace_path(&registry, &workspace_id, |repo| git::read_file(repo, &file))
+pub async fn read_file(
+    workspace_id: String,
+    file: String,
+    registry: State<'_, Registry>,
+) -> Result<FileContent, String> {
+    let path = registry.workspace_path(&workspace_id).ok_or("unknown workspace")?;
+    tauri::async_runtime::spawn_blocking(move || git::read_file(&path, &file)).await.map_err(|e| e.to_string())?
 }
 
 /// Discard a file's local changes (restore to HEAD, or delete if untracked).
+/// Async: the git call AND the watcher refresh (a synchronous git recompute)
+/// run in spawn_blocking, off the main thread.
 #[tauri::command]
-pub fn discard_file(
+pub async fn discard_file(
     workspace_id: String,
     file: String,
-    registry: State<Registry>,
-    watcher: State<GitWatcher>,
+    registry: State<'_, Registry>,
+    watcher: State<'_, GitWatcher>,
 ) -> Result<(), String> {
-    let result = with_workspace_path(&registry, &workspace_id, |repo| git::discard_file(repo, &file));
-    watcher.refresh(&workspace_id);
-    result
+    let path = registry.workspace_path(&workspace_id);
+    let watcher = watcher.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = match &path {
+            Some(repo) => git::discard_file(repo, &file),
+            None => Err("unknown workspace".into()),
+        };
+        watcher.refresh(&workspace_id);
+        result
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // ── Workspace lifecycle: commit, merge, push, PR ──
@@ -651,9 +676,16 @@ fn resolve_workspace_branch(
 }
 
 /// Commit all changes in the workspace. Fails if there is nothing staged.
+/// Async: `git add` + `git commit` are subprocesses — spawn_blocking keeps
+/// them off the main thread.
 #[tauri::command]
-pub fn commit_workspace(workspace_id: String, message: String, registry: State<Registry>) -> Result<String, String> {
-    with_workspace_path(&registry, &workspace_id, |path| git::commit_all(path, &message))
+pub async fn commit_workspace(
+    workspace_id: String,
+    message: String,
+    registry: State<'_, Registry>,
+) -> Result<String, String> {
+    let path = registry.workspace_path(&workspace_id).ok_or("unknown workspace")?;
+    tauri::async_runtime::spawn_blocking(move || git::commit_all(&path, &message)).await.map_err(|e| e.to_string())?
 }
 
 /// Push the branch and open a GitHub PR via the API (routed through the repo's
@@ -696,11 +728,23 @@ pub fn github_detect_account(
 // ── Backend orchestration surface (see supervisor.rs / watcher.rs) ──
 
 /// Tell the backend which workspace is on screen. The active workspace also
-/// gets the full `changes` list + todos, and is always driven.
+/// gets the full `changes` list + todos, and is always driven. Async: the
+/// watcher's activation recompute shells out to git — spawn_blocking keeps
+/// the workspace switch from stalling the main thread.
 #[tauri::command]
-pub fn set_active_workspace(workspace_id: Option<String>, watcher: State<GitWatcher>, supervisor: State<Supervisor>) {
-    watcher.set_active(workspace_id.clone());
-    supervisor.set_active(workspace_id);
+pub async fn set_active_workspace(
+    workspace_id: Option<String>,
+    watcher: State<'_, GitWatcher>,
+    supervisor: State<'_, Supervisor>,
+) -> Result<(), String> {
+    let watcher = watcher.inner().clone();
+    let supervisor = supervisor.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        watcher.set_active(workspace_id.clone());
+        supervisor.set_active(workspace_id);
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Set a workspace's PR autofix mode (off|auto|super); reconciles immediately
@@ -764,9 +808,12 @@ pub fn refresh_pr_status(supervisor: State<Supervisor>) {
 }
 
 /// Force a git recompute + emit for one workspace (used by `refreshChanges`).
+/// Async: the recompute shells out to git — spawn_blocking keeps it off the
+/// main thread.
 #[tauri::command]
-pub fn request_git_refresh(workspace_id: String, watcher: State<GitWatcher>) {
-    watcher.refresh(&workspace_id);
+pub async fn request_git_refresh(workspace_id: String, watcher: State<'_, GitWatcher>) -> Result<(), String> {
+    let watcher = watcher.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || watcher.refresh(&workspace_id)).await.map_err(|e| e.to_string())
 }
 
 /// Runtime MCP + LSP status for a workspace. ACP doesn't expose these, so we
@@ -823,14 +870,23 @@ pub async fn mcp_disconnect(
 }
 
 /// Restart a workspace's server (used after editing config to apply it).
+/// Async: stop kills/waits a child process and start blocks up to 20s for the
+/// listen address — spawn_blocking keeps both off the main thread (the same
+/// pattern as `workspace_tools`).
 #[tauri::command]
-pub fn restart_server(
+pub async fn restart_server(
     workspace_id: String,
-    registry: State<Registry>,
-    servers: State<ServerManager>,
+    registry: State<'_, Registry>,
+    servers: State<'_, ServerManager>,
 ) -> Result<ServerInfo, String> {
-    servers.stop(&workspace_id);
-    with_workspace_path(&registry, &workspace_id, |path| servers.start(&workspace_id, path))
+    let path = registry.workspace_path(&workspace_id).ok_or("unknown workspace")?;
+    let servers = (*servers).clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        servers.stop(&workspace_id);
+        servers.start(&workspace_id, &path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // ── Config & internals ──

@@ -266,8 +266,10 @@ impl Registry {
     /// Worktrees are created under `worktrees_dir`, quick-chat scratch dirs
     /// under `quick_chats_dir`.
     pub fn load(file: PathBuf, worktrees_dir: PathBuf, quick_chats_dir: PathBuf) -> Self {
-        let mut data: RegistryData =
-            std::fs::read_to_string(&file).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        // A corrupt registry is quarantined to `registry.json.bad` (not booted
+        // over silently) — projects/worktrees are re-addable, but the evidence
+        // of what was lost must survive for recovery.
+        let mut data: RegistryData = crate::util::load_json_or_quarantine(&file, "registry");
         // Startup repair: a workspace still marked Provisioning means the app
         // died mid-setup. Mark it Failed so the chat card offers Retry instead
         // of showing a spinner forever.
@@ -301,8 +303,15 @@ impl Registry {
         if let Some(parent) = self.file.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        if let Ok(json) = serde_json::to_string_pretty(data) {
-            let _ = std::fs::write(&self.file, json);
+        // Atomic write (tmp + rename) so a crash mid-persist can't truncate
+        // the registry; a failed persist is loud instead of silently dropped.
+        match serde_json::to_string_pretty(data) {
+            Ok(json) => {
+                if let Err(e) = crate::util::write_atomic(&self.file, &json) {
+                    crate::logf!("registry", "persist FAILED at {}: {e}", self.file.display());
+                }
+            }
+            Err(e) => crate::logf!("registry", "persist serialize FAILED: {e}"),
         }
     }
 
@@ -528,12 +537,6 @@ impl Registry {
     /// All workspaces across all projects (for the fleet dashboard).
     pub fn all_workspaces(&self) -> Vec<Workspace> {
         self.data.lock().unwrap().workspaces.clone()
-    }
-
-    /// Local branches of a project's repo (for the worktree base picker).
-    pub fn branches(&self, project_id: &str) -> Result<Vec<String>, String> {
-        let root = self.repo_root(project_id).ok_or("unknown project")?;
-        git::list_branches(&root)
     }
 
     /// A project's implicit base workspace (the repo root's own row).
@@ -1025,6 +1028,35 @@ mod tests {
             });
         }
         assert_eq!(reg.rename_branch_for_title("pr-ws", "Some Title").unwrap(), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn corrupt_registry_is_quarantined_not_clobbered() {
+        let dir = std::env::temp_dir().join(format!("bl-reg-corrupt-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("registry.json");
+        std::fs::write(&file, "{\"projects\": [{\"id\": TRUNC").unwrap();
+
+        let reg = Registry::load(file.clone(), dir.join("worktrees"), dir.join("quick-chats"));
+        assert!(reg.list().is_empty(), "corrupt file loads as empty registry");
+        // The corrupt original is moved aside — never silently overwritten.
+        let bad = dir.join("registry.json.bad");
+        assert!(bad.is_file(), "corrupt registry quarantined as .bad");
+        assert!(std::fs::read_to_string(&bad).unwrap().contains("TRUNC"));
+
+        // Persist writes valid JSON at the original path (atomic, no .tmp left).
+        let ws = reg.create_quick_chat(None).unwrap();
+        let raw = std::fs::read_to_string(&file).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&raw).expect("persisted registry parses");
+        assert!(parsed["workspaces"].as_array().is_some_and(|w| w.iter().any(|v| v["id"] == ws.id.as_str())));
+        assert!(!dir.join("registry.json.tmp").exists(), "no tmp file left behind");
+
+        // A second corruption must not clobber the first quarantine.
+        std::fs::write(&file, "also broken").unwrap();
+        let _ = Registry::load(file, dir.join("worktrees"), dir.join("quick-chats"));
+        assert!(std::fs::read_to_string(&bad).unwrap().contains("TRUNC"), "first .bad untouched");
+        assert!(dir.join("registry.json.bad2").is_file(), "second corruption gets a suffixed name");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

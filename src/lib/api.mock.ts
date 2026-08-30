@@ -34,6 +34,7 @@ import type {
   SessionPayload,
   SidebarWorkspace,
   SuggestedPlan,
+  Todo,
   Workspace,
 } from "./types";
 
@@ -867,6 +868,10 @@ export function chatOpen(workspaceId: string): Promise<ChatSnapshot> {
       { name: "compress", description: "Compress memory files" },
     ],
   });
+}
+
+export function chatTodos(): Promise<Todo[]> {
+  return Promise.resolve([]);
 }
 
 export function chatHistory(): Promise<ChatSnapshot> {

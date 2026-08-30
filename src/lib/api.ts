@@ -28,6 +28,7 @@ import type {
   ServerInfo,
   SidebarWorkspace,
   SuggestedPlan,
+  Todo,
   ToolsStatus,
   Workspace,
 } from "./types";
@@ -281,6 +282,13 @@ export function refreshReviewInbox(): Promise<void> {
  *  (newest page of entries + advertised config options). Call on mount. */
 export function chatOpen(workspaceId: string): Promise<ChatSnapshot> {
   return invoke<ChatSnapshot>("chat_open", { workspaceId });
+}
+
+/** Last todo list pushed for the workspace — seeds a re-mounted todo strip
+ *  after subscribing (`workspace:todos` events aren't buffered). In-memory
+ *  backend cache; empty after an app restart. */
+export function chatTodos(workspaceId: string): Promise<Todo[]> {
+  return invoke<Todo[]>("chat_todos", { workspaceId });
 }
 
 /** Fetch a page of older history before `beforeSeq`. */

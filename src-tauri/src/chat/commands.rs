@@ -30,25 +30,48 @@ pub async fn chat_open(
     chat.open(&workspace_id, &cwd, PAGE)
 }
 
-/// Read-only transcript snapshot for a workspace that may no longer exist
-/// (the chat.db conversation survives workspace deletion). No engine spawn,
-/// no registry lookup — powers the task card's archived-chat view.
+/// Last todo list pushed for the workspace, so a re-mounted todo strip can
+/// seed itself after subscribing (`workspace:todos` events aren't buffered).
+/// In-memory cache only — empty after an app restart. Sync: a map read, no
+/// SQLite or subprocess work.
 #[tauri::command]
-pub fn chat_archive(workspace_id: String, chat: State<ChatManager>) -> Result<ChatSnapshot, String> {
-    chat.snapshot(&workspace_id, None, PAGE)
+pub fn chat_todos(workspace_id: String, chat: State<'_, ChatManager>) -> Vec<crate::chat::events::Todo> {
+    chat.todos(&workspace_id)
 }
 
-/// Fetch a page of older history before `before_seq`.
+/// Read-only transcript snapshot for a workspace that may no longer exist
+/// (the chat.db conversation survives workspace deletion). No engine spawn,
+/// no registry lookup — powers the task card's archived-chat view. Async:
+/// SQLite reads via spawn_blocking, off the main thread.
 #[tauri::command]
-pub fn chat_history(workspace_id: String, before_seq: i64, chat: State<ChatManager>) -> Result<ChatSnapshot, String> {
-    chat.snapshot(&workspace_id, Some(before_seq), PAGE)
+pub async fn chat_archive(workspace_id: String, chat: State<'_, ChatManager>) -> Result<ChatSnapshot, String> {
+    let chat = chat.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || chat.snapshot(&workspace_id, None, PAGE))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Fetch a page of older history before `before_seq`. Async: SQLite reads via
+/// spawn_blocking, off the main thread.
+#[tauri::command]
+pub async fn chat_history(
+    workspace_id: String,
+    before_seq: i64,
+    chat: State<'_, ChatManager>,
+) -> Result<ChatSnapshot, String> {
+    let chat = chat.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || chat.snapshot(&workspace_id, Some(before_seq), PAGE))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// Send a user message. `display` is shown in the UI; `sent` is what the AI
-/// receives (they differ for slash/lifecycle/init/skill injection).
+/// receives (they differ for slash/lifecycle/init/skill injection). Async:
+/// send() writes to SQLite (and may spawn an engine) — spawn_blocking keeps
+/// that off the main thread.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub fn chat_send(
+pub async fn chat_send(
     workspace_id: String,
     display: String,
     sent: String,
@@ -57,21 +80,26 @@ pub fn chat_send(
     model: Option<String>,
     variant: Option<String>,
     agent: Option<String>,
-    registry: State<Registry>,
-    chat: State<ChatManager>,
+    registry: State<'_, Registry>,
+    chat: State<'_, ChatManager>,
 ) -> Result<(), String> {
     let cwd = workspace_cwd(&registry, &workspace_id)?;
-    chat.send(
-        &workspace_id,
-        &cwd,
-        display,
-        sent,
-        attachments.unwrap_or_default(),
-        origin.unwrap_or(TurnOrigin::User),
-        model,
-        variant,
-        agent,
-    )
+    let chat = chat.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        chat.send(
+            &workspace_id,
+            &cwd,
+            display,
+            sent,
+            attachments.unwrap_or_default(),
+            origin.unwrap_or(TurnOrigin::User),
+            model,
+            variant,
+            agent,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Generate an AI title + conventional branch name for a workspace from the

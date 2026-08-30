@@ -42,7 +42,9 @@ base64 = "0.22"
 # ACP (Agent Client Protocol) client — the engine transport. Pinned exactly:
 # the crate's high-level API is still evolving, and all its types are isolated
 # behind `crate::engine::acp` so an upgrade touches only that module.
-agent-client-protocol = "=2.0.0"
+# `unstable_end_turn_token_usage` surfaces `PromptResponse.usage` — opencode
+# reports per-turn token counts there, which feed the chat's usage footer.
+agent-client-protocol = { version = "=2.0.0", features = ["unstable_end_turn_token_usage"] }
 # GitHub API client (REST + GraphQL). Brings its own rustls-backed reqwest, so
 # it can reach api.github.com / GHE — the bare `reqwest` above is localhost-only.
 # One `Octocrab` per account (token from `gh auth token`) gives clean isolation.

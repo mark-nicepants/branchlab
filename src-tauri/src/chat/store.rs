@@ -324,6 +324,7 @@ mod tests {
             origin: TurnOrigin::User,
             blocks,
             summary: CollapseSummary::default(),
+            usage: None,
             started_at: 2,
             ended_at: None,
         })
@@ -382,6 +383,13 @@ mod tests {
         let db = ChatDb::open_in_memory().unwrap();
         conv(&db);
         let seq = db.insert_entry("conv-1", &assistant("a1", TurnStatus::Streaming, vec![])).unwrap();
+        let usage = crate::chat::model::UsageInfo {
+            input: Some(1200),
+            output: Some(340),
+            reasoning: None,
+            cache_read: Some(9000),
+            cache_write: None,
+        };
         let updated = Entry::Assistant(AssistantEntry {
             seq,
             entry_id: "a1".into(),
@@ -389,6 +397,7 @@ mod tests {
             origin: TurnOrigin::User,
             blocks: vec![Block::Text { block_id: "t1".into(), text: "hello".into() }],
             summary: CollapseSummary { collapsed: true, headline: "Responded".into(), ..Default::default() },
+            usage: Some(usage.clone()),
             started_at: 2,
             ended_at: Some(9),
         });
@@ -399,6 +408,8 @@ mod tests {
                 assert_eq!(a.status, TurnStatus::Completed);
                 assert_eq!(a.blocks.len(), 1);
                 assert!(a.summary.collapsed);
+                // usage rides the entry's JSON blob through SQLite unchanged
+                assert_eq!(a.usage.as_ref(), Some(&usage));
             }
             _ => panic!("expected assistant"),
         }

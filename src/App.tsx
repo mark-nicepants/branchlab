@@ -14,7 +14,9 @@ import { SettingsScreen } from "./components/settings/SettingsScreen";
 import { MyWorkScreen } from "./components/mywork/MyWorkScreen";
 import { SessionsSidebar } from "./components/shell/SessionsSidebar";
 import { useAppRouter } from "./hooks/useAppRouter";
+import { Button } from "./components/ui/button";
 import { EmptyState } from "./components/ui/empty-state";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { deleteWorkspaceWithConfirm } from "./lib/deleteWorkspace";
 import { onWorkspaceNotify, onWorkspaceSetup } from "./lib/events";
 import { offerMarkTaskDone } from "./lib/taskDone";
@@ -47,6 +49,30 @@ type Phase =
   | { kind: "loading" }
   | { kind: "ready"; env: EnvReport }
   | { kind: "blocked"; env: EnvReport };
+
+/** Full-screen fallback for a crashed main view. The first "Reload" resets
+ *  the boundary in place; if the screen crashes again, the state itself is
+ *  poisoned, so the next click reloads the whole app. */
+let screenErrorRetried = false;
+function ScreenErrorFallback({ reset }: { reset: () => void }) {
+  return (
+    <EmptyState className="h-full">
+      <p>Something went wrong rendering this screen.</p>
+      <Button
+        variant="outline"
+        size="sm"
+        className="mt-3"
+        onClick={() => {
+          if (screenErrorRetried) window.location.reload();
+          screenErrorRetried = true;
+          reset();
+        }}
+      >
+        Reload
+      </Button>
+    </EmptyState>
+  );
+}
 
 function App() {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
@@ -386,48 +412,54 @@ function App() {
           </button>
 
           <main className="min-w-0 flex-1 overflow-hidden">
-            {view === "session" && selected ? (
-              <SessionView
-                key={selected.id}
-                workspace={selected}
-                project={selectedProject}
-                onRenamed={onRenamed}
-                sidebarCollapsed={sidebarCollapsed}
-                onManageModels={() => router.openSettings("models")}
-                onDeleteWorkspace={(id) => void deleteWorkspaceFromChat(id)}
-                onOpenTask={(taskId) => {
-                  setFocusTaskId(taskId);
-                  router.navigate("my-work");
-                }}
-              />
-            ) : view === "search" ? (
-              <SearchScreen
-                projects={projects}
-                quickChats={quickChats}
-                onSelect={openSession}
-              />
-            ) : view === "my-work" ? (
-              <MyWorkScreen
-                projects={projects}
-                quickChats={quickChats}
-                onOpenSession={(id) => router.openSession(id)}
-                onStartTask={(task) => void startTaskSession(task)}
-                onCleanupWorkspace={(id) => void deleteWorkspaceFromChat(id)}
-                focusTaskId={focusTaskId}
-                onFocusTaskHandled={() => setFocusTaskId(null)}
-              />
-            ) : (
-              <HomeScreen
-                projects={projects}
-                onCreateSession={(pid, base, prompt) =>
-                  void createSession(pid, base, prompt)
-                }
-                onQuickChat={(prompt) => void newQuickChat(prompt)}
-                onAddProject={() => void pickProject()}
-                onCheckoutPr={(pid, prNumber) => void checkoutPr(pid, prNumber)}
-                onOpenAccounts={() => router.openSettings("accounts")}
-              />
-            )}
+            <ErrorBoundary
+              fallback={(_e, reset) => <ScreenErrorFallback reset={reset} />}
+            >
+              {view === "session" && selected ? (
+                <SessionView
+                  key={selected.id}
+                  workspace={selected}
+                  project={selectedProject}
+                  onRenamed={onRenamed}
+                  sidebarCollapsed={sidebarCollapsed}
+                  onManageModels={() => router.openSettings("models")}
+                  onDeleteWorkspace={(id) => void deleteWorkspaceFromChat(id)}
+                  onOpenTask={(taskId) => {
+                    setFocusTaskId(taskId);
+                    router.navigate("my-work");
+                  }}
+                />
+              ) : view === "search" ? (
+                <SearchScreen
+                  projects={projects}
+                  quickChats={quickChats}
+                  onSelect={openSession}
+                />
+              ) : view === "my-work" ? (
+                <MyWorkScreen
+                  projects={projects}
+                  quickChats={quickChats}
+                  onOpenSession={(id) => router.openSession(id)}
+                  onStartTask={(task) => void startTaskSession(task)}
+                  onCleanupWorkspace={(id) => void deleteWorkspaceFromChat(id)}
+                  focusTaskId={focusTaskId}
+                  onFocusTaskHandled={() => setFocusTaskId(null)}
+                />
+              ) : (
+                <HomeScreen
+                  projects={projects}
+                  onCreateSession={(pid, base, prompt) =>
+                    void createSession(pid, base, prompt)
+                  }
+                  onQuickChat={(prompt) => void newQuickChat(prompt)}
+                  onAddProject={() => void pickProject()}
+                  onCheckoutPr={(pid, prNumber) =>
+                    void checkoutPr(pid, prNumber)
+                  }
+                  onOpenAccounts={() => router.openSettings("accounts")}
+                />
+              )}
+            </ErrorBoundary>
           </main>
 
           <SettingsScreen

@@ -463,7 +463,13 @@ export function SessionsSidebar({
                         <DropdownMenuItem
                           variant="destructive"
                           onClick={() =>
-                            void removeProject(p.id).then(onProjectsChanged)
+                            void removeProject(p.id)
+                              .then(onProjectsChanged)
+                              .catch((e) =>
+                                toast.error("Could not remove project", {
+                                  description: String(e),
+                                }),
+                              )
                           }
                         >
                           <Trash2 className="size-4" /> Remove project

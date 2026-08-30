@@ -475,7 +475,7 @@ impl Inner {
             // Route the fix through the chat manager so it streams into the
             // visible conversation; the turn consumer advances the phase when it
             // finishes (origin=Autofix).
-            let _ = self.chat.send(
+            let sent = self.chat.send(
                 &d.id,
                 &cwd,
                 "Fixing CI failures…".to_string(),
@@ -486,6 +486,27 @@ impl Inner {
                 None,
                 None,
             );
+            if let Err(e) = sent {
+                crate::logf!("pr", "autofix dispatch FAILED ws={}: {e}", d.id);
+                // decide() already committed phase=Fixing + handled_sha (and a
+                // super attempt) for a fix turn that never started — undo them
+                // so the next poll can retry instead of wedging in Fixing.
+                // Re-check the phase under the lock: a concurrent turn event
+                // may have moved it since.
+                {
+                    let mut rts = self.runtimes.lock().unwrap();
+                    if let Some(rt) = rts.get_mut(&d.id) {
+                        if rt.phase == Phase::Fixing {
+                            rt.phase = Phase::Failing;
+                        }
+                        rt.handled_sha = None;
+                        if mode == AutofixMode::Super {
+                            rt.super_attempts = rt.super_attempts.saturating_sub(1);
+                        }
+                    }
+                }
+                self.emit_pr(&d.id);
+            }
         }
     }
 

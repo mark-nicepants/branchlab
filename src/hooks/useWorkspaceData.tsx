@@ -131,7 +131,7 @@ export function WorkspaceDataProvider({
           if (!next[w.workspaceId]) next[w.workspaceId] = w.session;
         return next;
       });
-    });
+    }).catch(() => {}); // passive seed: events fill the store in afterwards
     return subs.dispose;
   }, []);
 

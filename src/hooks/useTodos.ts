@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { chatTodos } from "../lib/api";
 import { listenAll, onWorkspaceTodos } from "../lib/events";
 import type { Todo } from "../lib/types";
 
@@ -35,11 +36,27 @@ export function useTodos(workspaceId: string) {
   }, []);
 
   useEffect(() => {
+    setTodos([]);
+    let eventArrived = false;
     const subs = listenAll(
       onWorkspaceTodos((p) => {
-        if (p.workspaceId === workspaceId) apply(p.todos);
+        if (p.workspaceId === workspaceId) {
+          eventArrived = true;
+          apply(p.todos);
+        }
       }),
     );
+    // Seed after the listener is live (events aren't buffered) so switching
+    // to a workspace mid-turn shows its current list, not an empty strip.
+    // A pushed event is always newer than the snapshot — it wins.
+    void subs.ready.then((live) => {
+      if (!live) return;
+      chatTodos(workspaceId)
+        .then((list) => {
+          if (!subs.disposed && !eventArrived && list.length > 0) apply(list);
+        })
+        .catch(() => {}); // seed only — an empty strip is an acceptable fallback
+    });
     return subs.dispose;
   }, [workspaceId, apply]);
 

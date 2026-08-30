@@ -108,8 +108,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the last check shown next to it. Manual checks always report their result —
   including "You're on the latest version".
 
+### Added
+
+- Finished turns show what they cost: the per-turn token usage the engine
+  reports (input, output, reasoning, cache) now reaches the transcript
+  footer that was built for it.
+
 ### Fixed
 
+- A crash or power loss mid-write can no longer wipe your projects or task
+  board: the registry and board files are written atomically, and a corrupt
+  file is set aside as `.bad` (and reported in the log) instead of being
+  silently replaced with an empty one.
+- Restarting a workspace's tool server no longer freezes the whole window
+  for up to 20 seconds when the server is slow to come up; heavier git and
+  chat operations also moved off the UI thread.
+- Autofix could silently wedge for a workspace if its fix prompt lost a
+  race with a user prompt — it now logs and retries on the next check.
+- Restarting the engine (or clearing the session) mid-turn no longer leaves
+  a phantom spinning turn in the transcript, and a prompt sent while the
+  engine is down now fails visibly instead of queuing forever.
+- A rendering error in one chat message (or one screen) no longer takes down
+  the whole window — it's contained to that message with everything else
+  still usable.
+- Switching to a workspace mid-turn now shows its current todo list right
+  away instead of waiting for the next update, and a todo/turn update can
+  no longer slip through unrecorded while a chat view is (re)mounting.
+- Discarding a file's changes now reports failure instead of silently
+  pretending the file was reverted; removing a project does the same.
 - The "Ready for review" toast no longer stacks duplicates, and stays
   quiet when you're already looking at that session.
 - Streamed agent thoughts and prose no longer garble mid-turn (doubled

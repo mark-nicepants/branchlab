@@ -93,38 +93,18 @@ export function useChat(workspaceId: string): ChatStore {
   const [loading, setLoading] = useState(true);
   const [subscribed, setSubscribed] = useState(false);
 
-  const reload = useCallback(async () => {
-    setLoading(true);
-    try {
-      const snap = await chatOpen(workspaceId);
-      const map: Record<number, Entry> = {};
-      for (const e of snap.entries) map[e.seq] = e;
-      setById(map);
-      setOrder(snap.entries.map((e) => e.seq));
-      setConfig(snap.config);
-      setCommands(snap.commands ?? []);
-      setHasMore(snap.hasMore);
-      setOldestSeq(snap.entries[0]?.seq ?? null);
-      setPermissions([]);
-    } catch {
-      /* backend not ready / no conversation yet */
-    } finally {
-      setLoading(false);
-    }
-  }, [workspaceId]);
-
-  // Seed on workspace switch.
+  // Subscribe to deltas first, then seed from the snapshot once the listeners
+  // are live — the reverse order drops any delta landing in the gap (a lost
+  // terminal `chat:turn` would leave `busy` stuck). Same "pull once, push
+  // forever" discipline as useWorkspaceData.
   useEffect(() => {
     setById({});
     setOrder([]);
     setContext(null);
     setPermissions([]);
-    void reload();
-  }, [reload]);
-
-  // Subscribe to deltas for this workspace.
-  useEffect(() => {
     setSubscribed(false);
+    setLoading(true);
+
     const mine =
       <T extends { workspaceId: string }>(cb: (p: T) => void) =>
       (p: T) => {
@@ -136,6 +116,35 @@ export function useChat(workspaceId: string): ChatStore {
       setOrder((prev) =>
         prev.includes(e.seq) ? prev : [...prev, e.seq].sort((a, b) => a - b),
       );
+    };
+
+    // Merge the snapshot under whatever deltas raced in while it loaded: the
+    // snapshot fills the gaps, but an already-received event is newer and wins
+    // (later events heal any remaining staleness — see applyBlock).
+    const seed = async () => {
+      setLoading(true);
+      try {
+        const snap = await chatOpen(workspaceId);
+        if (subs.disposed) return;
+        setById((prev) => {
+          const map: Record<number, Entry> = {};
+          for (const e of snap.entries) map[e.seq] = e;
+          return { ...map, ...prev };
+        });
+        setOrder((prev) => {
+          const seqs = new Set(prev);
+          for (const e of snap.entries) seqs.add(e.seq);
+          return [...seqs].sort((a, b) => a - b);
+        });
+        setConfig(snap.config);
+        setCommands(snap.commands ?? []);
+        setHasMore(snap.hasMore);
+        setOldestSeq(snap.entries[0]?.seq ?? null);
+      } catch {
+        /* backend not ready / no conversation yet */
+      } finally {
+        if (!subs.disposed) setLoading(false);
+      }
     };
 
     const subs = listenAll(
@@ -183,15 +192,28 @@ export function useChat(workspaceId: string): ChatStore {
           ),
         ),
       ),
-      onChatReset(mine(() => void reload())),
+      onChatReset(
+        mine(() => {
+          // Conversation replaced (compacted/cleared): drop local state so the
+          // reseed doesn't merge stale entries back in.
+          setById({});
+          setOrder([]);
+          setPermissions([]);
+          void seed();
+        }),
+      ),
     );
 
-    // listen() registration is async; signal when every subscription is live
-    // so callers can safely fire programmatic sends (init prompts).
-    void subs.ready.then((live) => live && setSubscribed(true));
+    // listen() registration is async; seed only once every subscription is
+    // live (`ready` also lets callers safely fire programmatic sends).
+    void subs.ready.then((live) => {
+      if (!live) return;
+      setSubscribed(true);
+      void seed();
+    });
 
     return subs.dispose;
-  }, [workspaceId, reload]);
+  }, [workspaceId]);
 
   const entries = useMemo(
     () => order.map((seq) => byId[seq]).filter(Boolean),

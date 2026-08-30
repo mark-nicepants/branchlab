@@ -15,7 +15,7 @@ use agent_client_protocol::schema::v1::{
     CancelNotification, ContentBlock, ImageContent, InitializeRequest, NewSessionRequest, PermissionOptionKind,
     PromptRequest, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
     SelectedPermissionOutcome, SessionConfigId, SessionConfigValueId, SessionNotification, SessionUpdate,
-    SetSessionConfigOptionRequest, StopReason, TextContent,
+    SetSessionConfigOptionRequest, StopReason, TextContent, Usage,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{Agent, ConnectionTo};
@@ -197,12 +197,16 @@ async fn run_loop(
                 let ws2 = ws.clone();
                 let sid = session_id.clone();
                 tauri::async_runtime::spawn(async move {
-                    let stop = match conn2.send_request(PromptRequest::new(sid, content)).block_task().await {
-                        Ok(r) => map_stop(r.stop_reason),
-                        Err(e) => StopKind::Error(e.to_string()),
+                    // The prompt RESPONSE carries the per-turn token usage
+                    // (ACP's unstable `PromptResponse.usage` — opencode fills
+                    // it from the final assistant message), so it rides
+                    // TurnEnded into the assistant entry's usage footer.
+                    let (stop, usage) = match conn2.send_request(PromptRequest::new(sid, content)).block_task().await {
+                        Ok(r) => (map_stop(r.stop_reason), r.usage.as_ref().map(map_usage)),
+                        Err(e) => (StopKind::Error(e.to_string()), None),
                     };
-                    crate::logf!("acp", "turn ended ws={ws2} stop={stop:?}");
-                    let _ = tx2.send((ws2, EngineEvent::TurnEnded { stop }));
+                    crate::logf!("acp", "turn ended ws={ws2} stop={stop:?} usage={}", usage.is_some());
+                    let _ = tx2.send((ws2, EngineEvent::TurnEnded { stop, usage }));
                 });
             }
             EngineCommand::SetConfig { id, value } => {
@@ -361,6 +365,17 @@ fn to_content_block(p: PromptInput) -> ContentBlock {
     }
 }
 
+/// Map ACP's end-of-turn token usage into our model shape (the TS `UsageInfo`).
+fn map_usage(u: &Usage) -> crate::chat::model::UsageInfo {
+    crate::chat::model::UsageInfo {
+        input: Some(u.input_tokens),
+        output: Some(u.output_tokens),
+        reasoning: u.thought_tokens,
+        cache_read: u.cached_read_tokens,
+        cache_write: u.cached_write_tokens,
+    }
+}
+
 fn map_stop(s: StopReason) -> StopKind {
     match s {
         StopReason::Cancelled => StopKind::Cancelled,
@@ -453,7 +468,7 @@ mod tests {
                             }
                         }
                     }
-                    EngineEvent::TurnEnded { stop } => {
+                    EngineEvent::TurnEnded { stop, .. } => {
                         eprintln!("TURN ENDED: {stop:?}");
                         ended = true;
                         break;

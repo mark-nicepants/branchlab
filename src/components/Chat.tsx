@@ -13,6 +13,7 @@ import {
 import { filterCommands, isSlashTyping } from "../lib/slash";
 import type { Workspace } from "../lib/types";
 import { ActiveTodoStrip } from "./ActiveTodoStrip";
+import { ErrorBoundary } from "./ErrorBoundary";
 import {
   AssistantTurnView,
   MessageShell,
@@ -267,12 +268,22 @@ export function Chat({
               Send a prompt to begin.
             </p>
           )}
-          {chat.entries.map((entry) => {
-            if (entry.type === "user")
-              return <UserMessageView key={entry.entryId} entry={entry} />;
-            if (entry.type === "assistant")
-              return (
-                <MessageShell key={entry.entryId} role="assistant">
+          {chat.entries.map((entry) => (
+            // Entries render arbitrary model output (markdown, tool payloads);
+            // a boundary per entry keeps one poisoned entry from taking down
+            // the whole transcript.
+            <ErrorBoundary
+              key={entry.entryId}
+              fallback={
+                <p className="py-2 text-xs italic text-muted-foreground">
+                  This message failed to render.
+                </p>
+              }
+            >
+              {entry.type === "user" ? (
+                <UserMessageView entry={entry} />
+              ) : entry.type === "assistant" ? (
+                <MessageShell role="assistant">
                   <AssistantTurnView
                     entry={entry}
                     permissions={chat.permissions.filter(
@@ -281,16 +292,15 @@ export function Chat({
                     onAnswerPermission={chat.answerPermission}
                   />
                 </MessageShell>
-              );
-            return (
-              <SystemMessageView
-                onDeleteWorkspace={onDeleteWorkspace}
-                key={entry.entryId}
-                entry={entry}
-                workspaceId={workspace.id}
-              />
-            );
-          })}
+              ) : (
+                <SystemMessageView
+                  onDeleteWorkspace={onDeleteWorkspace}
+                  entry={entry}
+                  workspaceId={workspace.id}
+                />
+              )}
+            </ErrorBoundary>
+          ))}
           {/* Permissions whose entry isn't in the transcript (shouldn't happen,
               but the turn must never be silently blocked) render detached. */}
           {chat.permissions

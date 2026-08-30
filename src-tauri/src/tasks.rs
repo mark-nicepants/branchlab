@@ -207,12 +207,18 @@ impl TaskStore {
     /// Load from `file`, seeding the default Todo/In progress/Done board on
     /// first run (or when every column was deleted).
     pub fn load(file: PathBuf) -> Self {
-        let mut data: BoardData =
-            std::fs::read_to_string(&file).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
-        canonicalize(&mut data);
-        backfill_numbers(&mut data);
+        // A corrupt board file is quarantined to `tasks.json.bad` — the
+        // persist below would otherwise overwrite a possibly hand-recoverable
+        // original with an empty default board.
+        let mut data: BoardData = crate::util::load_json_or_quarantine(&file, "tasks");
+        // Persist after load ONLY when a migration actually changed the data
+        // (fresh seed, layout canonicalization, number backfill) — an
+        // unchanged board is never rewritten on startup.
+        let migrated = canonicalize(&mut data) | backfill_numbers(&mut data);
         let store = Self { data: Mutex::new(data), file };
-        store.persist(&store.data.lock().unwrap());
+        if migrated {
+            store.persist(&store.data.lock().unwrap());
+        }
         store
     }
 
@@ -220,8 +226,15 @@ impl TaskStore {
         if let Some(parent) = self.file.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        if let Ok(json) = serde_json::to_string_pretty(data) {
-            let _ = std::fs::write(&self.file, json);
+        // Atomic write (tmp + rename) so a crash mid-persist can't truncate
+        // the board; a failed persist is loud instead of silently dropped.
+        match serde_json::to_string_pretty(data) {
+            Ok(json) => {
+                if let Err(e) = crate::util::write_atomic(&self.file, &json) {
+                    crate::logf!("tasks", "persist FAILED at {}: {e}", self.file.display());
+                }
+            }
+            Err(e) => crate::logf!("tasks", "persist serialize FAILED: {e}"),
         }
     }
 
@@ -793,13 +806,14 @@ const DEFAULT_COLUMNS: [(&str, ColumnRole); 4] = [
 /// DEFAULT_COLUMNS by role sequence, replace them and remap every task by its
 /// old column's role (legacy Queued folds into Active; role-less customs land
 /// in Todo). Runs on every load, which retires layout migrations forever.
-fn canonicalize(data: &mut BoardData) {
+/// Returns whether anything changed (so load persists only real migrations).
+fn canonicalize(data: &mut BoardData) -> bool {
     let mut live: Vec<&Column> = data.columns.iter().filter(|c| c.deleted_at.is_none()).collect();
     live.sort_by(|a, b| a.position.total_cmp(&b.position));
     let canonical = live.len() == DEFAULT_COLUMNS.len()
         && live.iter().zip(DEFAULT_COLUMNS).all(|(c, (name, role))| c.role == role && c.name == name);
     if canonical {
-        return;
+        return false;
     }
     let now = now_ms();
     let old_roles: std::collections::HashMap<String, ColumnRole> =
@@ -820,6 +834,7 @@ fn canonicalize(data: &mut BoardData) {
         t.column_id = by_role.get(&role).cloned().unwrap_or_else(|| todo.clone());
         t.updated_at = now;
     }
+    true
 }
 
 fn seed_default_columns(data: &mut BoardData) {
@@ -838,16 +853,19 @@ fn seed_default_columns(data: &mut BoardData) {
 
 /// Assign numbers to tasks created before numbering existed (oldest first)
 /// and make sure the counter is ahead of every number ever handed out
-/// (tombstones included — numbers are never reused).
-fn backfill_numbers(data: &mut BoardData) {
+/// (tombstones included — numbers are never reused). Returns whether anything
+/// changed (so load persists only real migrations).
+fn backfill_numbers(data: &mut BoardData) -> bool {
     let mut max = data.tasks.iter().map(|t| t.number).max().unwrap_or(0);
     let mut unnumbered: Vec<usize> = (0..data.tasks.len()).filter(|&i| data.tasks[i].number == 0).collect();
     unnumbered.sort_by_key(|&i| data.tasks[i].created_at);
+    let changed = !unnumbered.is_empty() || data.next_task_number <= max;
     for i in unnumbered {
         max += 1;
         data.tasks[i].number = max;
     }
     data.next_task_number = data.next_task_number.max(max + 1);
+    changed
 }
 
 /// The prompt a task-dispatched session opens with: `display` is the readable
@@ -1053,6 +1071,41 @@ mod tests {
         // Still on disk as a tombstone (future sync needs it).
         let raw = std::fs::read_to_string(dir.join("tasks.json")).unwrap();
         assert!(raw.contains(&t.id));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn corrupt_board_is_quarantined_not_clobbered() {
+        let dir = std::env::temp_dir().join(format!("bl-tasks-{}-corrupt", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("tasks.json");
+        std::fs::write(&file, "{\"tasks\": [{\"id\": TRUNCATED").unwrap();
+
+        let s = TaskStore::load(file.clone());
+        assert_eq!(s.snapshot().columns.len(), 4, "corrupt board falls back to the default layout");
+        assert!(s.snapshot().tasks.is_empty());
+        // The corrupt original was moved aside — never silently overwritten.
+        let bad = dir.join("tasks.json.bad");
+        assert!(bad.is_file(), "corrupt tasks.json quarantined as .bad");
+        assert!(std::fs::read_to_string(&bad).unwrap().contains("TRUNCATED"));
+        // The seeded default persisted as valid JSON (atomic, no .tmp left).
+        let parsed: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(parsed["columns"].as_array().map(|c| c.len()), Some(4));
+        assert!(!dir.join("tasks.json.tmp").exists(), "no tmp file left behind");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unchanged_board_is_not_rewritten_on_load() {
+        let (s, dir) = store("no_rewrite_on_load");
+        s.create_task("keep".into(), None, None, None, None).unwrap();
+        let file = dir.join("tasks.json");
+        let before = std::fs::read_to_string(&file).unwrap();
+        // A clean reload has nothing to migrate, so the file must stay
+        // byte-identical (persist-after-load only runs for real migrations).
+        let _ = TaskStore::load(file.clone());
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

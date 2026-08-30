@@ -20,7 +20,7 @@ use crate::chat::events;
 use crate::chat::model::AssistantEntry;
 use crate::chat::model::{
     compute_collapse, Attachment, Block, CollapseSummary, ConfigOption, Conversation, Entry, Seq, SessionReason,
-    SetupStep, SystemEntry, SystemKind, TurnOrigin, TurnStatus, UserEntry,
+    SetupStep, SystemEntry, SystemKind, TurnOrigin, TurnStatus, UsageInfo, UserEntry,
 };
 use crate::chat::store::ChatDb;
 use crate::engine::{acp as acp_engine, EngineCommand, EngineEvent, EngineHandle, PromptInput, StopKind};
@@ -71,6 +71,10 @@ struct ConvState {
     pending_perms: HashMap<String, oneshot::Sender<Option<String>>>,
     config: Vec<ConfigOption>,
     commands: Vec<events::CommandInfo>,
+    /// Last todo list pushed via `workspace:todos`, kept so a re-mounted view
+    /// can seed itself (events aren't buffered). In-memory only — empty after
+    /// an app restart, until the next todowrite/Plan update.
+    todos: Vec<events::Todo>,
     pending_reason: SessionReason,
     /// Model to re-apply once the next session is `Ready`. Set when we restart
     /// the engine (e.g. on a reasoning change), so the user's chosen model isn't
@@ -100,6 +104,7 @@ impl ConvState {
             pending_perms: HashMap::new(),
             config: Vec::new(),
             commands: Vec::new(),
+            todos: Vec::new(),
             pending_reason: SessionReason::Started,
             desired_model: None,
             desired_effort: None,
@@ -150,6 +155,11 @@ impl ChatManager {
     pub fn open(&self, workspace_id: &str, cwd: &Path, limit: i64) -> Result<ChatSnapshot, String> {
         self.ensure(workspace_id, cwd)?;
         self.snapshot(workspace_id, None, limit)
+    }
+
+    /// Last todo list pushed for the workspace (see `ConvState::todos`).
+    pub fn todos(&self, workspace_id: &str) -> Vec<events::Todo> {
+        self.inner.convs.lock().unwrap().get(workspace_id).map(|c| c.todos.clone()).unwrap_or_default()
     }
 
     /// Read a page of history (newest `limit`, or before `before_seq`).
@@ -226,6 +236,7 @@ impl ChatManager {
                 origin,
                 blocks: Vec::new(),
                 summary: CollapseSummary::default(),
+                usage: None,
                 started_at: now,
                 ended_at: None,
             });
@@ -240,6 +251,7 @@ impl ChatManager {
             origin,
             blocks: Vec::new(),
             summary: CollapseSummary::default(),
+            usage: None,
             started_at: now,
             ended_at: None,
         });
@@ -262,17 +274,31 @@ impl ChatManager {
             self.inner.app.state::<crate::project::Registry>().setup_state(workspace_id)
                 == Some(crate::project::SetupState::Provisioning)
         };
+        let mut orphaned = false;
         match &conv.engine {
             Some(engine) if !provisioning => engine.send(EngineCommand::Prompt { inputs }),
             // Held until setup reaches a terminal state (release_held); the
             // queued turn is already visible in the transcript.
-            _ => conv.held = Some(inputs),
+            _ if provisioning => conv.held = Some(inputs),
+            // No engine and no provisioning pipeline to boot one: only the
+            // SetupManager ever releases held prompts, so parking this one
+            // would leave the turn Queued invisibly forever — fail it instead.
+            _ => orphaned = true,
         }
+        drop(convs);
         let _ = self.inner.turn_tx.send(TurnEvent {
             workspace_id: workspace_id.to_string(),
             origin,
             status: TurnStatus::Queued,
         });
+        if orphaned {
+            crate::logf!("chat", "send ws={workspace_id}: no engine and not provisioning — failing the turn");
+            self.inner.finish_turn(
+                workspace_id,
+                StopKind::Error("The engine isn't running for this workspace.".into()),
+                None,
+            );
+        }
         Ok(())
     }
 
@@ -425,6 +451,11 @@ impl ChatManager {
         reason: SessionReason,
         note: String,
     ) -> Result<(), String> {
+        // A live turn can't survive the engine drop, and its TurnEnded will
+        // never arrive — finish it as Cancelled NOW (persisted terminal status
+        // + emitted events, same path as an abort), or the reloaded transcript
+        // would show a perpetual spinner until the next app launch.
+        self.inner.finish_turn(workspace_id, StopKind::Cancelled, None);
         let conv_id = {
             let mut convs = self.inner.convs.lock().unwrap();
             let cid = convs.get(workspace_id).map(|c| c.conversation_id.clone());
@@ -443,7 +474,7 @@ impl ChatManager {
                     .map(|o| o.current_value.clone());
                 conv.engine = None; // Drop → Shutdown + abort the old opencode acp
                 conv.ready = false;
-                conv.current = None;
+                conv.current = None; // already terminal via finish_turn above
                 conv.pending_reason = reason;
             }
             cid
@@ -506,16 +537,33 @@ impl ChatManager {
     }
 
     /// Deliver a prompt held during provisioning. Called on setup success AND
-    /// failure — the workspace stays usable either way.
+    /// failure — the workspace stays usable either way. If no engine exists to
+    /// deliver to (setup failed before the worktree existed), the queued turn
+    /// is failed instead of dropped — nothing else would ever terminate it.
     pub fn release_held(&self, workspace_id: &str, cwd: &Path) {
         let _ = self.ensure(workspace_id, cwd);
-        let mut convs = self.inner.convs.lock().unwrap();
-        let Some(conv) = convs.get_mut(workspace_id) else { return };
-        if let Some(inputs) = conv.held.take() {
-            if let Some(engine) = &conv.engine {
-                crate::logf!("chat", "release held prompt ws={workspace_id}");
-                engine.send(EngineCommand::Prompt { inputs });
+        let undeliverable = {
+            let mut convs = self.inner.convs.lock().unwrap();
+            let Some(conv) = convs.get_mut(workspace_id) else { return };
+            match conv.held.take() {
+                Some(inputs) => match &conv.engine {
+                    Some(engine) => {
+                        crate::logf!("chat", "release held prompt ws={workspace_id}");
+                        engine.send(EngineCommand::Prompt { inputs });
+                        false
+                    }
+                    None => true,
+                },
+                None => false,
             }
+        };
+        if undeliverable {
+            crate::logf!("chat", "held prompt undeliverable ws={workspace_id} (no engine) — failing the turn");
+            self.inner.finish_turn(
+                workspace_id,
+                StopKind::Error("The workspace never finished setting up.".into()),
+                None,
+            );
         }
     }
 
@@ -713,7 +761,7 @@ impl Inner {
                 self.apply_desired_effort(ws, conv);
                 events::emit_config(&self.app, ws, &conv.config);
             }
-            EngineEvent::TurnEnded { stop } => self.finish_turn(ws, stop),
+            EngineEvent::TurnEnded { stop, usage } => self.finish_turn(ws, stop, usage),
             EngineEvent::Permission { req, reply } => {
                 let mut convs = self.convs.lock().unwrap();
                 let Some(conv) = convs.get_mut(ws) else {
@@ -753,7 +801,7 @@ impl Inner {
             }
             EngineEvent::Error(e) => {
                 crate::logf!("chat", "engine error ws={ws}: {e}");
-                self.finish_turn(ws, StopKind::Error(e));
+                self.finish_turn(ws, StopKind::Error(e), None);
             }
             EngineEvent::Closed => {
                 let mut convs = self.convs.lock().unwrap();
@@ -763,7 +811,7 @@ impl Inner {
                 }
                 drop(convs);
                 // If a turn was live when the process died, fail it.
-                self.finish_turn(ws, StopKind::Error("engine closed".into()));
+                self.finish_turn(ws, StopKind::Error("engine closed".into()), None);
             }
         }
     }
@@ -794,6 +842,7 @@ impl Inner {
                     if let Some(todos) = todos {
                         crate::logf!("chat", "todos from tool ws={ws} n={}", todos.len());
                         events::emit_todos(&self.app, ws, &todos);
+                        conv.todos = todos;
                     }
                     if started {
                         let origin = cur.origin;
@@ -818,6 +867,7 @@ impl Inner {
                             origin: cur.origin,
                             blocks: conv.assembler.blocks.clone(),
                             summary: compute_collapse(&conv.assembler.blocks, true),
+                            usage: None, // usage arrives only at turn end
                             started_at: cur.started_at,
                             ended_at: None,
                         });
@@ -834,6 +884,7 @@ impl Inner {
                 let todos = map_plan(p);
                 crate::logf!("chat", "todos from ACP Plan ws={ws} n={}", todos.len());
                 events::emit_todos(&self.app, ws, &todos);
+                conv.todos = todos;
             }
             acp::SessionUpdate::ConfigOptionUpdate(c) => {
                 conv.config = map_config_options(&c.config_options);
@@ -867,7 +918,7 @@ impl Inner {
         }
     }
 
-    fn finish_turn(self: &Arc<Inner>, ws: &str, stop: StopKind) {
+    fn finish_turn(self: &Arc<Inner>, ws: &str, stop: StopKind, usage: Option<UsageInfo>) {
         let mut convs = self.convs.lock().unwrap();
         let Some(conv) = convs.get_mut(ws) else { return };
         let Some(cur) = conv.current.take() else { return };
@@ -891,6 +942,7 @@ impl Inner {
             origin: cur.origin,
             blocks,
             summary: summary.clone(),
+            usage: usage.clone(),
             started_at: cur.started_at,
             ended_at: Some(now),
         });
@@ -907,7 +959,7 @@ impl Inner {
         // The full terminal entry FIRST (authoritative blocks — the live view
         // must end exactly equal to what the DB holds), then the turn status.
         events::emit_entry(&self.app, ws, &entry);
-        events::emit_turn(&self.app, ws, cur.seq, status, &summary, Some(now));
+        events::emit_turn(&self.app, ws, cur.seq, status, &summary, usage.as_ref(), Some(now));
         if let Some(text) = err_text {
             crate::logf!("chat", "turn failed ws={ws} seq={}: {text}", cur.seq);
             self.push_system(ws, &conv_id, SystemKind::Error, format!("Turn failed: {text}"));

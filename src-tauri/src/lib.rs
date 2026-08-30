@@ -206,6 +206,7 @@ pub fn run() {
             github::commands::github_refresh_review_inbox,
             github::commands::resync_github,
             chat::commands::chat_open,
+            chat::commands::chat_todos,
             chat::commands::chat_history,
             chat::commands::chat_archive,
             chat::commands::chat_send,
