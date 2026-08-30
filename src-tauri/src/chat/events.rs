@@ -13,32 +13,32 @@ use crate::chat::model::{Block, CollapseSummary, ConfigOption, Entry, TurnStatus
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct EntryEvent<'a> {
-    workspace_id: &'a str,
-    entry: &'a Entry,
+pub(crate) struct EntryEvent<'a> {
+    pub(crate) workspace_id: &'a str,
+    pub(crate) entry: &'a Entry,
 }
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct BlockEvent<'a> {
-    workspace_id: &'a str,
-    entry_seq: i64,
-    block: &'a Block,
+pub(crate) struct BlockEvent<'a> {
+    pub(crate) workspace_id: &'a str,
+    pub(crate) entry_seq: i64,
+    pub(crate) block: &'a Block,
 }
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct TurnEventPayload<'a> {
-    workspace_id: &'a str,
-    entry_seq: i64,
-    status: TurnStatus,
-    summary: &'a CollapseSummary,
+pub(crate) struct TurnEventPayload<'a> {
+    pub(crate) workspace_id: &'a str,
+    pub(crate) entry_seq: i64,
+    pub(crate) status: TurnStatus,
+    pub(crate) summary: &'a CollapseSummary,
     /// Per-turn token usage, set on terminal status when the engine reported
     /// it — drives the live usage footer without a snapshot reload.
-    usage: Option<&'a UsageInfo>,
+    pub(crate) usage: Option<&'a UsageInfo>,
     /// Set when the turn reached a terminal status — drives the live duration
     /// footer without waiting for a snapshot reload.
-    ended_at: Option<i64>,
+    pub(crate) ended_at: Option<i64>,
 }
 
 #[derive(Serialize, Clone)]
@@ -51,34 +51,34 @@ pub struct PermChoiceDto {
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct PermissionEvent<'a> {
-    workspace_id: &'a str,
-    entry_seq: i64,
-    request_id: &'a str,
-    tool_call_id: &'a str,
-    title: Option<&'a str>,
-    options: &'a [PermChoiceDto],
+pub(crate) struct PermissionEvent<'a> {
+    pub(crate) workspace_id: &'a str,
+    pub(crate) entry_seq: i64,
+    pub(crate) request_id: &'a str,
+    pub(crate) tool_call_id: &'a str,
+    pub(crate) title: Option<&'a str>,
+    pub(crate) options: &'a [PermChoiceDto],
 }
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct ConfigEvent<'a> {
-    workspace_id: &'a str,
-    options: &'a [ConfigOption],
+pub(crate) struct ConfigEvent<'a> {
+    pub(crate) workspace_id: &'a str,
+    pub(crate) options: &'a [ConfigOption],
 }
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct ResetEvent<'a> {
-    workspace_id: &'a str,
+pub(crate) struct ResetEvent<'a> {
+    pub(crate) workspace_id: &'a str,
 }
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct ContextEvent<'a> {
-    workspace_id: &'a str,
-    used: u64,
-    max: u64,
+pub(crate) struct ContextEvent<'a> {
+    pub(crate) workspace_id: &'a str,
+    pub(crate) used: u64,
+    pub(crate) max: u64,
 }
 
 /// One slash command advertised by the agent (ACP `AvailableCommandsUpdate`).
@@ -91,25 +91,25 @@ pub struct CommandInfo {
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct CommandsEvent<'a> {
-    workspace_id: &'a str,
-    commands: &'a [CommandInfo],
+pub(crate) struct CommandsEvent<'a> {
+    pub(crate) workspace_id: &'a str,
+    pub(crate) commands: &'a [CommandInfo],
 }
 
-/// One todo item (from ACP `Plan`), mirroring the frontend `Todo`.
+/// One todo item (from the `todowrite` tool / ACP `Plan`), mirroring the
+/// frontend `Todo` exactly — the UI never read `priority`, so it isn't sent.
 #[derive(Serialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Todo {
     pub content: String,
     pub status: String,
-    pub priority: String,
 }
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct TodosEvent<'a> {
-    workspace_id: &'a str,
-    todos: &'a [Todo],
+pub(crate) struct TodosEvent<'a> {
+    pub(crate) workspace_id: &'a str,
+    pub(crate) todos: &'a [Todo],
 }
 
 pub fn emit_entry(app: &AppHandle, workspace_id: &str, entry: &Entry) {

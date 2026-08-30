@@ -516,7 +516,7 @@ mod tests {
         assert_eq!(s.head_branch, "feature/messages-conversation");
         assert_eq!(s.head_sha, "abc123");
         assert_eq!(s.checks.len(), 2);
-        assert_eq!(s.rollup, "failure", "one failing check fails the rollup");
+        assert_eq!(s.rollup, crate::git::Rollup::Failure, "one failing check fails the rollup");
     }
 
     /// A PR with no checks yet (fresh push) must not panic and rolls up "none".
@@ -529,6 +529,6 @@ mod tests {
         });
         let s = parse_pr_status(&pr);
         assert_eq!(s.checks.len(), 0);
-        assert_eq!(s.rollup, "none");
+        assert_eq!(s.rollup, crate::git::Rollup::None);
     }
 }

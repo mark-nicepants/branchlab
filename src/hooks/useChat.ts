@@ -7,6 +7,7 @@
 // workspaces reloads instantly from cache and survives restarts.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import {
   chatAbort,
   chatAnswerPermission,
@@ -35,6 +36,7 @@ import type {
   ConfigOption,
   ContextInfo,
   Entry,
+  TurnOrigin,
 } from "../lib/types";
 
 /** Merge a streamed block into a turn's block list: upsert by blockId. Every
@@ -69,7 +71,7 @@ export interface ChatStore {
     display: string;
     sent: string;
     attachments?: ChatAttachment[];
-    origin?: string;
+    origin?: TurnOrigin;
     model?: string;
     variant?: string;
     agent?: string;
@@ -229,15 +231,32 @@ export function useChat(workspaceId: string): ChatStore {
     (args) => chatSend({ workspaceId, ...args }),
     [workspaceId],
   );
-  const abort = useCallback(() => void chatAbort(workspaceId), [workspaceId]);
+  // These commands now report failures instead of swallowing them — surface
+  // each as a toast (an unanswered click otherwise just looks broken).
+  const abort = useCallback(
+    () =>
+      void chatAbort(workspaceId).catch((e) =>
+        toast.error("Could not stop the turn", { description: String(e) }),
+      ),
+    [workspaceId],
+  );
   const setConfigValue = useCallback(
-    (id: string, value: string) => void chatSetConfig(workspaceId, id, value),
+    (id: string, value: string) =>
+      void chatSetConfig(workspaceId, id, value).catch((e) =>
+        toast.error("Could not change the setting", {
+          description: String(e),
+        }),
+      ),
     [workspaceId],
   );
   const answerPermission = useCallback(
     (requestId: string, optionId: string | null) => {
       setPermissions((prev) => prev.filter((p) => p.requestId !== requestId));
-      void chatAnswerPermission(workspaceId, requestId, optionId);
+      void chatAnswerPermission(workspaceId, requestId, optionId).catch((e) =>
+        toast.error("Could not answer the permission request", {
+          description: String(e),
+        }),
+      );
     },
     [workspaceId],
   );

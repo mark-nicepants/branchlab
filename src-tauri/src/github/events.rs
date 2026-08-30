@@ -9,16 +9,16 @@ use crate::github::model::{AccountView, LoginEvent, ReviewItem};
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct AccountsEvent<'a> {
-    accounts: &'a [AccountView],
+pub(crate) struct AccountsEvent<'a> {
+    pub(crate) accounts: &'a [AccountView],
 }
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct ReviewInboxEvent<'a> {
-    items: &'a [ReviewItem],
-    refreshed_at: Option<i64>,
-    error: Option<&'a str>,
+pub(crate) struct ReviewInboxEvent<'a> {
+    pub(crate) items: &'a [ReviewItem],
+    pub(crate) refreshed_at: Option<i64>,
+    pub(crate) error: Option<&'a str>,
 }
 
 /// The whole account list changed (add/remove/re-auth). The UI replaces its list.

@@ -21,7 +21,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::chat::manager::{ChatManager, TurnEvent};
 use crate::chat::model::{TurnOrigin, TurnStatus};
-use crate::git::{self, PrStatus};
+use crate::git::{self, CheckBucket, PrStatus, Rollup};
 use crate::github::GithubManager;
 use crate::project::{AutofixMode, Registry, WorkspaceKind};
 
@@ -76,11 +76,31 @@ struct WsRuntime {
     last_pr_emit: Option<PrPayload>,
 }
 
+/// Coarse session activity — a real enum so the wire spelling is compiler-checked
+/// against the TS union (`SessionPayload["activity"]`: "idle" | "working").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Activity {
+    Idle,
+    Working,
+}
+
+impl From<bool> for Activity {
+    /// The runtime tracks a plain `working` bool; the enum exists for the wire.
+    fn from(working: bool) -> Self {
+        if working {
+            Activity::Working
+        } else {
+            Activity::Idle
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionPayload {
     pub workspace_id: String,
-    pub activity: String,
+    pub activity: Activity,
     pub awaiting_input: bool,
     pub needs_attention: bool,
     pub error: Option<String>,
@@ -99,12 +119,12 @@ pub struct PrPayload {
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct NotifyPayload {
-    workspace_id: String,
-    kind: &'static str,
+pub(crate) struct NotifyPayload {
+    pub(crate) workspace_id: String,
+    pub(crate) kind: &'static str,
     /// Set for kind "task_review" — the board card's title, for the toast.
     #[serde(skip_serializing_if = "Option::is_none")]
-    task_title: Option<String>,
+    pub(crate) task_title: Option<String>,
 }
 
 /// One driven worktree, read synchronously from the registry.
@@ -237,16 +257,16 @@ impl Supervisor {
                 let phase = match rt {
                     Some(r) => r.phase,
                     // Same seeding as reconcile's first sight of a workspace.
-                    None => match pr_status.as_ref().map(|p| p.rollup.as_str()) {
-                        Some("success") => Phase::Passing,
-                        Some("failure") => Phase::Failing,
+                    None => match pr_status.as_ref().map(|p| p.rollup) {
+                        Some(Rollup::Success) => Phase::Passing,
+                        Some(Rollup::Failure) => Phase::Failing,
                         _ => Phase::Idle,
                     },
                 };
                 WorkspaceStatus {
                     session: SessionPayload {
                         workspace_id: w.id.clone(),
-                        activity: if rt.is_some_and(|r| r.working) { "working" } else { "idle" }.to_string(),
+                        activity: rt.is_some_and(|r| r.working).into(),
                         awaiting_input: rt.is_some_and(|r| r.awaiting_input),
                         needs_attention: rt.is_some_and(|r| r.needs_attention),
                         error: rt.and_then(|r| r.last_error.clone()),
@@ -334,9 +354,9 @@ impl Inner {
                 if fresh && d.persisted_pr.is_some() {
                     rt.pr = d.persisted_pr.clone();
                     if rt.phase == Phase::Idle {
-                        rt.phase = match d.persisted_pr.as_ref().map(|p| p.rollup.as_str()) {
-                            Some("success") => Phase::Passing,
-                            Some("failure") => Phase::Failing,
+                        rt.phase = match d.persisted_pr.as_ref().map(|p| p.rollup) {
+                            Some(Rollup::Success) => Phase::Passing,
+                            Some(Rollup::Failure) => Phase::Failing,
                             _ => Phase::Idle,
                         };
                     }
@@ -393,7 +413,7 @@ impl Inner {
                 match &opt {
                     Some(pr) => crate::logf!(
                         "pr",
-                        "poll ws={} {what} -> PR #{} state={} rollup={}",
+                        "poll ws={} {what} -> PR #{} state={} rollup={:?}",
                         d.id,
                         pr.number,
                         pr.state,
@@ -734,7 +754,7 @@ impl Inner {
             };
             let p = SessionPayload {
                 workspace_id: wsid.to_string(),
-                activity: if rt.working { "working" } else { "idle" }.to_string(),
+                activity: rt.working.into(),
                 awaiting_input: rt.awaiting_input,
                 needs_attention: rt.needs_attention,
                 error: rt.last_error.clone(),
@@ -781,22 +801,22 @@ fn decide(rt: &mut WsRuntime, status: Option<&PrStatus>, mode: AutofixMode) -> O
         rt.phase = Phase::Idle;
         return None;
     };
-    if status.state != "OPEN" || status.rollup == "none" {
+    if status.state != "OPEN" || status.rollup == Rollup::None {
         rt.phase = Phase::Idle;
         return None;
     }
-    match status.rollup.as_str() {
-        "success" => {
+    match status.rollup {
+        Rollup::Success => {
             rt.handled_sha = None;
             rt.super_attempts = 0;
             rt.phase = Phase::Passing;
             None
         }
-        "pending" => {
+        Rollup::Pending => {
             rt.phase = Phase::Running;
             None
         }
-        "failure" => {
+        Rollup::Failure => {
             if mode == AutofixMode::Off {
                 rt.phase = Phase::Failing;
                 return None;
@@ -820,7 +840,8 @@ fn decide(rt: &mut WsRuntime, status: Option<&PrStatus>, mode: AutofixMode) -> O
             }
             Some(autofix_prompt(status, mode == AutofixMode::Super))
         }
-        _ => {
+        // Unreachable: `rollup == None` already returned Idle above.
+        Rollup::None => {
             rt.phase = Phase::Idle;
             None
         }
@@ -829,7 +850,8 @@ fn decide(rt: &mut WsRuntime, status: Option<&PrStatus>, mode: AutofixMode) -> O
 
 /// Build the fix prompt (ported verbatim from the old frontend `autofixPrompt`).
 fn autofix_prompt(status: &PrStatus, push: bool) -> String {
-    let failing: Vec<&str> = status.checks.iter().filter(|c| c.bucket == "failure").map(|c| c.name.as_str()).collect();
+    let failing: Vec<&str> =
+        status.checks.iter().filter(|c| c.bucket == CheckBucket::Failure).map(|c| c.name.as_str()).collect();
     let list = if failing.is_empty() { "one or more checks".to_string() } else { failing.join(", ") };
     let base = format!(
         "The CI pipeline for pull request #{} is failing ({}). Investigate and fix it.\n\nSteps:\n1. Inspect the failing checks. Run `gh pr checks` to list them, then read the failing logs — find the run with `gh run list --branch {} --limit 5` and view it with `gh run view <run-id> --log-failed`.\n2. Reproduce the failure locally if you can (run the same lint/test/build command the workflow runs).\n3. Fix the underlying cause in the code. Make the minimal change that makes the check pass.",

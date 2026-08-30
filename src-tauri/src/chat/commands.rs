@@ -116,15 +116,22 @@ pub async fn chat_generate_title(
     Ok(chat.generate_title(&workspace_id, &cwd, text).await)
 }
 
+/// Abort the in-flight turn. Errors (no conversation) propagate to the UI —
+/// a swallowed failure here looks like a stop button that does nothing.
 #[tauri::command]
-pub fn chat_abort(workspace_id: String, chat: State<ChatManager>) {
-    chat.abort(&workspace_id);
+pub fn chat_abort(workspace_id: String, chat: State<ChatManager>) -> Result<(), String> {
+    chat.abort(&workspace_id)
 }
 
-/// Change a session config option (model / reasoning / mode) by id + value.
+/// Change a session config option (model / thinking level / mode) by id + value.
 #[tauri::command]
-pub fn chat_set_config(workspace_id: String, id: String, value: String, chat: State<ChatManager>) {
-    chat.set_config(&workspace_id, id, value);
+pub fn chat_set_config(
+    workspace_id: String,
+    id: String,
+    value: String,
+    chat: State<ChatManager>,
+) -> Result<(), String> {
+    chat.set_config(&workspace_id, id, value)
 }
 
 /// Answer a pending permission request. `option_id` = None cancels/rejects.
@@ -134,8 +141,8 @@ pub fn chat_answer_permission(
     request_id: String,
     option_id: Option<String>,
     chat: State<ChatManager>,
-) {
-    chat.answer_permission(&workspace_id, &request_id, option_id);
+) -> Result<(), String> {
+    chat.answer_permission(&workspace_id, &request_id, option_id)
 }
 
 /// Start a fresh engine session (compact / clear) keeping all prior entries.

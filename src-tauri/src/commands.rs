@@ -194,7 +194,7 @@ pub async fn task_comment(
             }
             "stop" => {
                 let ws = live_workspace()?;
-                chat.abort(&ws.id);
+                chat.abort(&ws.id)?;
             }
             "done" => {
                 tasks.mark_done(&task_id)?;

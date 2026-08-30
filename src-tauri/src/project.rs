@@ -784,7 +784,10 @@ impl Registry {
                     }
                     git::prune_worktrees(&root);
                 } else if e.contains("modified or untracked") {
-                    return Err("uncommitted changes".into());
+                    // Stable error code, not prose: the frontend routes its
+                    // force-delete flow on this prefix (deleteWorkspace.ts
+                    // UNCOMMITTED_CODE) — keep the two in sync.
+                    return Err("uncommitted_changes: the worktree has modified or untracked files".into());
                 } else {
                     return Err(e);
                 }

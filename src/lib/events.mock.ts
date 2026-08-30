@@ -16,6 +16,7 @@ import type {
   ChatPermissionEvent,
   ChatResetEvent,
   ChatTurnEvent,
+  EventPayloads,
   GitHubLoginEvent,
   GitPayload,
   NotifyPayload,
@@ -29,15 +30,22 @@ import type {
 type Handler = (payload: unknown) => void;
 const handlers: Record<string, Set<Handler>> = {};
 
-function on<T>(name: string, cb: (payload: T) => void): Promise<UnlistenFn> {
+function on<K extends keyof EventPayloads>(
+  name: K,
+  cb: (payload: EventPayloads[K]) => void,
+): Promise<UnlistenFn> {
   (handlers[name] ??= new Set()).add(cb as Handler);
   return Promise.resolve(() => {
     handlers[name]?.delete(cb as Handler);
   });
 }
 
-/** Emit a canned event to all current subscribers (used by the mock harness). */
-export function mockEmit(name: string, payload: unknown): void {
+/** Emit a canned event to all current subscribers (used by the mock harness).
+ *  Keyed on `EventPayloads`, so a typo'd name or wrong shape fails tsc. */
+export function mockEmit<K extends keyof EventPayloads>(
+  name: K,
+  payload: EventPayloads[K],
+): void {
   handlers[name]?.forEach((h) => h(payload));
 }
 
@@ -63,61 +71,61 @@ export function listenAll(...subs: Array<Promise<UnlistenFn>>): {
 }
 
 export function onWorkspaceGit(cb: (p: GitPayload) => void) {
-  return on<GitPayload>("workspace:git", cb);
+  return on("workspace:git", cb);
 }
 export function onWorkspacePr(cb: (p: PrPayload) => void) {
-  return on<PrPayload>("workspace:pr", cb);
+  return on("workspace:pr", cb);
 }
 export function onWorkspaceSession(cb: (p: SessionPayload) => void) {
-  return on<SessionPayload>("workspace:session", cb);
+  return on("workspace:session", cb);
 }
 export function onWorkspaceTodos(cb: (p: TodosPayload) => void) {
-  return on<TodosPayload>("workspace:todos", cb);
+  return on("workspace:todos", cb);
 }
 export function onWorkspaceSetup(cb: (p: WorkspaceSetupPayload) => void) {
-  return on<WorkspaceSetupPayload>("workspace:setup", cb);
+  return on("workspace:setup", cb);
 }
 
 export function onGitHubAccounts(cb: (p: AccountsPayload) => void) {
-  return on<AccountsPayload>("github:accounts", cb);
+  return on("github:accounts", cb);
 }
 export function onReviewInbox(cb: (p: ReviewInboxPayload) => void) {
-  return on<ReviewInboxPayload>("github:review_inbox", cb);
+  return on("github:review_inbox", cb);
 }
 export function onGitHubLogin(cb: (p: GitHubLoginEvent) => void) {
-  return on<GitHubLoginEvent>("github:login", cb);
+  return on("github:login", cb);
 }
 
 export function onChatEntry(cb: (p: ChatEntryEvent) => void) {
-  return on<ChatEntryEvent>("chat:entry", cb);
+  return on("chat:entry", cb);
 }
 export function onChatBlock(cb: (p: ChatBlockEvent) => void) {
-  return on<ChatBlockEvent>("chat:block", cb);
+  return on("chat:block", cb);
 }
 export function onChatTurn(cb: (p: ChatTurnEvent) => void) {
-  return on<ChatTurnEvent>("chat:turn", cb);
+  return on("chat:turn", cb);
 }
 export function onChatPermission(cb: (p: ChatPermissionEvent) => void) {
-  return on<ChatPermissionEvent>("chat:permission", cb);
+  return on("chat:permission", cb);
 }
 export function onChatConfig(cb: (p: ChatConfigEvent) => void) {
-  return on<ChatConfigEvent>("chat:config", cb);
+  return on("chat:config", cb);
 }
 export function onChatReset(cb: (p: ChatResetEvent) => void) {
-  return on<ChatResetEvent>("chat:reset", cb);
+  return on("chat:reset", cb);
 }
 export function onChatContext(cb: (p: ChatContextEvent) => void) {
-  return on<ChatContextEvent>("chat:context", cb);
+  return on("chat:context", cb);
 }
 export function onChatCommands(cb: (p: ChatCommandsEvent) => void) {
-  return on<ChatCommandsEvent>("chat:commands", cb);
+  return on("chat:commands", cb);
 }
 
 export function onWorkspaceNotify(cb: (p: NotifyPayload) => void) {
-  return on<NotifyPayload>("workspace:notify", cb);
+  return on("workspace:notify", cb);
 }
 
 /** The "My work" board changed (driven by api.mock's in-memory board). */
 export function onTasksChanged(cb: (s: BoardSnapshot) => void) {
-  return on<BoardSnapshot>("tasks:changed", cb);
+  return on("tasks:changed", cb);
 }

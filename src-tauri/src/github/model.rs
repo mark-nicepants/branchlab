@@ -15,7 +15,6 @@ pub struct AccountView {
     pub login: String,
     pub name: Option<String>,
     pub avatar_url: Option<String>,
-    pub orgs: Vec<String>,
     /// True when the account is authenticated and usable.
     pub active: bool,
     /// Human-readable status detail when not active (e.g. an error message).
@@ -34,11 +33,22 @@ impl From<&Account> for AccountView {
             login: a.login.clone(),
             name: a.name.clone(),
             avatar_url: a.avatar_url.clone(),
-            orgs: a.orgs.clone(),
             active,
             status,
         }
     }
+}
+
+/// Phases of a backend-driven device-flow login — a real enum so the wire
+/// spellings are compiler-checked against the TS `LoginPhase` union.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum LoginPhase {
+    Starting,
+    AwaitingCode,
+    Polling,
+    Success,
+    Failed,
 }
 
 /// A step in a backend-driven `gh auth login --web` flow, pushed to the
@@ -49,8 +59,7 @@ impl From<&Account> for AccountView {
 #[serde(rename_all = "camelCase")]
 pub struct LoginEvent {
     pub login_id: String,
-    /// "starting" | "awaitingCode" | "polling" | "success" | "failed".
-    pub phase: String,
+    pub phase: LoginPhase,
     pub code: Option<String>,
     pub url: Option<String>,
     pub account: Option<AccountView>,
@@ -58,8 +67,8 @@ pub struct LoginEvent {
 }
 
 impl LoginEvent {
-    pub fn phase(login_id: &str, phase: &str) -> Self {
-        Self { login_id: login_id.into(), phase: phase.into(), code: None, url: None, account: None, error: None }
+    pub fn phase(login_id: &str, phase: LoginPhase) -> Self {
+        Self { login_id: login_id.into(), phase, code: None, url: None, account: None, error: None }
     }
 }
 
@@ -86,8 +95,8 @@ pub struct ReviewItem {
     pub author_avatar: Option<String>,
     pub reason: ReviewReason,
     pub head_ref: String,
-    /// CI rollup: "success" | "failure" | "pending" | "none".
-    pub rollup: String,
+    /// CI rollup — same enum (and wire spellings) as `PrStatus.rollup`.
+    pub rollup: crate::git::Rollup,
     pub is_draft: bool,
     pub updated_at: String,
     /// projectId whose bound repo matches this PR, enabling in-app checkout.

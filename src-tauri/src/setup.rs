@@ -40,10 +40,10 @@ const CARD_FLUSH: Duration = Duration::from_millis(400);
 /// `workspace:setup` — coarse lifecycle for the sidebar (`ok=None` while running).
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct SetupEvent<'a> {
-    workspace_id: &'a str,
-    running: bool,
-    ok: Option<bool>,
+pub(crate) struct SetupEvent<'a> {
+    pub(crate) workspace_id: &'a str,
+    pub(crate) running: bool,
+    pub(crate) ok: Option<bool>,
 }
 
 #[derive(Clone)]

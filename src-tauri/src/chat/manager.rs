@@ -34,13 +34,12 @@ pub struct TurnEvent {
     pub status: TurnStatus,
 }
 
-/// The initial payload the frontend loads on mount.
+/// The initial payload the frontend loads on mount. Mirrors the TS
+/// `ChatSnapshot` exactly — don't add fields the frontend doesn't read.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatSnapshot {
-    pub conversation_id: String,
     pub entries: Vec<Entry>,
-    pub head_seq: Seq,
     pub has_more: bool,
     pub config: Vec<ConfigOption>,
     /// Slash commands / skills advertised by the engine. Included here (not just
@@ -167,27 +166,19 @@ impl ChatManager {
         let convs = self.inner.convs.lock().unwrap();
         let db = self.inner.db.lock().unwrap();
         let Some(conv) = db.get_conversation(workspace_id)? else {
-            return Ok(ChatSnapshot {
-                conversation_id: String::new(),
-                entries: Vec::new(),
-                head_seq: 0,
-                has_more: false,
-                config: Vec::new(),
-                commands: Vec::new(),
-            });
+            return Ok(ChatSnapshot { entries: Vec::new(), has_more: false, config: Vec::new(), commands: Vec::new() });
         };
         let entries = match before_seq {
             Some(before) => db.entries_before(&conv.id, before, limit)?,
             None => db.recent_entries(&conv.id, limit)?,
         };
-        let head_seq = db.head_seq(&conv.id)?;
         let has_more = entries
             .first()
             .map(|e| e.seq())
             .is_some_and(|oldest| db.entries_before(&conv.id, oldest, 1).map(|v| !v.is_empty()).unwrap_or(false));
         let (config, commands) =
             convs.get(workspace_id).map(|c| (c.config.clone(), c.commands.clone())).unwrap_or_default();
-        Ok(ChatSnapshot { conversation_id: conv.id, entries, head_seq, has_more, config, commands })
+        Ok(ChatSnapshot { entries, has_more, config, commands })
     }
 
     /// Send a user message. `display` is shown in the UI; `sent` goes to the AI.
@@ -350,29 +341,27 @@ impl ChatManager {
         self.engine_request(workspace_id, cwd, |reply| EngineCommand::OneShot { prompt, reply }).await
     }
 
-    pub fn abort(&self, workspace_id: &str) {
+    pub fn abort(&self, workspace_id: &str) -> Result<(), String> {
         let mut convs = self.inner.convs.lock().unwrap();
-        if let Some(conv) = convs.get_mut(workspace_id) {
-            if let Some(engine) = &conv.engine {
-                engine.send(EngineCommand::Cancel);
-            }
-            // Resolve pending permissions so the ACP responders unblock.
-            for (_id, tx) in conv.pending_perms.drain() {
-                let _ = tx.send(None);
-            }
+        let conv = convs.get_mut(workspace_id).ok_or("no active conversation for this workspace")?;
+        if let Some(engine) = &conv.engine {
+            engine.send(EngineCommand::Cancel);
         }
+        // Resolve pending permissions so the ACP responders unblock.
+        for (_id, tx) in conv.pending_perms.drain() {
+            let _ = tx.send(None);
+        }
+        Ok(())
     }
 
-    pub fn set_config(&self, workspace_id: &str, id: String, value: String) {
+    pub fn set_config(&self, workspace_id: &str, id: String, value: String) -> Result<(), String> {
         // Apply optimistically to our own config snapshot and echo it to the UI
         // immediately. opencode does not reliably emit a config_option_update in
         // response to set_config (especially outside a turn), so relying on it
         // left the selector snapping back to the old value (the §3.4 FAIL).
         let (config_snapshot, conv_id, change) = {
             let mut convs = self.inner.convs.lock().unwrap();
-            let Some(conv) = convs.get_mut(workspace_id) else {
-                return;
-            };
+            let conv = convs.get_mut(workspace_id).ok_or("no active conversation for this workspace")?;
             let mut change = None;
             for opt in conv.config.iter_mut() {
                 if opt.id == id {
@@ -420,15 +409,22 @@ impl ChatManager {
         if let Some((opt_name, choice_name)) = change {
             self.inner.push_system(workspace_id, &conv_id, SystemKind::Info, format!("{opt_name} → {choice_name}"));
         }
+        Ok(())
     }
 
-    pub fn answer_permission(&self, workspace_id: &str, request_id: &str, option_id: Option<String>) {
+    pub fn answer_permission(
+        &self,
+        workspace_id: &str,
+        request_id: &str,
+        option_id: Option<String>,
+    ) -> Result<(), String> {
         let mut convs = self.inner.convs.lock().unwrap();
-        if let Some(conv) = convs.get_mut(workspace_id) {
-            if let Some(tx) = conv.pending_perms.remove(request_id) {
-                let _ = tx.send(option_id);
-            }
-        }
+        let conv = convs.get_mut(workspace_id).ok_or("no active conversation for this workspace")?;
+        // Already resolved (e.g. by an abort draining the pending set) — the
+        // answer had no effect, and the caller should know.
+        let tx = conv.pending_perms.remove(request_id).ok_or("permission request is no longer pending")?;
+        let _ = tx.send(option_id);
+        Ok(())
     }
 
     /// Start a fresh engine session for a workspace, keeping all prior entries.
@@ -1006,7 +1002,6 @@ fn todos_from_block(b: &Block) -> Option<Vec<events::Todo>> {
         .map(|v| events::Todo {
             content: v.get("content").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
             status: v.get("status").and_then(|x| x.as_str()).unwrap_or("pending").to_string(),
-            priority: v.get("priority").and_then(|x| x.as_str()).unwrap_or("medium").to_string(),
         })
         .collect();
     Some(todos)
@@ -1022,13 +1017,6 @@ fn map_plan(p: &acp::Plan) -> Vec<events::Todo> {
                 acp::PlanEntryStatus::InProgress => "in_progress",
                 acp::PlanEntryStatus::Completed => "completed",
                 _ => "pending",
-            }
-            .to_string(),
-            priority: match e.priority {
-                acp::PlanEntryPriority::High => "high",
-                acp::PlanEntryPriority::Medium => "medium",
-                acp::PlanEntryPriority::Low => "low",
-                _ => "medium",
             }
             .to_string(),
         })

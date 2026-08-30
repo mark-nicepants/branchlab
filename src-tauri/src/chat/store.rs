@@ -194,17 +194,6 @@ impl ChatDb {
             .map_err(|e| e.to_string())
     }
 
-    /// The highest `seq` in a conversation (its head), or 0 if empty.
-    pub fn head_seq(&self, conversation_id: &str) -> Result<i64, String> {
-        self.conn
-            .query_row(
-                "SELECT COALESCE(MAX(seq), 0) FROM entries WHERE conversation_id = ?1",
-                params![conversation_id],
-                |r| r.get(0),
-            )
-            .map_err(|e| e.to_string())
-    }
-
     /// The newest `limit` entries, returned ascending by `seq` (chat order).
     pub fn recent_entries(&self, conversation_id: &str, limit: i64) -> Result<Vec<Entry>, String> {
         self.query_entries(
@@ -355,7 +344,6 @@ mod tests {
         // seq comes from the column, not the stale in-memory placeholder
         assert_eq!(entries[0].seq(), s1);
         assert_eq!(entries[2].seq(), s3);
-        assert_eq!(db.head_seq("conv-1").unwrap(), s3);
     }
 
     #[test]

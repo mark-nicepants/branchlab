@@ -27,14 +27,22 @@ export interface Workspace {
   base_branch: string | null;
   /** Prompt sent to the AI once the workspace server is ready. */
   init_prompt: string | null;
-  /** PR pipeline autofix mode (backend-driven, persisted in the registry).
-   *  Optional only so the browser mock's literals stay terse — the real
-   *  backend always sends it; treat an absent value as "off". */
-  autofix_mode?: AutofixMode;
-  /** Set when this workspace was checked out from an existing PR. */
-  pr_number?: number | null;
+  /** PR pipeline autofix mode (backend-driven, persisted in the registry). */
+  autofix_mode: AutofixMode;
+  /** Last selected model, re-applied to new engine sessions. Persistence
+   *  echo — the UI reads the live value from `chat:config` instead. */
+  model: string | null;
+  /** Preferred thinking level (see `model`) — same persistence echo. */
+  effort: string | null;
+  /** Set when this workspace was checked out from an existing PR (the Rust
+   *  registry always serializes it — null for ordinary workspaces). */
+  pr_number: number | null;
   /** A fork PR — read-only (no push/autofix back to the fork). */
-  pr_is_fork?: boolean;
+  pr_is_fork: boolean;
+  /** Last polled PR snapshot (restart seed). The UI's race-free seed is
+   *  `getSidebarSnapshot`, which folds this in backend-side — read that,
+   *  not this field. */
+  pr: PrStatus | null;
   /** Background provisioning state (creation returns before setup finishes). */
   setup: SetupState;
 }
@@ -345,16 +353,18 @@ export interface ConfigFile {
   exists: boolean;
 }
 
-// ── OpenCode HTTP API types (subset we use; from the OpenAPI 3.1 spec) ──
+// ── Engine status types (the supplemental `opencode serve` HTTP surface,
+//    plus the ACP-derived todo list) ──
 
-/** One OpenCode todo item from /session/{id}/todo. */
+/** One todo item, derived from the agent's `todowrite` tool call / ACP plan
+ *  and pushed over the `workspace:todos` event (mirrors chat::events::Todo). */
 export interface Todo {
   content: string;
   /** "pending" | "in_progress" | "completed" | "cancelled" */
   status: string;
 }
 
-/** One MCP server's runtime status (from /mcp). */
+/** One MCP server's runtime status (from the supplemental serve's /mcp). */
 export interface McpStatus {
   name: string;
   /** "connected" | "failed" | "disabled" | other server-reported state. */
@@ -362,7 +372,7 @@ export interface McpStatus {
   error?: string;
 }
 
-/** One LSP server's runtime status (from /lsp). */
+/** One LSP server's runtime status (from the supplemental serve's /lsp). */
 export interface LspStatus {
   id: string;
   status?: string;
@@ -386,7 +396,9 @@ type TurnStatus =
   | "cancelled"
   | "failed";
 
-type TurnOrigin =
+/** Who caused a turn (mirrors chat::model::TurnOrigin). Exported so api.ts /
+ *  useChat type the `chatSend` origin instead of accepting any string. */
+export type TurnOrigin =
   | "user"
   | "slash"
   | "lifecycle"
@@ -458,7 +470,7 @@ export interface ChatAttachment {
   filename: string | null;
 }
 
-interface UsageInfo {
+export interface UsageInfo {
   input?: number | null;
   output?: number | null;
   reasoning?: number | null;
@@ -747,4 +759,30 @@ export interface NotifyPayload {
   workspaceId: string;
   kind: "turn_done" | "awaiting_input" | "task_review";
   taskTitle?: string | null;
+}
+
+// ── Event name → payload map ──
+
+/** Every backend→frontend Tauri event and its payload type. `events.ts` and
+ *  `events.mock.ts` (incl. `mockEmit`) key on this map, so a typo'd event
+ *  name or a wrong payload shape fails `tsc` instead of silently no-oping. */
+export interface EventPayloads {
+  "workspace:git": GitPayload;
+  "workspace:pr": PrPayload;
+  "workspace:session": SessionPayload;
+  "workspace:todos": TodosPayload;
+  "workspace:notify": NotifyPayload;
+  "workspace:setup": WorkspaceSetupPayload;
+  "github:accounts": AccountsPayload;
+  "github:review_inbox": ReviewInboxPayload;
+  "github:login": GitHubLoginEvent;
+  "chat:entry": ChatEntryEvent;
+  "chat:block": ChatBlockEvent;
+  "chat:turn": ChatTurnEvent;
+  "chat:permission": ChatPermissionEvent;
+  "chat:config": ChatConfigEvent;
+  "chat:reset": ChatResetEvent;
+  "chat:context": ChatContextEvent;
+  "chat:commands": ChatCommandsEvent;
+  "tasks:changed": BoardSnapshot;
 }

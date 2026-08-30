@@ -4,11 +4,11 @@ import { toast } from "sonner";
 import { removeWorkspace } from "./api";
 import type { UnlinkedTask } from "./types";
 
-/** The backend's safe-delete refusal message. Message-sniffing until a
- *  structured error code exists — MUST stay in sync with the string returned
- *  by `remove_workspace` in `src-tauri/src/project.rs` (grep "uncommitted
- *  changes" on both sides). */
-export const UNCOMMITTED_MARKER = "uncommitted changes";
+/** Stable error-code prefix the backend's safe-delete refusal starts with
+ *  (`"uncommitted_changes: …"`). A code, not prose, so rewording the message
+ *  can't break the routing — mirrors `remove_workspace` in
+ *  `src-tauri/src/project.rs`; keep the two in sync. */
+export const UNCOMMITTED_CODE = "uncommitted_changes";
 
 export async function deleteWorkspaceWithConfirm(
   id: string,
@@ -17,7 +17,7 @@ export async function deleteWorkspaceWithConfirm(
   try {
     onDone(await removeWorkspace(id, false));
   } catch (e) {
-    const uncommitted = String(e).includes(UNCOMMITTED_MARKER);
+    const uncommitted = String(e).startsWith(UNCOMMITTED_CODE);
     toast.error(
       uncommitted
         ? "Workspace has uncommitted changes"

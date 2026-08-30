@@ -2,6 +2,8 @@ mod bridge;
 mod chat;
 mod commands;
 mod config;
+#[cfg(test)]
+mod contract_fixtures;
 mod engine;
 mod env;
 mod git;

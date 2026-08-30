@@ -17,6 +17,7 @@ import type {
   ChatPermissionEvent,
   ChatResetEvent,
   ChatTurnEvent,
+  EventPayloads,
   GitHubLoginEvent,
   GitPayload,
   NotifyPayload,
@@ -27,9 +28,13 @@ import type {
   WorkspaceSetupPayload,
 } from "./types";
 
-/** Subscribe to a backend event; resolves to an unsubscribe function. */
-function on<T>(name: string, cb: (payload: T) => void): Promise<UnlistenFn> {
-  return listen<T>(name, (e) => cb(e.payload));
+/** Subscribe to a backend event; resolves to an unsubscribe function. Keyed
+ *  on `EventPayloads`, so name and payload type can't drift apart. */
+function on<K extends keyof EventPayloads>(
+  name: K,
+  cb: (payload: EventPayloads[K]) => void,
+): Promise<UnlistenFn> {
+  return listen<EventPayloads[K]>(name, (e) => cb(e.payload));
 }
 
 /** Bundle several subscriptions: `dispose()` unsubscribes everything (even
@@ -58,94 +63,94 @@ export function listenAll(...subs: Array<Promise<UnlistenFn>>): {
 
 /** Git state (diff stat for all workspaces; changes for the active one). */
 export function onWorkspaceGit(cb: (p: GitPayload) => void) {
-  return on<GitPayload>("workspace:git", cb);
+  return on("workspace:git", cb);
 }
 
 /** PR pipeline + autofix state for a workspace. */
 export function onWorkspacePr(cb: (p: PrPayload) => void) {
-  return on<PrPayload>("workspace:pr", cb);
+  return on("workspace:pr", cb);
 }
 
 /** Coarse session state (working/idle/awaiting-input/error). */
 export function onWorkspaceSession(cb: (p: SessionPayload) => void) {
-  return on<SessionPayload>("workspace:session", cb);
+  return on("workspace:session", cb);
 }
 
 /** The active workspace's todo list. */
 export function onWorkspaceTodos(cb: (p: TodosPayload) => void) {
-  return on<TodosPayload>("workspace:todos", cb);
+  return on("workspace:todos", cb);
 }
 
 /** Attention taps: turn done, awaiting input, task ready for review. */
 export function onWorkspaceNotify(cb: (p: NotifyPayload) => void) {
-  return on<NotifyPayload>("workspace:notify", cb);
+  return on("workspace:notify", cb);
 }
 
 /** Workspace provisioning progress (setup script running / finished / failed). */
 export function onWorkspaceSetup(cb: (p: WorkspaceSetupPayload) => void) {
-  return on<WorkspaceSetupPayload>("workspace:setup", cb);
+  return on("workspace:setup", cb);
 }
 
 // ── GitHub subsystem (Rust `github` module) ──
 
 /** The connected-account list changed (add/remove/re-auth). */
 export function onGitHubAccounts(cb: (p: AccountsPayload) => void) {
-  return on<AccountsPayload>("github:accounts", cb);
+  return on("github:accounts", cb);
 }
 
 /** A fresh review-inbox snapshot (PRs awaiting your review). */
 export function onReviewInbox(cb: (p: ReviewInboxPayload) => void) {
-  return on<ReviewInboxPayload>("github:review_inbox", cb);
+  return on("github:review_inbox", cb);
 }
 
 /** A device-flow login lifecycle step (code/url, success, or failure). */
 export function onGitHubLogin(cb: (p: GitHubLoginEvent) => void) {
-  return on<GitHubLoginEvent>("github:login", cb);
+  return on("github:login", cb);
 }
 
 // ── Chat deltas (Rust `chat` module) ──
 
 /** A new/updated timeline entry (user message, assistant turn, or system notice). */
 export function onChatEntry(cb: (p: ChatEntryEvent) => void) {
-  return on<ChatEntryEvent>("chat:entry", cb);
+  return on("chat:entry", cb);
 }
 
 /** A block added/updated within an assistant turn (streaming). */
 export function onChatBlock(cb: (p: ChatBlockEvent) => void) {
-  return on<ChatBlockEvent>("chat:block", cb);
+  return on("chat:block", cb);
 }
 
 /** An assistant turn's state-machine transition (incl. terminal + collapse). */
 export function onChatTurn(cb: (p: ChatTurnEvent) => void) {
-  return on<ChatTurnEvent>("chat:turn", cb);
+  return on("chat:turn", cb);
 }
 
 /** The agent is requesting permission for a tool call. */
 export function onChatPermission(cb: (p: ChatPermissionEvent) => void) {
-  return on<ChatPermissionEvent>("chat:permission", cb);
+  return on("chat:permission", cb);
 }
 
 /** Advertised session config options (model / reasoning / mode). */
 export function onChatConfig(cb: (p: ChatConfigEvent) => void) {
-  return on<ChatConfigEvent>("chat:config", cb);
+  return on("chat:config", cb);
 }
 
 /** The conversation was reset (new engine session); refetch the snapshot. */
 export function onChatReset(cb: (p: ChatResetEvent) => void) {
-  return on<ChatResetEvent>("chat:reset", cb);
+  return on("chat:reset", cb);
 }
 
 /** Context-window usage for the active turn. */
 export function onChatContext(cb: (p: ChatContextEvent) => void) {
-  return on<ChatContextEvent>("chat:context", cb);
+  return on("chat:context", cb);
 }
 
 /** Available slash commands advertised by the agent. */
 export function onChatCommands(cb: (p: ChatCommandsEvent) => void) {
-  return on<ChatCommandsEvent>("chat:commands", cb);
+  return on("chat:commands", cb);
 }
 
 /** The "My work" board changed (any mutation, incl. backend auto-moves). */
 export function onTasksChanged(cb: (s: BoardSnapshot) => void) {
-  return on<BoardSnapshot>("tasks:changed", cb);
+  return on("tasks:changed", cb);
 }

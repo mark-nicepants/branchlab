@@ -6,6 +6,7 @@ import { mockEmit } from "./events.mock";
 import type {
   Account,
   ActivityEntry,
+  Block,
   BoardColumn,
   BoardSnapshot,
   Task,
@@ -14,6 +15,7 @@ import type {
   IssueSummary,
   ChatAttachment,
   ChatSnapshot,
+  ChatTurnEvent,
   ConfigFile,
   ConfigOption,
   DiffStat,
@@ -23,6 +25,8 @@ import type {
   FileContent,
   GeneratedSetup,
   GeneratedTitle,
+  GitHubLoginEvent,
+  LoginPhase,
   PipelinePhase,
   PrResult,
   PrStatus,
@@ -37,6 +41,29 @@ import type {
   Todo,
   Workspace,
 } from "./types";
+
+/** A mock Workspace with the boring required fields defaulted — literals only
+ *  spell out what a scenario actually varies (the backend always sends the
+ *  full shape, so the type has no optional escape hatches). */
+function ws(
+  w: Pick<Workspace, "id" | "project_id" | "kind" | "path"> &
+    Partial<Workspace>,
+): Workspace {
+  return {
+    branch: null,
+    name: null,
+    base_branch: null,
+    init_prompt: null,
+    autofix_mode: "off",
+    model: null,
+    effort: null,
+    pr_number: null,
+    pr_is_fork: false,
+    pr: null,
+    setup: "ready",
+    ...w,
+  };
+}
 
 let projects: ProjectView[] = [
   {
@@ -58,18 +85,14 @@ let projects: ProjectView[] = [
     },
     estimate_unit: null,
     workspaces: [
-      {
+      ws({
         id: "p1-base",
         project_id: "p1",
         kind: "Base",
         path: "/Users/me/code/branchlab",
         branch: "main",
-        name: null,
-        base_branch: null,
-        init_prompt: null,
-        setup: "ready",
-      },
-      {
+      }),
+      ws({
         id: "p1-ws1",
         project_id: "p1",
         kind: "Worktree",
@@ -77,10 +100,8 @@ let projects: ProjectView[] = [
         branch: "bubbly-cheetah",
         name: "Continuing from previous prompt and making it way too long to fit",
         base_branch: "main",
-        init_prompt: null,
-        setup: "ready",
-      },
-      {
+      }),
+      ws({
         id: "p1-ws2",
         project_id: "p1",
         kind: "Worktree",
@@ -88,10 +109,8 @@ let projects: ProjectView[] = [
         branch: "nimble-otter",
         name: "Fix project settings popup modal regression",
         base_branch: "main",
-        init_prompt: null,
-        setup: "ready",
-      },
-      {
+      }),
+      ws({
         id: "p1-ws3",
         project_id: "p1",
         kind: "Worktree",
@@ -99,11 +118,10 @@ let projects: ProjectView[] = [
         branch: "feat/messages-v2",
         name: "Create a new conversation",
         base_branch: "main",
-        init_prompt: null,
         // Setup demo: this workspace is still provisioning (see chatOpen).
         setup: "provisioning",
-      },
-      {
+      }),
+      ws({
         id: "p1-ws4",
         project_id: "p1",
         kind: "Worktree",
@@ -111,9 +129,7 @@ let projects: ProjectView[] = [
         branch: "spike/graphql-cache",
         name: "Abandoned spike",
         base_branch: "main",
-        init_prompt: null,
-        setup: "ready",
-      },
+      }),
     ],
   },
   {
@@ -134,17 +150,14 @@ let projects: ProjectView[] = [
     // becomes the t-shirt size select while the board default stays points.
     estimate_unit: "tshirt",
     workspaces: [
-      {
+      ws({
         id: "p2-base",
         project_id: "p2",
         kind: "Base",
         path: "/Users/me/code/super-long-project-name",
         branch: "main",
         name: "This base workspace name is also extremely long and should truncate cleanly without pushing buttons away",
-        base_branch: null,
-        init_prompt: null,
-        setup: "ready",
-      },
+      }),
     ],
   },
 ];
@@ -178,17 +191,13 @@ export function addProject(path: string): Promise<ProjectView> {
     run: { setup_script: null, teardown_script: null },
     estimate_unit: null,
     workspaces: [
-      {
+      ws({
         id: `p${Date.now()}-base`,
         project_id: `p${Date.now()}`,
         kind: "Base",
         path,
         branch: "main",
-        name: null,
-        base_branch: null,
-        init_prompt: null,
-        setup: "ready",
-      },
+      }),
     ],
   };
   projects = [...projects, p];
@@ -307,7 +316,7 @@ export function createWorkspaceFromPr(
 ): Promise<Workspace> {
   const project = projects.find((p) => p.id === projectId);
   const branch = `pr-${prNumber}`;
-  const ws: Workspace = {
+  const workspace = ws({
     id: `${projectId}-${branch}`,
     project_id: projectId,
     kind: "Worktree",
@@ -315,12 +324,10 @@ export function createWorkspaceFromPr(
     branch,
     name: `PR #${prNumber}`,
     base_branch: project?.default_branch ?? "main",
-    init_prompt: null,
     pr_number: prNumber,
-    setup: "ready",
-  };
-  if (project) project.workspaces.push(ws);
-  return Promise.resolve(ws);
+  });
+  if (project) project.workspaces.push(workspace);
+  return Promise.resolve(workspace);
 }
 
 export function listProjectPrs(_projectId: string): Promise<PrSummary[]> {
@@ -397,8 +404,8 @@ export function beginAccountLogin(host?: string): Promise<string> {
   // Script the backend-driven device flow so the dialog renders every step.
   const step = (
     ms: number,
-    phase: string,
-    extra: Record<string, unknown> = {},
+    phase: LoginPhase,
+    extra: Partial<GitHubLoginEvent> = {},
   ) =>
     setTimeout(() => {
       mockEmit("github:login", {
@@ -464,21 +471,19 @@ export function createWorkspace(
 ): Promise<Workspace> {
   const project = projects.find((p) => p.id === projectId);
   const branch = `feature-${Date.now()}`;
-  const ws: Workspace = {
+  const workspace = ws({
     id: `${projectId}-${branch}`,
     project_id: projectId,
     kind: "Worktree",
     path: `/mock/${branch}`,
     branch,
-    name: null,
     base_branch: base ?? project?.default_branch ?? "main",
     init_prompt: initPrompt ?? null,
-    setup: "ready",
-  };
+  });
   if (project) {
-    project.workspaces.push(ws);
+    project.workspaces.push(workspace);
   }
-  return Promise.resolve(ws);
+  return Promise.resolve(workspace);
 }
 
 let quickChatSeq = 0;
@@ -487,19 +492,15 @@ let quickChats: Workspace[] = [];
 export function createQuickChat(initPrompt?: string): Promise<Workspace> {
   quickChatSeq += 1;
   const id = `quick-${quickChatSeq}`;
-  const ws: Workspace = {
+  const workspace = ws({
     id,
     project_id: "__quick__",
     kind: "QuickChat",
     path: `/mock/quick-chats/${id}`,
-    branch: null,
-    name: null,
-    base_branch: null,
     init_prompt: initPrompt ?? null,
-    setup: "ready",
-  };
-  quickChats.push(ws);
-  return Promise.resolve(ws);
+  });
+  quickChats.push(workspace);
+  return Promise.resolve(workspace);
 }
 
 export function updateProject(
@@ -591,7 +592,17 @@ export function listProjectIssues(
 
 export function removeWorkspace(
   workspaceId: string,
+  force: boolean,
 ): Promise<UnlinkedTask | null> {
+  // Mirror the backend's safe-delete refusal (uncommitted changes → stable
+  // "uncommitted_changes:" code) so the force-delete toast flow is exercisable
+  // in the browser harness: any workspace with a non-empty diff stat refuses.
+  const dirty = diffStats[workspaceId]?.files ?? 0;
+  if (!force && dirty > 0) {
+    return Promise.reject(
+      `uncommitted_changes: the worktree has modified or untracked files`,
+    );
+  }
   for (const p of projects) {
     p.workspaces = p.workspaces.filter((w) => w.id !== workspaceId);
   }
@@ -932,13 +943,13 @@ export function chatSend(args: {
     },
   });
 
-  const block = (block: unknown) =>
+  const block = (block: Block) =>
     mockEmit("chat:block", {
       workspaceId: ws,
       entrySeq: turnSeq,
       block,
     });
-  const turn = (status: string, headline: string) =>
+  const turn = (status: ChatTurnEvent["status"], headline: string) =>
     mockEmit("chat:turn", {
       workspaceId: ws,
       entrySeq: turnSeq,
@@ -1235,16 +1246,16 @@ export function setActiveWorkspace(workspaceId: string | null): Promise<void> {
     ],
   });
   // …and, for a worktree, its PR pipeline (so the bar renders on open).
-  const ws = projects
+  const active = projects
     .flatMap((p) => p.workspaces)
     .find((w) => w.id === workspaceId);
-  if (ws?.kind === "Worktree") {
+  if (active?.kind === "Worktree") {
     mockEmit("workspace:pr", {
       workspaceId,
       status: mockFailingPr(),
       phase: "failing",
       attempts: 0,
-      mode: ws.autofix_mode ?? "off",
+      mode: active.autofix_mode,
       error: null,
     });
   }

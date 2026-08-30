@@ -107,15 +107,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings → General has a "Check now" button for updates, with the time of
   the last check shown next to it. Manual checks always report their result —
   including "You're on the latest version".
-
-### Added
-
 - Finished turns show what they cost: the per-turn token usage the engine
   reports (input, output, reasoning, cache) now reaches the transcript
   footer that was built for it.
 
 ### Fixed
 
+- Streamed text and reasoning segments no longer overwrite each other in a
+  live turn: every block now reaches the transcript under its own id, so a
+  turn with several thinking/text passages shows all of them while streaming
+  (reloading already showed them correctly).
+- Stopping a turn, switching the model or a session setting, and answering a
+  permission request now show an error toast when the backend can't do it,
+  instead of silently doing nothing.
 - A crash or power loss mid-write can no longer wipe your projects or task
   board: the registry and board files are written atomically, and a corrupt
   file is set aside as `.bad` (and reported in the log) instead of being

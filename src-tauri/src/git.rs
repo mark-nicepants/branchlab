@@ -369,13 +369,36 @@ pub fn push_branch(repo: &str, remote: &str, branch: &str) -> Result<String, Str
     Ok(out)
 }
 
+/// Coarse CI-check bucket the UI colors by. A real enum (not a `String`) so a
+/// Rust-side change to the wire spelling is a compile error against the TS
+/// union (`PrCheck["bucket"]` in `src/lib/types.ts`).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CheckBucket {
+    Success,
+    Failure,
+    Pending,
+    Skipped,
+}
+
+/// Rollup over a PR's checks — mirrors the TS `PrStatus["rollup"]` / `CiRollup`
+/// union ("success" | "failure" | "pending" | "none").
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Rollup {
+    Success,
+    Failure,
+    Pending,
+    None,
+}
+
 /// One CI check on a pull request, normalized from `gh`'s `statusCheckRollup`
 /// (which mixes GitHub Actions `CheckRun`s and legacy `StatusContext`s).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PrCheck {
     pub name: String,
-    /// Coarse bucket the UI colors by: "success" | "failure" | "pending" | "skipped".
-    pub bucket: String,
+    /// Coarse bucket the UI colors by.
+    pub bucket: CheckBucket,
     /// Raw upstream state/conclusion, for display on hover.
     pub state: String,
     /// Link to the check's details (logs), when provided.
@@ -396,18 +419,18 @@ pub struct PrStatus {
     /// Head commit SHA — used to dedupe autofix triggers per commit.
     pub head_sha: String,
     pub checks: Vec<PrCheck>,
-    /// Rollup over `checks`: "success" | "failure" | "pending" | "none".
-    pub rollup: String,
+    /// Rollup over `checks`.
+    pub rollup: Rollup,
 }
 
 /// Map a raw CheckRun conclusion / StatusContext state to our coarse bucket.
-fn check_bucket(raw: &str) -> &'static str {
+fn check_bucket(raw: &str) -> CheckBucket {
     match raw.to_ascii_uppercase().as_str() {
-        "SUCCESS" | "NEUTRAL" => "success",
-        "SKIPPED" => "skipped",
-        "FAILURE" | "TIMED_OUT" | "CANCELLED" | "ACTION_REQUIRED" | "STARTUP_FAILURE" | "ERROR" => "failure",
+        "SUCCESS" | "NEUTRAL" => CheckBucket::Success,
+        "SKIPPED" => CheckBucket::Skipped,
+        "FAILURE" | "TIMED_OUT" | "CANCELLED" | "ACTION_REQUIRED" | "STARTUP_FAILURE" | "ERROR" => CheckBucket::Failure,
         // QUEUED / IN_PROGRESS / PENDING / WAITING / REQUESTED / EXPECTED / "" …
-        _ => "pending",
+        _ => CheckBucket::Pending,
     }
 }
 
@@ -415,7 +438,7 @@ fn check_bucket(raw: &str) -> &'static str {
 /// coarse rollup. Shared by the legacy `gh` path and the GraphQL API path — the
 /// context objects have the same shape in both (the GraphQL
 /// `StatusCheckRollupContext` union: `CheckRun` | `StatusContext`).
-pub fn parse_rollup(contexts: &[serde_json::Value]) -> (Vec<PrCheck>, String) {
+pub fn parse_rollup(contexts: &[serde_json::Value]) -> (Vec<PrCheck>, Rollup) {
     let mut checks = Vec::new();
     for c in contexts {
         // CheckRun (GitHub Actions) vs StatusContext (legacy commit status).
@@ -440,19 +463,18 @@ pub fn parse_rollup(contexts: &[serde_json::Value]) -> (Vec<PrCheck>, String) {
                 c.get("workflowName").and_then(|x| x.as_str()).map(str::to_string),
             )
         };
-        checks.push(PrCheck { name, bucket: check_bucket(&raw_state).to_string(), state: raw_state, url, workflow });
+        checks.push(PrCheck { name, bucket: check_bucket(&raw_state), state: raw_state, url, workflow });
     }
 
     let rollup = if checks.is_empty() {
-        "none"
-    } else if checks.iter().any(|c| c.bucket == "pending") {
-        "pending"
-    } else if checks.iter().any(|c| c.bucket == "failure") {
-        "failure"
+        Rollup::None
+    } else if checks.iter().any(|c| c.bucket == CheckBucket::Pending) {
+        Rollup::Pending
+    } else if checks.iter().any(|c| c.bucket == CheckBucket::Failure) {
+        Rollup::Failure
     } else {
-        "success"
-    }
-    .to_string();
+        Rollup::Success
+    };
 
     (checks, rollup)
 }

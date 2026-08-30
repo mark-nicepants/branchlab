@@ -28,7 +28,7 @@ use crate::github::account::{
     api_base_for, match_account, parse_remote, Account, AccountStatus, AccountStore, MatchError,
 };
 use crate::github::client::GithubClient;
-use crate::github::model::{AccountView, LoginEvent, ReviewItem};
+use crate::github::model::{AccountView, LoginEvent, LoginPhase, ReviewItem};
 use crate::project::Registry;
 use crate::util::now_ms;
 use tauri::Manager;
@@ -470,7 +470,7 @@ impl GithubManager {
 
     fn run_device_login(&self, host: &str, login_id: &str, cancel: Arc<AtomicBool>) {
         let app = &self.inner.app;
-        events::emit_login(app, &LoginEvent::phase(login_id, "starting"));
+        events::emit_login(app, &LoginEvent::phase(login_id, LoginPhase::Starting));
 
         let temp = self.inner.store.config_dir_for(&format!("pending-{login_id}"));
         Self::ensure_dir_0700(&temp);
@@ -485,7 +485,7 @@ impl GithubManager {
             Ok(c) => c,
             Err(e) => {
                 let _ = std::fs::remove_dir_all(&temp);
-                let mut ev = LoginEvent::phase(login_id, "failed");
+                let mut ev = LoginEvent::phase(login_id, LoginPhase::Failed);
                 ev.error = Some(format!("gh failed to run (is it installed?): {e}"));
                 events::emit_login(app, &ev);
                 return;
@@ -526,7 +526,7 @@ impl GithubManager {
                 Ok(None) => std::thread::sleep(std::time::Duration::from_millis(200)),
                 Err(e) => {
                     let _ = std::fs::remove_dir_all(&temp);
-                    let mut ev = LoginEvent::phase(login_id, "failed");
+                    let mut ev = LoginEvent::phase(login_id, LoginPhase::Failed);
                     ev.error = Some(format!("gh did not complete: {e}"));
                     events::emit_login(app, &ev);
                     return;
@@ -538,7 +538,7 @@ impl GithubManager {
 
         if !status.success() {
             let _ = std::fs::remove_dir_all(&temp);
-            let mut ev = LoginEvent::phase(login_id, "failed");
+            let mut ev = LoginEvent::phase(login_id, LoginPhase::Failed);
             let tail = err_buf.lock().unwrap().lines().rev().take(3).collect::<Vec<_>>().join(" ");
             ev.error = Some(if tail.is_empty() { "GitHub sign-in failed".into() } else { tail });
             events::emit_login(app, &ev);
@@ -547,13 +547,13 @@ impl GithubManager {
 
         match tauri::async_runtime::block_on(self.finalize_account(host, &temp)) {
             Ok(view) => {
-                let mut ev = LoginEvent::phase(login_id, "success");
+                let mut ev = LoginEvent::phase(login_id, LoginPhase::Success);
                 ev.account = Some(view);
                 events::emit_login(app, &ev);
             }
             Err(e) => {
                 let _ = std::fs::remove_dir_all(&temp);
-                let mut ev = LoginEvent::phase(login_id, "failed");
+                let mut ev = LoginEvent::phase(login_id, LoginPhase::Failed);
                 ev.error = Some(e);
                 events::emit_login(app, &ev);
             }
@@ -584,14 +584,14 @@ fn spawn_login_reader(
             }
             if !seen {
                 if let Some(code) = login::extract_device_code(&line) {
-                    let mut ev = LoginEvent::phase(&login_id, "awaitingCode");
+                    let mut ev = LoginEvent::phase(&login_id, LoginPhase::AwaitingCode);
                     ev.code = Some(code);
                     ev.url = Some(url.clone());
                     events::emit_login(&app, &ev);
                     if let Some(si) = stdin.as_mut() {
                         let _ = si.write_all(b"\n");
                         let _ = si.flush();
-                        events::emit_login(&app, &LoginEvent::phase(&login_id, "polling"));
+                        events::emit_login(&app, &LoginEvent::phase(&login_id, LoginPhase::Polling));
                     }
                     seen = true;
                 }

@@ -142,16 +142,35 @@ pub struct ToolBlock {
 }
 
 /// One rendered unit inside an assistant turn. `type` discriminates on the wire.
+///
+/// `rename_all_fields` because enum-level `rename_all` only renames the variant
+/// TAGS: without it the struct-variant fields went out as `block_id`, silently
+/// breaking the TS `blockId` contract (the frontend's upsert key) — caught by
+/// the contract fixtures. The aliases keep pre-fix chat.db rows loadable.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum Block {
-    Text { block_id: String, text: String },
-    Reasoning { block_id: String, text: String },
+    Text {
+        #[serde(alias = "block_id")]
+        block_id: String,
+        text: String,
+    },
+    Reasoning {
+        #[serde(alias = "block_id")]
+        block_id: String,
+        text: String,
+    },
     // Boxed: ToolBlock is much larger than the other variants (clippy
     // large_enum_variant). Box<T> serializes transparently, so the wire/JSON
     // shape the frontend sees is unchanged.
     Tool(Box<ToolBlock>),
-    File { block_id: String, name: Option<String>, mime: Option<String>, url: String },
+    File {
+        #[serde(alias = "block_id")]
+        block_id: String,
+        name: Option<String>,
+        mime: Option<String>,
+        url: String,
+    },
 }
 
 /// Deterministic, zero-token "what the AI did" summary for a finished turn.
@@ -531,6 +550,17 @@ mod tests {
             Entry::Assistant(a) => assert_eq!(a.usage, None),
             _ => panic!("expected assistant"),
         }
+    }
+
+    #[test]
+    fn block_struct_variant_fields_are_camel_case_with_legacy_alias() {
+        let b = Block::Text { block_id: "b1".into(), text: "hi".into() };
+        let v = serde_json::to_value(&b).unwrap();
+        assert_eq!(v["blockId"], "b1", "TS upserts by blockId — see applyBlock in useChat");
+        assert!(v.get("block_id").is_none());
+        // Rows persisted before the rename_all_fields fix still load.
+        let legacy = serde_json::json!({ "type": "text", "block_id": "b1", "text": "hi" });
+        assert_eq!(serde_json::from_value::<Block>(legacy).unwrap(), b);
     }
 
     #[test]

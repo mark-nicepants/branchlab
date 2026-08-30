@@ -112,10 +112,10 @@ export function SessionView({
   // locally for instant control feedback.
   const backendMode = prByWorkspace[workspace.id]?.mode;
   const [autofixMode, setAutofixModeState] = useState<AutofixMode>(
-    backendMode ?? workspace.autofix_mode ?? "off",
+    backendMode ?? workspace.autofix_mode,
   );
   useEffect(() => {
-    setAutofixModeState(backendMode ?? workspace.autofix_mode ?? "off");
+    setAutofixModeState(backendMode ?? workspace.autofix_mode);
   }, [workspace.id, backendMode, workspace.autofix_mode]);
   const changeAutofixMode = useCallback(
     (m: AutofixMode) => {

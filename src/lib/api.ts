@@ -30,6 +30,7 @@ import type {
   SuggestedPlan,
   Todo,
   ToolsStatus,
+  TurnOrigin,
   Workspace,
 } from "./types";
 
@@ -305,7 +306,8 @@ export function chatSend(args: {
   display: string;
   sent: string;
   attachments?: ChatAttachment[];
-  origin?: string;
+  /** Typed union — a typo'd origin would only fail serde at runtime. */
+  origin?: TurnOrigin;
   model?: string;
   variant?: string;
   agent?: string;
@@ -339,9 +341,10 @@ export function chatAbort(workspaceId: string): Promise<void> {
   return invoke<void>("chat_abort", { workspaceId });
 }
 
-/** Change a session config option (model / mode) by id + value. Reasoning is
- *  NOT set here — opencode doesn't expose it over ACP; it's configured per-model
- *  in the opencode config (see Settings → Models). */
+/** Change a session config option (model / thinking level / mode) by id +
+ *  value. All three go through ACP Session Config Options — the thinking
+ *  level is the dynamic `effort` option a variant-capable model advertises
+ *  (see AGENTS.md "OpenCode / ACP notes"). */
 export function chatSetConfig(
   workspaceId: string,
   id: string,
