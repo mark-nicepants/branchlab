@@ -1,25 +1,23 @@
 import { parseTypedDisplay, type TypedDisplay } from "@/lib/chatDisplay";
 import { parseDiff, synthesizeDiff } from "@/lib/diff";
 import { fileName } from "@/lib/review";
+import {
+  describeTool,
+  diffStats,
+  fmtDuration,
+  toolOutcome,
+  type ToolKind,
+  type ToolOutcome,
+} from "@/lib/toolDisplay";
 import { cn } from "@/lib/utils";
 import {
-  Bot,
   Check,
   ChevronRight,
-  FileText,
-  Globe,
   Loader2,
   Lock,
   MessageSquare,
-  MoveRight,
-  Pencil,
-  Search,
   Sparkles,
-  Terminal,
-  Trash2,
-  Wrench,
   X,
-  type LucideIcon,
 } from "lucide-react";
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -28,7 +26,6 @@ import type {
   AssistantEntry,
   Block,
   ChatPermissionEvent,
-  DiffBlock,
   SetupStep,
   SystemEntry,
   ToolBlock,
@@ -75,8 +72,7 @@ export function MessageShell({ role, chrome = "none", children }: ShellProps) {
           "flex flex-col select-text gap-6 text-sm",
           // Both participant lanes cap at 80% of the column, so the agent's
           // answer reads as "from the agent" rather than page furniture.
-          isUser &&
-            cn("max-w-[80%]", chrome === "none" && "w-full", "my-3"),
+          isUser && cn("max-w-[80%]", chrome === "none" && "w-full", "my-3"),
           role === "assistant" && "w-full max-w-[80%] py-3",
           role === "system" && "py-3",
           // The user bubble is the shared surface, one tint step up, with the
@@ -247,16 +243,18 @@ export function SystemMessageView({
         >
           {entry.text}
         </div>
-        {entry.action === "deleteWorkspace" && workspaceId && onDeleteWorkspace && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-6 rounded-full px-3 text-[11.5px]"
-            onClick={() => onDeleteWorkspace(workspaceId)}
-          >
-            Delete workspace
-          </Button>
-        )}
+        {entry.action === "deleteWorkspace" &&
+          workspaceId &&
+          onDeleteWorkspace && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 rounded-full px-3 text-[11.5px]"
+              onClick={() => onDeleteWorkspace(workspaceId)}
+            >
+              Delete workspace
+            </Button>
+          )}
       </div>
     </MessageShell>
   );
@@ -383,145 +381,26 @@ function isTodoTool(b: Block): boolean {
   );
 }
 
-function fmtDuration(ms: number): string {
-  const s = ms / 1000;
-  if (s < 0.05) return "";
-  if (s < 60) return `${s < 10 ? s.toFixed(1) : Math.round(s)}s`;
-  return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
-}
-
-/** +added/−removed line counts for a diff (synthesized from old/new text). */
-function diffStats(diff: DiffBlock): { add: number; del: number } {
-  const unified = synthesizeDiff(diff.oldText ?? "", diff.newText);
-  let add = 0;
-  let del = 0;
-  for (const line of unified.split("\n")) {
-    if (line.startsWith("+") && !line.startsWith("+++")) add++;
-    else if (line.startsWith("-") && !line.startsWith("---")) del++;
-  }
-  return { add, del };
-}
-
 const str = (v: unknown): string | undefined =>
   typeof v === "string" ? v : undefined;
 
-/** The per-kind step descriptor: icon + verb + object for the collapsed line.
- *  Matches both ACP ToolKind-derived names and opencode's own tool names, and
- *  falls back gracefully — the protocol is non-exhaustive by design. */
-function describeTool(block: ToolBlock): {
-  Icon: LucideIcon;
-  verb: string;
-  obj: string;
-  kind: string;
-} {
-  const input = (block.input ?? {}) as Record<string, unknown>;
-  const file =
-    str(input.filePath) ?? str(input.file) ?? str(input.path) ?? undefined;
-  const title = block.title ?? "";
-  switch (block.name) {
-    case "read":
-      return { Icon: FileText, verb: "Read", obj: file ?? title, kind: "read" };
-    case "edit":
-    case "multiedit":
-    case "patch":
-      return { Icon: Pencil, verb: "Edited", obj: file ?? title, kind: "edit" };
-    case "write":
-      return { Icon: Pencil, verb: "Wrote", obj: file ?? title, kind: "edit" };
-    case "bash":
-    case "shell":
-    case "run":
-    case "execute":
-      return {
-        Icon: Terminal,
-        verb: "Ran",
-        obj: str(input.command) ?? str(input.cmd) ?? title,
-        kind: "execute",
-      };
-    case "search":
-    case "grep":
-    case "glob":
-    case "rg":
-      return {
-        Icon: Search,
-        verb: "Searched",
-        obj: str(input.pattern) ?? str(input.query) ?? str(input.glob) ?? title,
-        kind: "search",
-      };
-    case "list":
-    case "ls":
-      return {
-        Icon: Search,
-        verb: "Listed",
-        obj: file ?? title,
-        kind: "search",
-      };
-    case "fetch":
-    case "webfetch":
-      return {
-        Icon: Globe,
-        verb: "Fetched",
-        obj: str(input.url) ?? title,
-        kind: "fetch",
-      };
-    case "task":
-    case "agent":
-    case "subagent":
-      return {
-        Icon: Bot,
-        verb: "Subagent",
-        obj: str(input.description) ?? str(input.prompt) ?? title,
-        kind: "task",
-      };
-    case "delete":
-    case "rm":
-      return {
-        Icon: Trash2,
-        verb: "Deleted",
-        obj: file ?? title,
-        kind: "other",
-      };
-    case "move":
-    case "mv":
-      return {
-        Icon: MoveRight,
-        verb: "Moved",
-        obj: file ?? title,
-        kind: "other",
-      };
-    default:
-      return {
-        Icon: Wrench,
-        verb: block.name.charAt(0).toUpperCase() + block.name.slice(1),
-        obj: title,
-        kind: "other",
-      };
-  }
-}
-
-/** Right-aligned outcome slot on the collapsed line: numbers, never sentences. */
-function toolOutcome(block: ToolBlock, kind: string): React.ReactNode {
-  if (kind === "edit" && block.diff) {
-    const { add, del } = diffStats(block.diff);
+/** Renders the outcome descriptor from `toolOutcome` (see lib/toolDisplay). */
+function ToolOutcomeView({ outcome }: { outcome: ToolOutcome }) {
+  if (!outcome) return null;
+  if (outcome.type === "diff")
     return (
       <span className="font-mono tabular-nums">
-        <span className="text-additions">+{add}</span>{" "}
-        <span className="text-deletions">−{del}</span>
+        <span className="text-additions">+{outcome.add}</span>{" "}
+        <span className="text-deletions">−{outcome.del}</span>
       </span>
     );
-  }
-  if (kind === "search" && block.output != null) {
-    const n = block.output.split("\n").filter((l) => l.trim()).length;
+  if (outcome.type === "results")
     return (
       <span className="tabular-nums">
-        {n} result{n === 1 ? "" : "s"}
+        {outcome.count} result{outcome.count === 1 ? "" : "s"}
       </span>
     );
-  }
-  if (kind === "read") {
-    const line = block.locations?.find((l) => l.line != null)?.line;
-    if (line != null) return <span className="tabular-nums">L{line}</span>;
-  }
-  return null;
+  return <span className="tabular-nums">L{outcome.line}</span>;
 }
 
 interface TurnViewProps {
@@ -833,7 +712,7 @@ function ToolStep({
             {permission && (
               <span className="font-medium text-warning">needs permission</span>
             )}
-            {toolOutcome(block, kind)}
+            <ToolOutcomeView outcome={toolOutcome(block, kind)} />
             {block.startedAt != null &&
               block.endedAt != null &&
               fmtDuration(block.endedAt - block.startedAt) && (
@@ -862,7 +741,7 @@ function ToolStepDetail({
   obj,
 }: {
   block: ToolBlock;
-  kind: string;
+  kind: ToolKind;
   obj: string;
 }) {
   if (kind === "edit" && block.diff) {

@@ -226,11 +226,22 @@ same change/PR. The file follows [Keep a Changelog](https://keepachangelog.com/e
 
 ## Testing
 
-- **Frontend:** Vitest. Tests are `src/**/*.test.ts`, colocated with the module.
-  They run in plain Node (`environment: "node"`) with **no Tauri runtime** — so
-  test pure logic (`lib/diff.ts`, `lib/types.ts`, parsers, formatters), not
-  components that call `invoke`. Import `describe/it/expect` from `vitest`
-  explicitly (no globals).
+- **Frontend:** Vitest, two projects (`vitest.config.ts`); `npm test` runs both.
+  - `unit` — `src/**/*.test.ts`, colocated with the module, in plain Node
+    (`environment: "node"`) with **no Tauri runtime**. This is where nearly
+    everything belongs: pure logic (`lib/diff.ts`, `lib/chatState.ts`,
+    `lib/router.ts`, parsers, formatters). Logic worth testing that currently
+    lives inside a component or hook gets **extracted to `lib/` first** — the
+    hook keeps only the React binding (see `useChat`/`useAppRouter`).
+  - `harness` — `src/**/*.test.tsx` in jsdom against the browser dev harness,
+    mirroring `vite.config.ts`'s `mode === "browser"` aliasing so components
+    run on `api.mock`/`events.mock` and a test can drive a real event timeline
+    with `mockEmit`. Deliberately kept to one end-to-end flow
+    (`Chat.harness.test.tsx`): the mocks are a debugging aid, not a contract,
+    and a broad component suite on their canned timelines becomes a second
+    thing to keep in sync.
+
+  Import `describe/it/expect` from `vitest` explicitly (no globals).
 - **Rust:** `#[cfg(test)] mod tests` at the bottom of the module, using only
   `std` (no extra test crates). For filesystem tests, create a throwaway dir
   under `std::env::temp_dir()` and clean it up on `Drop` — see `git.rs` tests.

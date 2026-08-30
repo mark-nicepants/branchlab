@@ -28,8 +28,14 @@ import {
   onChatReset,
   onChatTurn,
 } from "../lib/events";
+import {
+  applyChatEvent,
+  chatBusy,
+  chatEntries,
+  EMPTY_CHAT_STATE,
+  type ChatStateEvent,
+} from "../lib/chatState";
 import type {
-  Block,
   ChatAttachment,
   ChatCommand,
   ChatPermissionEvent,
@@ -38,20 +44,6 @@ import type {
   Entry,
   TurnOrigin,
 } from "../lib/types";
-
-/** Merge a streamed block into a turn's block list: upsert by blockId. Every
- *  event carries the full authoritative block, so this is idempotent — a
- *  duplicated, reordered, or dropped delivery cannot corrupt the text (the
- *  next event heals it). */
-function applyBlock(blocks: Block[], block: Block): Block[] {
-  const idx = blocks.findIndex((b) => b.blockId === block.blockId);
-  if (idx === -1) return [...blocks, block];
-  const next = blocks.slice();
-  next[idx] = block;
-  return next;
-}
-
-const ACTIVE = new Set(["queued", "streaming", "awaitingPermission"]);
 
 export interface ChatStore {
   entries: Entry[];
@@ -84,8 +76,7 @@ export interface ChatStore {
 }
 
 export function useChat(workspaceId: string): ChatStore {
-  const [byId, setById] = useState<Record<number, Entry>>({});
-  const [order, setOrder] = useState<number[]>([]);
+  const [state, setState] = useState(EMPTY_CHAT_STATE);
   const [config, setConfig] = useState<ConfigOption[]>([]);
   const [context, setContext] = useState<ContextInfo | null>(null);
   const [commands, setCommands] = useState<ChatCommand[]>([]);
@@ -100,8 +91,7 @@ export function useChat(workspaceId: string): ChatStore {
   // terminal `chat:turn` would leave `busy` stuck). Same "pull once, push
   // forever" discipline as useWorkspaceData.
   useEffect(() => {
-    setById({});
-    setOrder([]);
+    setState(EMPTY_CHAT_STATE);
     setContext(null);
     setPermissions([]);
     setSubscribed(false);
@@ -113,31 +103,17 @@ export function useChat(workspaceId: string): ChatStore {
         if (p.workspaceId === workspaceId) cb(p);
       };
 
-    const upsert = (e: Entry) => {
-      setById((prev) => ({ ...prev, [e.seq]: e }));
-      setOrder((prev) =>
-        prev.includes(e.seq) ? prev : [...prev, e.seq].sort((a, b) => a - b),
-      );
-    };
+    const apply = (e: ChatStateEvent) => setState((s) => applyChatEvent(s, e));
 
     // Merge the snapshot under whatever deltas raced in while it loaded: the
     // snapshot fills the gaps, but an already-received event is newer and wins
-    // (later events heal any remaining staleness — see applyBlock).
+    // (later events heal any remaining staleness — see applyChatEvent).
     const seed = async () => {
       setLoading(true);
       try {
         const snap = await chatOpen(workspaceId);
         if (subs.disposed) return;
-        setById((prev) => {
-          const map: Record<number, Entry> = {};
-          for (const e of snap.entries) map[e.seq] = e;
-          return { ...map, ...prev };
-        });
-        setOrder((prev) => {
-          const seqs = new Set(prev);
-          for (const e of snap.entries) seqs.add(e.seq);
-          return [...seqs].sort((a, b) => a - b);
-        });
+        apply({ kind: "seed", entries: snap.entries });
         setConfig(snap.config);
         setCommands(snap.commands ?? []);
         setHasMore(snap.hasMore);
@@ -150,38 +126,15 @@ export function useChat(workspaceId: string): ChatStore {
     };
 
     const subs = listenAll(
-      onChatEntry(mine((p) => upsert(p.entry))),
+      onChatEntry(mine((p) => apply({ kind: "entry", entry: p.entry }))),
       onChatBlock(
         mine((p) =>
-          setById((prev) => {
-            const e = prev[p.entrySeq];
-            if (!e || e.type !== "assistant") return prev;
-            return {
-              ...prev,
-              [p.entrySeq]: {
-                ...e,
-                blocks: applyBlock(e.blocks, p.block),
-              },
-            };
-          }),
+          apply({ kind: "block", entrySeq: p.entrySeq, block: p.block }),
         ),
       ),
       onChatTurn(
-        mine((p) =>
-          setById((prev) => {
-            const e = prev[p.entrySeq];
-            if (!e || e.type !== "assistant") return prev;
-            return {
-              ...prev,
-              [p.entrySeq]: {
-                ...e,
-                status: p.status,
-                summary: p.summary,
-                usage: p.usage,
-                endedAt: p.endedAt ?? e.endedAt,
-              },
-            };
-          }),
+        mine(({ workspaceId: _w, ...turn }) =>
+          apply({ kind: "turn", ...turn }),
         ),
       ),
       onChatConfig(mine((p) => setConfig(p.options))),
@@ -198,8 +151,7 @@ export function useChat(workspaceId: string): ChatStore {
         mine(() => {
           // Conversation replaced (compacted/cleared): drop local state so the
           // reseed doesn't merge stale entries back in.
-          setById({});
-          setOrder([]);
+          apply({ kind: "reset" });
           setPermissions([]);
           void seed();
         }),
@@ -217,15 +169,8 @@ export function useChat(workspaceId: string): ChatStore {
     return subs.dispose;
   }, [workspaceId]);
 
-  const entries = useMemo(
-    () => order.map((seq) => byId[seq]).filter(Boolean),
-    [order, byId],
-  );
-
-  const busy = useMemo(
-    () => entries.some((e) => e.type === "assistant" && ACTIVE.has(e.status)),
-    [entries],
-  );
+  const entries = useMemo(() => chatEntries(state), [state]);
+  const busy = useMemo(() => chatBusy(entries), [entries]);
 
   const send: ChatStore["send"] = useCallback(
     (args) => chatSend({ workspaceId, ...args }),
@@ -272,13 +217,8 @@ export function useChat(workspaceId: string): ChatStore {
         setHasMore(false);
         return;
       }
-      setById((prev) => {
-        const map = { ...prev };
-        for (const e of snap.entries) map[e.seq] = e;
-        return map;
-      });
-      setOrder((prev) =>
-        [...snap.entries.map((e) => e.seq), ...prev].sort((a, b) => a - b),
+      setState((s) =>
+        applyChatEvent(s, { kind: "history", entries: snap.entries }),
       );
       setOldestSeq(snap.entries[0]?.seq ?? oldestSeq);
       setHasMore(snap.hasMore);

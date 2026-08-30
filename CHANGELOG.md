@@ -122,6 +122,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stopping a turn, switching the model or a session setting, and answering a
   permission request now show an error toast when the backend can't do it,
   instead of silently doing nothing.
+- The `+`/`−` line counts on an edit step no longer skip lines that start with
+  `---` or `+++` (YAML separators, markdown rules, front matter).
 - A crash or power loss mid-write can no longer wipe your projects or task
   board: the registry and board files are written atomically, and a corrupt
   file is set aside as `.bad` (and reported in the log) instead of being

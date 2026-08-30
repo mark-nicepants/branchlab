@@ -191,27 +191,34 @@ fn debounce_loop(inner: Arc<Inner>, rx: Receiver<PathBuf>) {
     }
 }
 
-impl Inner {
-    /// Map a changed path to the workspace that owns it (longest-prefix match
-    /// over each entry's working tree + git dir), filtering build-output churn.
-    fn map_path(&self, p: &Path) -> Option<String> {
-        let s = p.to_string_lossy();
-        if s.contains("/node_modules/") || s.contains("/target/") {
-            return None;
-        }
-        let entries = self.entries.lock_safe();
-        let mut best: Option<(usize, String)> = None;
-        for (id, e) in entries.iter() {
-            for base in [Some(&e.path), e.git_dir.as_ref()].into_iter().flatten() {
-                if p.starts_with(base) {
-                    let len = base.as_os_str().len();
-                    if best.as_ref().is_none_or(|(l, _)| len > *l) {
-                        best = Some((len, id.clone()));
-                    }
+/// Map a changed path to the workspace that owns it: longest-prefix match over
+/// every entry's working tree *and* git dir, so a nested workspace (a worktree
+/// checked out inside another repo) wins over the outer one, and a worktree's
+/// out-of-tree git dir maps back to it. Build-output churn is dropped first —
+/// `node_modules` / `target` writes can't change git state we report.
+fn map_path(entries: &HashMap<String, WatchEntry>, p: &Path) -> Option<String> {
+    let s = p.to_string_lossy();
+    if s.contains("/node_modules/") || s.contains("/target/") {
+        return None;
+    }
+    let mut best: Option<(usize, String)> = None;
+    for (id, e) in entries.iter() {
+        for base in [Some(&e.path), e.git_dir.as_ref()].into_iter().flatten() {
+            if p.starts_with(base) {
+                let len = base.as_os_str().len();
+                if best.as_ref().is_none_or(|(l, _)| len > *l) {
+                    best = Some((len, id.clone()));
                 }
             }
         }
-        best.map(|(_, id)| id)
+    }
+    best.map(|(_, id)| id)
+}
+
+impl Inner {
+    /// Map a changed path to the workspace that owns it. See [`map_path`].
+    fn map_path(&self, p: &Path) -> Option<String> {
+        map_path(&self.entries.lock_safe(), p)
     }
 
     fn recompute_and_emit(&self, workspace_id: &str) {
@@ -248,5 +255,98 @@ impl Inner {
         }
         drop(entries);
         let _ = self.app.emit("workspace:git", &payload);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An entries map like the one `watch()` builds, without touching the disk
+    /// or the notify watcher.
+    fn entries(specs: &[(&str, &str, Option<&str>)]) -> HashMap<String, WatchEntry> {
+        specs
+            .iter()
+            .map(|(id, path, git_dir)| {
+                (
+                    (*id).to_string(),
+                    WatchEntry { path: PathBuf::from(path), git_dir: git_dir.map(PathBuf::from), last: None },
+                )
+            })
+            .collect()
+    }
+
+    fn mapped(map: &HashMap<String, WatchEntry>, p: &str) -> Option<String> {
+        map_path(map, Path::new(p))
+    }
+
+    #[test]
+    fn maps_a_path_to_its_workspace() {
+        let e = entries(&[("ws-a", "/repos/alpha", None)]);
+        assert_eq!(mapped(&e, "/repos/alpha/src/main.rs").as_deref(), Some("ws-a"));
+    }
+
+    #[test]
+    fn maps_the_workspace_root_itself() {
+        let e = entries(&[("ws-a", "/repos/alpha", None)]);
+        assert_eq!(mapped(&e, "/repos/alpha").as_deref(), Some("ws-a"));
+    }
+
+    #[test]
+    fn unwatched_paths_map_to_nothing() {
+        let e = entries(&[("ws-a", "/repos/alpha", None)]);
+        assert_eq!(mapped(&e, "/repos/beta/src/main.rs"), None);
+        assert_eq!(mapped(&e, "/"), None);
+        assert_eq!(map_path(&HashMap::new(), Path::new("/repos/alpha/x")), None);
+    }
+
+    #[test]
+    fn a_sibling_sharing_a_name_prefix_is_not_a_match() {
+        // String-prefix logic would claim this; `Path::starts_with` is
+        // component-wise, so it must not.
+        let e = entries(&[("ws-a", "/repos/alpha", None)]);
+        assert_eq!(mapped(&e, "/repos/alpha-two/src/main.rs"), None);
+    }
+
+    #[test]
+    fn longest_prefix_wins_over_first_match() {
+        // A nested workspace must claim its own files even though the outer
+        // one also matches — and HashMap iteration order must not decide it,
+        // so assert from both nesting directions.
+        let e = entries(&[("outer", "/repos/alpha", None), ("inner", "/repos/alpha/vendor/lib", None)]);
+        assert_eq!(mapped(&e, "/repos/alpha/vendor/lib/src/x.rs").as_deref(), Some("inner"));
+        assert_eq!(mapped(&e, "/repos/alpha/src/x.rs").as_deref(), Some("outer"));
+        assert_eq!(mapped(&e, "/repos/alpha/vendor/other.rs").as_deref(), Some("outer"));
+    }
+
+    #[test]
+    fn git_dir_outside_the_working_tree_maps_back_to_the_workspace() {
+        // The in-worktree commit case: only `<repo>/.git/worktrees/<name>` is
+        // touched, which lives outside the worktree's own path.
+        let e = entries(&[("ws-a", "/repos/alpha/wt/feature", Some("/repos/alpha/.git/worktrees/feature"))]);
+        assert_eq!(mapped(&e, "/repos/alpha/.git/worktrees/feature/HEAD").as_deref(), Some("ws-a"));
+    }
+
+    #[test]
+    fn a_git_dir_beats_a_shorter_working_tree_prefix() {
+        // The base repo owns `/repos/alpha`, but the worktree's git dir sits
+        // deeper inside it — the commit belongs to the worktree.
+        let e = entries(&[
+            ("base", "/repos/alpha", Some("/repos/alpha/.git")),
+            ("wt", "/worktrees/feature", Some("/repos/alpha/.git/worktrees/feature")),
+        ]);
+        assert_eq!(mapped(&e, "/repos/alpha/.git/worktrees/feature/HEAD").as_deref(), Some("wt"));
+        assert_eq!(mapped(&e, "/repos/alpha/.git/index").as_deref(), Some("base"));
+    }
+
+    #[test]
+    fn build_output_churn_is_ignored() {
+        let e = entries(&[("ws-a", "/repos/alpha", None)]);
+        assert_eq!(mapped(&e, "/repos/alpha/node_modules/react/index.js"), None);
+        assert_eq!(mapped(&e, "/repos/alpha/src-tauri/target/debug/build.rs"), None);
+        // …but only as a path *segment*: real files whose name merely contains
+        // the word still count.
+        assert_eq!(mapped(&e, "/repos/alpha/src/target.rs").as_deref(), Some("ws-a"));
+        assert_eq!(mapped(&e, "/repos/alpha/node_modules.md").as_deref(), Some("ws-a"));
     }
 }

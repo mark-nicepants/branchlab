@@ -489,8 +489,7 @@ impl Inner {
             }
         };
 
-        // Fork PRs are read-only here — never drive autofix back to the fork.
-        let mode = if d.is_fork { AutofixMode::Off } else { d.mode };
+        let mode = effective_mode(d.is_fork, d.mode);
         let (action, just_merged) = {
             let mut rts = self.runtimes.lock_safe();
             let Some(rt) = rts.get_mut(&d.id) else {
@@ -564,13 +563,7 @@ impl Inner {
                 {
                     let mut rts = self.runtimes.lock_safe();
                     if let Some(rt) = rts.get_mut(&d.id) {
-                        if rt.phase == Phase::Fixing {
-                            rt.phase = Phase::Failing;
-                        }
-                        rt.handled_sha = None;
-                        if mode == AutofixMode::Super {
-                            rt.super_attempts = rt.super_attempts.saturating_sub(1);
-                        }
+                        revert_dispatch(rt, mode);
                     }
                 }
                 self.emit_pr(&d.id);
@@ -712,49 +705,11 @@ impl Inner {
 
     fn on_turn_event(self: &Arc<Inner>, ev: TurnEvent) {
         let is_active = self.active.lock_safe().as_deref() == Some(ev.workspace_id.as_str());
-        let mut notify: Option<&'static str> = None;
-        let mut pr_changed = false;
-        {
+        let TurnFold { notify, pr_changed } = {
             let mut rts = self.runtimes.lock_safe();
             let rt = rts.entry(ev.workspace_id.clone()).or_default();
-            match ev.status {
-                TurnStatus::Queued | TurnStatus::Streaming => {
-                    rt.working = true;
-                    rt.needs_attention = false;
-                    rt.awaiting_input = false;
-                }
-                TurnStatus::AwaitingPermission => {
-                    if !rt.awaiting_input {
-                        notify = Some("awaiting_input");
-                    }
-                    rt.awaiting_input = true;
-                    if !is_active {
-                        rt.needs_attention = true;
-                    }
-                }
-                TurnStatus::Completed | TurnStatus::Cancelled | TurnStatus::Failed => {
-                    if rt.working {
-                        notify = Some("turn_done");
-                        if !is_active {
-                            rt.needs_attention = true;
-                        }
-                    }
-                    rt.working = false;
-                    rt.awaiting_input = false;
-                    if ev.status == TurnStatus::Failed {
-                        rt.last_error = Some("the last turn failed".to_string());
-                    }
-                    // Autofix hand-off: the fix turn finished.
-                    if ev.origin == TurnOrigin::Autofix && rt.phase == Phase::Fixing {
-                        rt.phase = if rt.mode == AutofixMode::Super { Phase::Running } else { Phase::AwaitingPush };
-                        pr_changed = true;
-                    }
-                    // Any finished turn may have pushed / opened a PR — re-poll
-                    // right away instead of waiting out the interval.
-                    rt.last_pr_poll = None;
-                }
-            }
-        }
+            fold_turn_event(rt, &ev, is_active)
+        };
         // Task-workflow gates: turn end parks the linked card in the review
         // column; any turn start pulls it back to work. Both no-op unless the
         // card sits in the expected role column (manual drags win).
@@ -901,6 +856,85 @@ fn decide(rt: &mut WsRuntime, status: Option<&PrStatus>, mode: AutofixMode) -> O
     }
 }
 
+/// The autofix mode actually driven for a workspace. A fork PR checkout is
+/// read-only for us (we can't push to someone else's fork), so autofix is
+/// forced off there no matter what the workspace is configured for.
+fn effective_mode(is_fork: bool, mode: AutofixMode) -> AutofixMode {
+    if is_fork {
+        AutofixMode::Off
+    } else {
+        mode
+    }
+}
+
+/// What [`fold_turn_event`] wants the caller to do after mutating the runtime:
+/// emit a `workspace:notify` of this kind, and/or re-push the PR snapshot.
+#[derive(Debug, Default, PartialEq)]
+struct TurnFold {
+    notify: Option<&'static str>,
+    pr_changed: bool,
+}
+
+/// Fold one coarse turn transition into a workspace's runtime state. Pure over
+/// the runtime plus the injected "is this workspace on screen" input — the
+/// side effects (emits) are the caller's, driven by the returned [`TurnFold`].
+fn fold_turn_event(rt: &mut WsRuntime, ev: &TurnEvent, is_active: bool) -> TurnFold {
+    let mut out = TurnFold::default();
+    match ev.status {
+        TurnStatus::Queued | TurnStatus::Streaming => {
+            rt.working = true;
+            rt.needs_attention = false;
+            rt.awaiting_input = false;
+        }
+        TurnStatus::AwaitingPermission => {
+            if !rt.awaiting_input {
+                out.notify = Some("awaiting_input");
+            }
+            rt.awaiting_input = true;
+            if !is_active {
+                rt.needs_attention = true;
+            }
+        }
+        TurnStatus::Completed | TurnStatus::Cancelled | TurnStatus::Failed => {
+            if rt.working {
+                out.notify = Some("turn_done");
+                if !is_active {
+                    rt.needs_attention = true;
+                }
+            }
+            rt.working = false;
+            rt.awaiting_input = false;
+            if ev.status == TurnStatus::Failed {
+                rt.last_error = Some("the last turn failed".to_string());
+            }
+            // Autofix hand-off: the fix turn finished.
+            if ev.origin == TurnOrigin::Autofix && rt.phase == Phase::Fixing {
+                rt.phase = if rt.mode == AutofixMode::Super { Phase::Running } else { Phase::AwaitingPush };
+                out.pr_changed = true;
+            }
+            // Any finished turn may have pushed / opened a PR — re-poll right
+            // away instead of waiting out the interval.
+            rt.last_pr_poll = None;
+        }
+    }
+    out
+}
+
+/// Undo the commitment [`decide`] made for a fix turn that never reached the
+/// engine: back to `Failing`, forget the handled SHA, refund the super attempt —
+/// so the next reconcile retries instead of wedging in `Fixing` forever.
+/// The phase is only rolled back when it's still `Fixing`: a concurrent turn
+/// event may already have moved it on, and that newer state wins.
+fn revert_dispatch(rt: &mut WsRuntime, mode: AutofixMode) {
+    if rt.phase == Phase::Fixing {
+        rt.phase = Phase::Failing;
+    }
+    rt.handled_sha = None;
+    if mode == AutofixMode::Super {
+        rt.super_attempts = rt.super_attempts.saturating_sub(1);
+    }
+}
+
 /// Build the fix prompt (ported verbatim from the old frontend `autofixPrompt`).
 fn autofix_prompt(status: &PrStatus, push: bool) -> String {
     let failing: Vec<&str> =
@@ -917,5 +951,448 @@ fn autofix_prompt(status: &PrStatus, push: bool) -> String {
         )
     } else {
         format!("{base}\n4. Stage the changes with `git add -A` and commit with a clear message describing the fix. Do NOT push — the user will review and push to re-run the pipeline.")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::git::PrCheck;
+
+    fn check(name: &str, bucket: CheckBucket) -> PrCheck {
+        PrCheck { name: name.into(), bucket, state: "x".into(), url: None, workflow: None }
+    }
+
+    /// An OPEN PR at `sha` with the given rollup and one matching check.
+    fn pr(sha: &str, rollup: Rollup) -> PrStatus {
+        let bucket = match rollup {
+            Rollup::Success => CheckBucket::Success,
+            Rollup::Failure => CheckBucket::Failure,
+            _ => CheckBucket::Pending,
+        };
+        PrStatus {
+            number: 7,
+            url: "https://example.test/pr/7".into(),
+            state: "OPEN".into(),
+            head_branch: "feature".into(),
+            head_sha: sha.into(),
+            checks: vec![check("build", bucket)],
+            rollup,
+        }
+    }
+
+    fn rt(mode: AutofixMode) -> WsRuntime {
+        WsRuntime { mode, ..Default::default() }
+    }
+
+    // ── decide(): no PR / not actionable ────────────────────────────────────
+
+    #[test]
+    fn no_pr_is_idle() {
+        let mut r = rt(AutofixMode::Super);
+        r.phase = Phase::Failing;
+        assert_eq!(decide(&mut r, None, AutofixMode::Super), None);
+        assert_eq!(r.phase, Phase::Idle);
+    }
+
+    #[test]
+    fn a_pr_with_no_checks_at_all_is_idle() {
+        let mut r = rt(AutofixMode::Super);
+        assert_eq!(decide(&mut r, Some(&pr("aaa", Rollup::None)), AutofixMode::Super), None);
+        assert_eq!(r.phase, Phase::Idle);
+    }
+
+    #[test]
+    fn pending_checks_are_running() {
+        let mut r = rt(AutofixMode::Auto);
+        assert_eq!(decide(&mut r, Some(&pr("aaa", Rollup::Pending)), AutofixMode::Auto), None);
+        assert_eq!(r.phase, Phase::Running);
+    }
+
+    #[test]
+    fn green_checks_pass_and_reset_the_failing_streak() {
+        let mut r = rt(AutofixMode::Super);
+        r.handled_sha = Some("aaa".into());
+        r.super_attempts = 3;
+        assert_eq!(decide(&mut r, Some(&pr("bbb", Rollup::Success)), AutofixMode::Super), None);
+        assert_eq!(r.phase, Phase::Passing);
+        assert_eq!(r.handled_sha, None);
+        assert_eq!(r.super_attempts, 0);
+    }
+
+    // ── decide(): failure → Fixing ──────────────────────────────────────────
+
+    #[test]
+    fn a_failure_dispatches_a_fix_and_claims_the_sha() {
+        let mut r = rt(AutofixMode::Auto);
+        let prompt = decide(&mut r, Some(&pr("aaa", Rollup::Failure)), AutofixMode::Auto).expect("dispatches");
+        assert_eq!(r.phase, Phase::Fixing);
+        assert_eq!(r.handled_sha.as_deref(), Some("aaa"));
+        // Autofix stops at the commit — only superfix pushes, and only superfix
+        // burns an attempt.
+        assert_eq!(r.super_attempts, 0);
+        assert!(prompt.contains("pull request #7"));
+        assert!(prompt.contains("build"), "names the failing check");
+        assert!(!prompt.contains("push to the existing branch"));
+    }
+
+    #[test]
+    fn superfix_burns_an_attempt_and_asks_for_a_push() {
+        let mut r = rt(AutofixMode::Super);
+        let prompt = decide(&mut r, Some(&pr("aaa", Rollup::Failure)), AutofixMode::Super).expect("dispatches");
+        assert_eq!(r.phase, Phase::Fixing);
+        assert_eq!(r.super_attempts, 1);
+        assert!(prompt.contains("push to the existing branch \"feature\""));
+    }
+
+    #[test]
+    fn a_fix_already_in_flight_is_never_disturbed() {
+        // Phase::Fixing short-circuits everything — even a PR that has since
+        // gone green or vanished. The turn-end handler owns the exit.
+        for status in [None, Some(&pr("aaa", Rollup::Success)), Some(&pr("aaa", Rollup::Failure))] {
+            let mut r = rt(AutofixMode::Super);
+            r.phase = Phase::Fixing;
+            r.handled_sha = Some("aaa".into());
+            r.super_attempts = 1;
+            assert_eq!(decide(&mut r, status, AutofixMode::Super), None);
+            assert_eq!(r.phase, Phase::Fixing);
+            assert_eq!(r.handled_sha.as_deref(), Some("aaa"));
+            assert_eq!(r.super_attempts, 1);
+        }
+    }
+
+    // ── decide(): handled_sha dedupe ────────────────────────────────────────
+
+    #[test]
+    fn the_same_failing_sha_is_never_dispatched_twice() {
+        let mut r = rt(AutofixMode::Auto);
+        assert!(decide(&mut r, Some(&pr("aaa", Rollup::Failure)), AutofixMode::Auto).is_some());
+        // The fix turn ended; the phase moved on (see fold_turn_event).
+        r.phase = Phase::AwaitingPush;
+        // Same commit still failing: nothing more to do until it's pushed.
+        assert_eq!(decide(&mut r, Some(&pr("aaa", Rollup::Failure)), AutofixMode::Auto), None);
+        assert_eq!(r.phase, Phase::AwaitingPush);
+    }
+
+    #[test]
+    fn superfix_waits_for_the_new_run_on_a_handled_sha() {
+        // Superfix pushed, so the same failing sha means CI hasn't re-run yet.
+        let mut r = rt(AutofixMode::Super);
+        r.handled_sha = Some("aaa".into());
+        r.super_attempts = 1;
+        assert_eq!(decide(&mut r, Some(&pr("aaa", Rollup::Failure)), AutofixMode::Super), None);
+        assert_eq!(r.phase, Phase::Running);
+        assert_eq!(r.super_attempts, 1, "waiting is not a new attempt");
+    }
+
+    #[test]
+    fn a_new_failing_sha_dispatches_again() {
+        let mut r = rt(AutofixMode::Super);
+        r.handled_sha = Some("aaa".into());
+        r.super_attempts = 1;
+        assert!(decide(&mut r, Some(&pr("bbb", Rollup::Failure)), AutofixMode::Super).is_some());
+        assert_eq!(r.handled_sha.as_deref(), Some("bbb"));
+        assert_eq!(r.super_attempts, 2);
+    }
+
+    // ── decide(): the superfix attempt cap ──────────────────────────────────
+
+    #[test]
+    fn superfix_gives_up_after_max_attempts() {
+        let mut r = rt(AutofixMode::Super);
+        // Each round: a new failing commit, one attempt spent, then the fix
+        // turn ends (Fixing -> Running for superfix).
+        for i in 0..MAX_SUPER_ATTEMPTS {
+            let sha = format!("sha{i}");
+            assert!(
+                decide(&mut r, Some(&pr(&sha, Rollup::Failure)), AutofixMode::Super).is_some(),
+                "attempt {i} should dispatch"
+            );
+            assert_eq!(r.super_attempts, i + 1);
+            r.phase = Phase::Running;
+        }
+        // The next distinct failure is refused.
+        assert_eq!(decide(&mut r, Some(&pr("sha-last", Rollup::Failure)), AutofixMode::Super), None);
+        assert_eq!(r.phase, Phase::Exhausted);
+        assert_eq!(r.super_attempts, MAX_SUPER_ATTEMPTS);
+        assert_eq!(r.handled_sha.as_deref(), Some("sha4"), "the refused sha is not claimed");
+    }
+
+    #[test]
+    fn the_cap_is_superfix_only() {
+        let mut r = rt(AutofixMode::Auto);
+        r.super_attempts = MAX_SUPER_ATTEMPTS + 10;
+        assert!(decide(&mut r, Some(&pr("aaa", Rollup::Failure)), AutofixMode::Auto).is_some());
+        assert_eq!(r.phase, Phase::Fixing);
+    }
+
+    #[test]
+    fn a_green_run_lifts_exhaustion() {
+        let mut r = rt(AutofixMode::Super);
+        r.phase = Phase::Exhausted;
+        r.super_attempts = MAX_SUPER_ATTEMPTS;
+        decide(&mut r, Some(&pr("aaa", Rollup::Success)), AutofixMode::Super);
+        assert_eq!(r.super_attempts, 0);
+        assert!(decide(&mut r, Some(&pr("bbb", Rollup::Failure)), AutofixMode::Super).is_some());
+    }
+
+    // ── decide(): suppression while a turn is in flight ─────────────────────
+
+    #[test]
+    fn no_dispatch_while_a_turn_is_working() {
+        let mut r = rt(AutofixMode::Super);
+        r.working = true;
+        assert_eq!(decide(&mut r, Some(&pr("aaa", Rollup::Failure)), AutofixMode::Super), None);
+        assert_eq!(r.phase, Phase::Failing);
+        // Nothing was committed, so the next idle poll still sees a fresh sha.
+        assert_eq!(r.handled_sha, None);
+        assert_eq!(r.super_attempts, 0);
+        r.working = false;
+        assert!(decide(&mut r, Some(&pr("aaa", Rollup::Failure)), AutofixMode::Super).is_some());
+    }
+
+    // ── decide(): mode gating + the fork skip ───────────────────────────────
+
+    #[test]
+    fn autofix_off_only_reports_the_failure() {
+        let mut r = rt(AutofixMode::Off);
+        assert_eq!(decide(&mut r, Some(&pr("aaa", Rollup::Failure)), AutofixMode::Off), None);
+        assert_eq!(r.phase, Phase::Failing);
+        assert_eq!(r.handled_sha, None);
+    }
+
+    #[test]
+    fn a_fork_pr_never_drives_autofix() {
+        assert_eq!(effective_mode(true, AutofixMode::Super), AutofixMode::Off);
+        assert_eq!(effective_mode(true, AutofixMode::Auto), AutofixMode::Off);
+        assert_eq!(effective_mode(false, AutofixMode::Super), AutofixMode::Super);
+        assert_eq!(effective_mode(false, AutofixMode::Off), AutofixMode::Off);
+
+        // …which is what reaches decide(), so a failing fork PR just reports.
+        let mut r = rt(AutofixMode::Super);
+        let mode = effective_mode(true, r.mode);
+        assert_eq!(decide(&mut r, Some(&pr("aaa", Rollup::Failure)), mode), None);
+        assert_eq!(r.phase, Phase::Failing);
+    }
+
+    // ── decide(): merged / closed PRs ───────────────────────────────────────
+
+    #[test]
+    fn a_merged_or_closed_pr_goes_idle() {
+        for state in ["MERGED", "CLOSED"] {
+            let mut r = rt(AutofixMode::Super);
+            r.phase = Phase::Failing;
+            let mut status = pr("aaa", Rollup::Failure);
+            status.state = state.into();
+            assert_eq!(decide(&mut r, Some(&status), AutofixMode::Super), None, "{state}");
+            assert_eq!(r.phase, Phase::Idle, "{state}");
+        }
+    }
+
+    #[test]
+    fn a_merged_pr_leaves_the_failing_streak_in_place() {
+        // Pinning current behavior: only a green run (or a dispatch) touches
+        // handled_sha / super_attempts — going Idle does not clear them.
+        let mut r = rt(AutofixMode::Super);
+        r.handled_sha = Some("aaa".into());
+        r.super_attempts = 2;
+        let mut status = pr("aaa", Rollup::Failure);
+        status.state = "MERGED".into();
+        decide(&mut r, Some(&status), AutofixMode::Super);
+        assert_eq!(r.handled_sha.as_deref(), Some("aaa"));
+        assert_eq!(r.super_attempts, 2);
+    }
+
+    // ── revert_dispatch(): the send-failed rollback ─────────────────────────
+
+    #[test]
+    fn a_failed_superfix_dispatch_is_fully_rolled_back() {
+        let mut r = rt(AutofixMode::Super);
+        decide(&mut r, Some(&pr("aaa", Rollup::Failure)), AutofixMode::Super).expect("dispatches");
+        revert_dispatch(&mut r, AutofixMode::Super);
+        assert_eq!(r.phase, Phase::Failing);
+        assert_eq!(r.handled_sha, None);
+        assert_eq!(r.super_attempts, 0, "the attempt is refunded");
+        // The next reconcile retries the very same sha rather than wedging.
+        assert!(decide(&mut r, Some(&pr("aaa", Rollup::Failure)), AutofixMode::Super).is_some());
+        assert_eq!(r.super_attempts, 1);
+    }
+
+    #[test]
+    fn a_failed_autofix_dispatch_does_not_refund_an_attempt() {
+        let mut r = rt(AutofixMode::Auto);
+        r.super_attempts = 2; // left over from an earlier superfix streak
+        decide(&mut r, Some(&pr("aaa", Rollup::Failure)), AutofixMode::Auto).expect("dispatches");
+        revert_dispatch(&mut r, AutofixMode::Auto);
+        assert_eq!(r.phase, Phase::Failing);
+        assert_eq!(r.handled_sha, None);
+        assert_eq!(r.super_attempts, 2, "autofix never spent one");
+    }
+
+    #[test]
+    fn a_rollback_never_overwrites_a_phase_a_turn_event_already_moved() {
+        // The dispatch failed, but the turn consumer had already advanced the
+        // phase — that newer state wins; only the dedupe/attempt bookkeeping
+        // is undone.
+        let mut r = rt(AutofixMode::Super);
+        decide(&mut r, Some(&pr("aaa", Rollup::Failure)), AutofixMode::Super).expect("dispatches");
+        r.phase = Phase::Running;
+        revert_dispatch(&mut r, AutofixMode::Super);
+        assert_eq!(r.phase, Phase::Running);
+        assert_eq!(r.handled_sha, None);
+        assert_eq!(r.super_attempts, 0);
+    }
+
+    #[test]
+    fn refunding_an_attempt_never_underflows() {
+        let mut r = rt(AutofixMode::Super);
+        revert_dispatch(&mut r, AutofixMode::Super);
+        assert_eq!(r.super_attempts, 0);
+    }
+
+    // ── fold_turn_event(): activity + needs-attention ───────────────────────
+
+    fn ev(status: TurnStatus) -> TurnEvent {
+        TurnEvent { workspace_id: "ws-1".into(), origin: TurnOrigin::User, status }
+    }
+
+    const TERMINAL: [TurnStatus; 3] = [TurnStatus::Completed, TurnStatus::Cancelled, TurnStatus::Failed];
+
+    #[test]
+    fn a_starting_turn_marks_the_workspace_working() {
+        for status in [TurnStatus::Queued, TurnStatus::Streaming] {
+            let mut r = rt(AutofixMode::Off);
+            r.needs_attention = true;
+            r.awaiting_input = true;
+            let out = fold_turn_event(&mut r, &ev(status), false);
+            assert!(r.working);
+            assert!(!r.needs_attention, "a fresh start clears the stale flag");
+            assert!(!r.awaiting_input);
+            assert_eq!(out, TurnFold::default(), "starting notifies nothing");
+        }
+    }
+
+    #[test]
+    fn a_turn_finishing_off_screen_needs_attention() {
+        for status in TERMINAL {
+            let mut r = rt(AutofixMode::Off);
+            r.working = true;
+            let out = fold_turn_event(&mut r, &ev(status), false);
+            assert_eq!(out.notify, Some("turn_done"), "{status:?}");
+            assert!(r.needs_attention, "{status:?}");
+            assert!(!r.working);
+        }
+    }
+
+    #[test]
+    fn a_turn_finishing_on_screen_notifies_without_needing_attention() {
+        for status in TERMINAL {
+            let mut r = rt(AutofixMode::Off);
+            r.working = true;
+            let out = fold_turn_event(&mut r, &ev(status), true);
+            assert_eq!(out.notify, Some("turn_done"), "{status:?}");
+            assert!(!r.needs_attention, "the user is looking at it");
+        }
+    }
+
+    #[test]
+    fn a_terminal_event_for_a_turn_we_never_saw_start_is_silent() {
+        // Crash repair / duplicate terminal events must not raise a badge.
+        let mut r = rt(AutofixMode::Off);
+        let out = fold_turn_event(&mut r, &ev(TurnStatus::Completed), false);
+        assert_eq!(out.notify, None);
+        assert!(!r.needs_attention);
+    }
+
+    #[test]
+    fn a_failed_turn_records_an_error_others_do_not() {
+        let mut r = rt(AutofixMode::Off);
+        r.working = true;
+        fold_turn_event(&mut r, &ev(TurnStatus::Failed), true);
+        assert_eq!(r.last_error.as_deref(), Some("the last turn failed"));
+
+        let mut r = rt(AutofixMode::Off);
+        r.working = true;
+        fold_turn_event(&mut r, &ev(TurnStatus::Completed), true);
+        assert_eq!(r.last_error, None);
+    }
+
+    #[test]
+    fn a_permission_request_off_screen_needs_attention() {
+        let mut r = rt(AutofixMode::Off);
+        r.working = true;
+        let out = fold_turn_event(&mut r, &ev(TurnStatus::AwaitingPermission), false);
+        assert_eq!(out.notify, Some("awaiting_input"));
+        assert!(r.awaiting_input);
+        assert!(r.needs_attention);
+        assert!(r.working, "the turn is still live, just blocked");
+    }
+
+    #[test]
+    fn a_permission_request_on_screen_notifies_without_needing_attention() {
+        let mut r = rt(AutofixMode::Off);
+        let out = fold_turn_event(&mut r, &ev(TurnStatus::AwaitingPermission), true);
+        assert_eq!(out.notify, Some("awaiting_input"));
+        assert!(r.awaiting_input);
+        assert!(!r.needs_attention);
+    }
+
+    #[test]
+    fn a_repeated_permission_request_only_notifies_once() {
+        let mut r = rt(AutofixMode::Off);
+        assert_eq!(fold_turn_event(&mut r, &ev(TurnStatus::AwaitingPermission), true).notify, Some("awaiting_input"));
+        assert_eq!(fold_turn_event(&mut r, &ev(TurnStatus::AwaitingPermission), true).notify, None);
+        // …until the turn resumes and blocks again.
+        fold_turn_event(&mut r, &ev(TurnStatus::Streaming), true);
+        assert_eq!(fold_turn_event(&mut r, &ev(TurnStatus::AwaitingPermission), true).notify, Some("awaiting_input"));
+    }
+
+    // ── fold_turn_event(): the autofix hand-off ─────────────────────────────
+
+    #[test]
+    fn a_finished_autofix_turn_awaits_the_users_push() {
+        let mut r = rt(AutofixMode::Auto);
+        r.working = true;
+        r.phase = Phase::Fixing;
+        let out = fold_turn_event(
+            &mut r,
+            &TurnEvent { workspace_id: "ws-1".into(), origin: TurnOrigin::Autofix, status: TurnStatus::Completed },
+            true,
+        );
+        assert_eq!(r.phase, Phase::AwaitingPush);
+        assert!(out.pr_changed);
+    }
+
+    #[test]
+    fn a_finished_superfix_turn_waits_for_the_new_ci_run() {
+        let mut r = rt(AutofixMode::Super);
+        r.working = true;
+        r.phase = Phase::Fixing;
+        let out = fold_turn_event(
+            &mut r,
+            &TurnEvent { workspace_id: "ws-1".into(), origin: TurnOrigin::Autofix, status: TurnStatus::Completed },
+            true,
+        );
+        assert_eq!(r.phase, Phase::Running, "superfix pushed, so CI is re-running");
+        assert!(out.pr_changed);
+    }
+
+    #[test]
+    fn a_user_turn_never_takes_the_autofix_hand_off() {
+        let mut r = rt(AutofixMode::Super);
+        r.working = true;
+        r.phase = Phase::Fixing;
+        let out = fold_turn_event(&mut r, &ev(TurnStatus::Completed), true);
+        assert_eq!(r.phase, Phase::Fixing, "the fix turn is still the one we're waiting on");
+        assert!(!out.pr_changed);
+    }
+
+    #[test]
+    fn any_finished_turn_forces_the_next_pr_poll() {
+        let mut r = rt(AutofixMode::Off);
+        r.working = true;
+        r.last_pr_poll = Some(Instant::now());
+        fold_turn_event(&mut r, &ev(TurnStatus::Completed), true);
+        assert!(r.last_pr_poll.is_none(), "the turn may have pushed — re-poll now");
     }
 }

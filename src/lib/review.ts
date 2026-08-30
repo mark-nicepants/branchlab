@@ -26,8 +26,13 @@ export function fileName(path: string): string {
 
 /** Whether a changed file was edited in the given turn's file list. The turn
  *  summary may carry absolute paths while git changes are repo-relative, so
- *  match exact or by suffix. */
-function editedInTurn(path: string, turnFiles: string[]): boolean {
+ *  match exact or by suffix.
+ *
+ *  The suffix match is anchored on `/` so `foo.ts` can't match `bar/xfoo.ts`,
+ *  but it does not know the repo root: a turn that touched
+ *  `/repo/vendor/src/a.ts` will also mark a changed `src/a.ts` as edited. See
+ *  the tests — the false positive needs only a repo-relative anchor to fix. */
+export function editedInTurn(path: string, turnFiles: string[]): boolean {
   return turnFiles.some((f) => f === path || f.endsWith(`/${path}`));
 }
 

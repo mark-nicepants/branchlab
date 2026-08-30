@@ -1,49 +1,15 @@
 import { createContext, useCallback, useContext, useState } from "react";
+import {
+  DEFAULTS,
+  migrate,
+  type LegacyPreferences,
+  type Preferences,
+  type WorkspacePreferences,
+} from "@/lib/prefs";
+
+export type { Preferences, WorkspacePreferences };
 
 const STORAGE_KEY = "branchlab.prefs";
-
-/** Preferences stored per workspace. */
-export interface WorkspacePreferences {
-  /** Draft text in the composer input box. */
-  inputText?: string;
-}
-
-export interface Preferences {
-  /** Poll the release endpoint for updates (launch + every few hours). */
-  autoCheckUpdates: boolean;
-  /** macOS app name used for "Open in terminal" (open -a). */
-  terminalApp: string;
-  /** macOS app name used for "Open in IDE" (open -a). */
-  editorApp: string;
-  /** Model keys (`providerID/modelID`) hidden from the model selector. */
-  disabledModels: string[];
-  /** Cached model catalog (value/name/group), captured from the last session's
-   *  ACP-advertised model option so the global Models settings page can render
-   *  the list without an open session. */
-  modelCatalog: { value: string; name: string; group?: string | null }[];
-  /** Per-workspace preferences (draft input). */
-  workspace: Record<string, WorkspacePreferences>;
-  /** Collapsed state of project stats panels in the sidebar (project id → boolean). */
-  collapsedProjects: Record<string, boolean>;
-  /** Width of the session changes panel in pixels (shared across sessions).
-   *  Pixel-based so window resizes keep the panel stable and only the chat
-   *  column flexes. */
-  changesPanelWidthPx: number;
-  /** Whether the session changes panel is open (shared across sessions). */
-  changesPanelOpen: boolean;
-}
-
-const DEFAULTS: Preferences = {
-  autoCheckUpdates: true,
-  terminalApp: "Terminal",
-  editorApp: "Visual Studio Code",
-  disabledModels: [],
-  modelCatalog: [],
-  workspace: {},
-  collapsedProjects: {},
-  changesPanelWidthPx: 420,
-  changesPanelOpen: false,
-};
 
 interface PrefsCtxValue {
   prefs: Preferences;
@@ -62,36 +28,12 @@ const PrefsCtx = createContext<PrefsCtxValue>({
   setWorkspacePref: () => {},
 });
 
-type LegacyPreferences = Partial<
-  Preferences & {
-    /** Pre-pixel panel width, as a % of the session body. */
-    changesPanelWidthPct: number;
-  }
->;
-
-/** Normalize stored preferences (incl. legacy shapes) into `Preferences`. */
-function migrate(raw: LegacyPreferences): Preferences {
-  // Panel width moved from % of the body to fixed pixels — approximate the old
-  // percentage against the current window so the panel keeps its familiar size.
-  let changesPanelWidthPx = raw.changesPanelWidthPx;
-  if (changesPanelWidthPx == null && raw.changesPanelWidthPct != null) {
-    changesPanelWidthPx = Math.round(
-      (raw.changesPanelWidthPct / 100) * (window.innerWidth || 1280),
-    );
-  }
-  changesPanelWidthPx = Math.min(
-    1200,
-    Math.max(320, changesPanelWidthPx ?? DEFAULTS.changesPanelWidthPx),
-  );
-  return { ...DEFAULTS, ...raw, changesPanelWidthPx };
-}
-
 function load(): Preferences {
   try {
     const raw = JSON.parse(
       localStorage.getItem(STORAGE_KEY) || "{}",
     ) as LegacyPreferences;
-    return migrate(raw);
+    return migrate(raw, window.innerWidth);
   } catch {
     return DEFAULTS;
   }

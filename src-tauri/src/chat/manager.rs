@@ -293,15 +293,13 @@ impl ChatManager {
                 == Some(crate::project::SetupState::Provisioning)
         };
         let mut orphaned = false;
-        match &conv.engine {
-            Some(engine) if !provisioning => engine.send(EngineCommand::Prompt { inputs }),
-            // Held until setup reaches a terminal state (release_held); the
-            // queued turn is already visible in the transcript.
-            _ if provisioning => conv.held = Some(inputs),
-            // No engine and no provisioning pipeline to boot one: only the
-            // SetupManager ever releases held prompts, so parking this one
-            // would leave the turn Queued invisibly forever — fail it instead.
-            _ => orphaned = true,
+        match dispatch_for(conv.engine.is_some(), provisioning) {
+            Dispatch::Deliver => match &conv.engine {
+                Some(engine) => engine.send(EngineCommand::Prompt { inputs }),
+                None => orphaned = true, // unreachable: Deliver implies an engine
+            },
+            Dispatch::Hold => conv.held = Some(inputs),
+            Dispatch::Orphan => orphaned = true,
         }
         drop(convs);
         let _ = self.inner.turn_tx.send(TurnEvent {
@@ -483,22 +481,7 @@ impl ChatManager {
             let mut convs = self.inner.convs.lock_safe();
             let cid = convs.get(workspace_id).map(|c| c.conversation_id.clone());
             if let Some(conv) = convs.get_mut(workspace_id) {
-                // Remember the selected model so the fresh session doesn't reset
-                // it to the engine's default (the reasoning-change reset bug).
-                conv.desired_model = conv
-                    .config
-                    .iter()
-                    .find(|o| o.category.as_deref() == Some("model"))
-                    .map(|o| o.current_value.clone());
-                conv.desired_effort = conv
-                    .config
-                    .iter()
-                    .find(|o| o.category.as_deref() == Some("thoughtLevel"))
-                    .map(|o| o.current_value.clone());
-                conv.engine = None; // Drop → Shutdown + abort the old opencode acp
-                conv.ready = false;
-                conv.current = None; // already terminal via finish_turn above
-                conv.pending_reason = reason;
+                reset_for_restart(conv, reason);
             }
             cid
         };
@@ -568,16 +551,17 @@ impl ChatManager {
         let undeliverable = {
             let mut convs = self.inner.convs.lock_safe();
             let Some(conv) = convs.get_mut(workspace_id) else { return };
-            match conv.held.take() {
-                Some(inputs) => match &conv.engine {
-                    Some(engine) => {
-                        crate::logf!("chat", "release held prompt ws={workspace_id}");
+            let held = conv.held.take();
+            match release_for(held.is_some(), conv.engine.is_some()) {
+                Release::Deliver => {
+                    crate::logf!("chat", "release held prompt ws={workspace_id}");
+                    if let (Some(engine), Some(inputs)) = (&conv.engine, held) {
                         engine.send(EngineCommand::Prompt { inputs });
-                        false
                     }
-                    None => true,
-                },
-                None => false,
+                    false
+                }
+                Release::Fail => true,
+                Release::Nothing => false,
             }
         };
         if undeliverable {
@@ -945,55 +929,138 @@ impl Inner {
     fn finish_turn(self: &Arc<Inner>, ws: &str, stop: StopKind, usage: Option<UsageInfo>) {
         let mut convs = self.convs.lock_safe();
         let Some(conv) = convs.get_mut(ws) else { return };
-        let Some(cur) = conv.current.take() else { return };
         let conv_id = conv.conversation_id.clone();
-        // A failed turn carries a reason we surface in the transcript (§3.5) so
-        // the user sees *why* it failed instead of a silent stop.
-        let (status, err_text) = match &stop {
-            StopKind::Completed => (TurnStatus::Completed, None),
-            StopKind::Cancelled => (TurnStatus::Cancelled, None),
-            StopKind::Refusal => (TurnStatus::Failed, Some("The agent declined to continue.".to_string())),
-            StopKind::Error(e) => (TurnStatus::Failed, Some(e.clone())),
-        };
-        let assembler = std::mem::take(&mut conv.assembler);
-        let blocks = assembler.blocks;
-        let summary = compute_collapse(&blocks, true);
-        let now = now_ms();
-        let entry = Entry::Assistant(AssistantEntry {
-            seq: cur.seq,
-            entry_id: cur.entry_id.clone(),
-            status,
-            origin: cur.origin,
-            blocks,
-            summary: summary.clone(),
-            usage: usage.clone(),
-            started_at: cur.started_at,
-            ended_at: Some(now),
-        });
+        let Some(closed) = close_turn(conv, &stop, usage.clone(), now_ms()) else { return };
+        let seq = closed.entry.seq();
         {
             // The terminal write for this turn — if it fails the transcript
             // keeps the last streamed snapshot instead, so say so out loud.
             let db = self.db.lock_safe();
-            if let Err(e) = db.update_entry(&entry) {
-                crate::logf!("chat", "terminal turn write FAILED ws={ws} seq={}: {e}", cur.seq);
+            if let Err(e) = db.update_entry(&closed.entry) {
+                crate::logf!("chat", "terminal turn write FAILED ws={ws} seq={seq}: {e}");
             }
         }
-        // Resolve any dangling permissions.
-        for (_id, tx) in conv.pending_perms.drain() {
-            let _ = tx.send(None);
-        }
-        let origin = cur.origin;
         drop(convs);
         // The full terminal entry FIRST (authoritative blocks — the live view
         // must end exactly equal to what the DB holds), then the turn status.
-        events::emit_entry(&self.app, ws, &entry);
-        events::emit_turn(&self.app, ws, cur.seq, status, &summary, usage.as_ref(), Some(now));
-        if let Some(text) = err_text {
-            crate::logf!("chat", "turn failed ws={ws} seq={}: {text}", cur.seq);
+        events::emit_entry(&self.app, ws, &closed.entry);
+        events::emit_turn(&self.app, ws, seq, closed.status, &closed.summary, usage.as_ref(), Some(closed.ended_at));
+        if let Some(text) = closed.err_text {
+            crate::logf!("chat", "turn failed ws={ws} seq={seq}: {text}");
             self.push_system(ws, &conv_id, SystemKind::Error, format!("Turn failed: {text}"));
         }
-        let _ = self.turn_tx.send(TurnEvent { workspace_id: ws.to_string(), origin, status });
+        let _ =
+            self.turn_tx.send(TurnEvent { workspace_id: ws.to_string(), origin: closed.origin, status: closed.status });
     }
+}
+
+/// Where a freshly queued prompt goes. The turn is already visible in the
+/// transcript by the time this is decided, so every outcome must end in a
+/// terminal status eventually — a silently parked prompt is a stuck spinner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Dispatch {
+    /// Straight to the live engine.
+    Deliver,
+    /// Park it; `release_held` delivers it when setup reaches a terminal state.
+    Hold,
+    /// No engine, and no provisioning pipeline that would ever boot one — only
+    /// the SetupManager releases held prompts, so parking this one would leave
+    /// the turn Queued invisibly forever. The caller fails the turn instead.
+    Orphan,
+}
+
+fn dispatch_for(has_engine: bool, provisioning: bool) -> Dispatch {
+    match (has_engine, provisioning) {
+        // A provisioning workspace holds even when an engine already exists:
+        // its cwd may still be mid-checkout.
+        (_, true) => Dispatch::Hold,
+        (true, false) => Dispatch::Deliver,
+        (false, false) => Dispatch::Orphan,
+    }
+}
+
+/// What [`ChatManager::release_held`] does with the parked prompt once setup
+/// reached a terminal state (success *or* failure).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Release {
+    Deliver,
+    /// Setup failed before the worktree existed, so no engine was ever booted.
+    /// Nothing else would terminate the queued turn — fail it rather than drop it.
+    Fail,
+    /// Nothing was held (the common case: setup finished with no prompt waiting).
+    Nothing,
+}
+
+fn release_for(has_held: bool, has_engine: bool) -> Release {
+    match (has_held, has_engine) {
+        (false, _) => Release::Nothing,
+        (true, true) => Release::Deliver,
+        (true, false) => Release::Fail,
+    }
+}
+
+/// Stash the user's session choices and tear the engine down for a restart.
+/// The stash is what stops the fresh ACP session from snapping the model back
+/// to opencode's built-in default (the reasoning-change reset bug). `current`
+/// is cleared unconditionally — the caller already finished the live turn with
+/// a terminal status, and its `TurnEnded` will never arrive now that the
+/// process is gone.
+fn reset_for_restart(conv: &mut ConvState, reason: SessionReason) {
+    let current_of = |category: &str| {
+        conv.config.iter().find(|o| o.category.as_deref() == Some(category)).map(|o| o.current_value.clone())
+    };
+    conv.desired_model = current_of("model");
+    conv.desired_effort = current_of("thoughtLevel");
+    conv.engine = None; // Drop → Shutdown + abort the old opencode acp
+    conv.ready = false;
+    conv.current = None;
+    conv.pending_reason = reason;
+}
+
+/// The terminal state of a turn that just ended, for the caller to persist,
+/// emit, and broadcast.
+struct ClosedTurn {
+    entry: Entry,
+    status: TurnStatus,
+    summary: CollapseSummary,
+    origin: TurnOrigin,
+    ended_at: i64,
+    /// Why it failed, surfaced in the transcript (§3.5) so the user sees the
+    /// reason instead of a silent stop. `None` unless it failed.
+    err_text: Option<String>,
+}
+
+/// Take the conversation's live turn and fold it into its terminal entry:
+/// status from `stop`, the assembler's accumulated blocks, a collapse summary,
+/// and every dangling permission responder resolved (the ACP side must never be
+/// left blocked on a turn that ended). `None` when no turn is live — a late or
+/// duplicate stop signal is a no-op, which is what makes finishing a turn
+/// idempotent across the restart / engine-closed / TurnEnded paths.
+fn close_turn(conv: &mut ConvState, stop: &StopKind, usage: Option<UsageInfo>, now: i64) -> Option<ClosedTurn> {
+    let cur = conv.current.take()?;
+    let (status, err_text) = match stop {
+        StopKind::Completed => (TurnStatus::Completed, None),
+        StopKind::Cancelled => (TurnStatus::Cancelled, None),
+        StopKind::Refusal => (TurnStatus::Failed, Some("The agent declined to continue.".to_string())),
+        StopKind::Error(e) => (TurnStatus::Failed, Some(e.clone())),
+    };
+    let blocks = std::mem::take(&mut conv.assembler).blocks;
+    let summary = compute_collapse(&blocks, true);
+    let entry = Entry::Assistant(AssistantEntry {
+        seq: cur.seq,
+        entry_id: cur.entry_id,
+        status,
+        origin: cur.origin,
+        blocks,
+        summary: summary.clone(),
+        usage,
+        started_at: cur.started_at,
+        ended_at: Some(now),
+    });
+    for (_id, tx) in conv.pending_perms.drain() {
+        let _ = tx.send(None);
+    }
+    Some(ClosedTurn { entry, status, summary, origin: cur.origin, ended_at: now, err_text })
 }
 
 fn with_seq(mut entry: Entry, seq: Seq) -> Entry {
@@ -1037,4 +1104,322 @@ fn todos_from_block(b: &Block) -> Option<Vec<events::Todo>> {
         })
         .collect();
     Some(todos)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chat::model::{ConfigChoice, ToolBlock, ToolStatus};
+
+    fn conv() -> ConvState {
+        ConvState::new("conv-1".into(), PathBuf::from("/nope/does-not-exist"))
+    }
+
+    /// An engine stand-in: a real [`EngineHandle`] whose commands land in the
+    /// returned receiver instead of an `opencode acp` process.
+    fn fake_engine() -> (EngineHandle, mpsc::UnboundedReceiver<EngineCommand>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        (EngineHandle::new(tx, tauri::async_runtime::spawn(async {})), rx)
+    }
+
+    fn opt(id: &str, category: &str, value: &str) -> ConfigOption {
+        ConfigOption {
+            id: id.into(),
+            name: id.into(),
+            description: None,
+            category: Some(category.into()),
+            current_value: value.into(),
+            choices: vec![ConfigChoice { value: value.into(), name: value.into(), description: None, group: None }],
+        }
+    }
+
+    fn text(id: &str, s: &str) -> Block {
+        Block::Text { block_id: id.into(), text: s.into() }
+    }
+
+    /// Put a live turn on the conversation, as `send` does.
+    fn start_turn(conv: &mut ConvState) {
+        conv.current = Some(LiveTurn {
+            entry_id: "entry-a".into(),
+            seq: 42,
+            origin: TurnOrigin::User,
+            started_at: 1_000,
+            streaming: true,
+            last_persist: None,
+        });
+    }
+
+    fn assistant(entry: &Entry) -> &AssistantEntry {
+        match entry {
+            Entry::Assistant(a) => a,
+            other => panic!("expected an assistant entry, got {other:?}"),
+        }
+    }
+
+    // ── send(): where a freshly queued prompt goes ──────────────────────────
+
+    #[test]
+    fn a_ready_workspace_delivers_the_prompt_straight_to_the_engine() {
+        assert_eq!(dispatch_for(true, false), Dispatch::Deliver);
+    }
+
+    #[test]
+    fn a_provisioning_workspace_holds_the_prompt() {
+        // Held whether or not an engine happens to exist already — the cwd may
+        // still be mid-checkout.
+        assert_eq!(dispatch_for(false, true), Dispatch::Hold);
+        assert_eq!(dispatch_for(true, true), Dispatch::Hold);
+    }
+
+    #[test]
+    fn no_engine_and_no_setup_pipeline_orphans_the_prompt() {
+        // Nothing would ever release a hold here, so the caller fails the turn
+        // instead of leaving a Queued row spinning forever.
+        assert_eq!(dispatch_for(false, false), Dispatch::Orphan);
+    }
+
+    // ── release_held(): setup reached a terminal state ──────────────────────
+
+    #[test]
+    fn a_held_prompt_reaches_the_engine_once_setup_succeeds() {
+        assert_eq!(release_for(true, true), Release::Deliver);
+    }
+
+    #[test]
+    fn a_held_prompt_with_no_engine_fails_the_turn_rather_than_dropping_it() {
+        // Setup failed before the worktree existed: no engine was ever booted,
+        // and nothing else terminates the queued turn.
+        assert_eq!(release_for(true, false), Release::Fail);
+    }
+
+    #[test]
+    fn releasing_with_nothing_held_does_nothing() {
+        assert_eq!(release_for(false, true), Release::Nothing);
+        assert_eq!(release_for(false, false), Release::Nothing);
+    }
+
+    // ── close_turn(): the terminal status of a live turn ────────────────────
+
+    #[test]
+    fn a_restart_closes_the_live_turn_as_cancelled() {
+        // The Phase 1 fix: without this the reloaded transcript shows a
+        // perpetual spinner, because the dropped engine's TurnEnded never comes.
+        let mut c = conv();
+        start_turn(&mut c);
+        c.assembler.blocks = vec![text("b1", "half an answer")];
+        let closed = close_turn(&mut c, &StopKind::Cancelled, None, 5_000).expect("a turn was live");
+        assert_eq!(closed.status, TurnStatus::Cancelled);
+        assert_eq!(closed.err_text, None, "a cancel is not a failure");
+        let a = assistant(&closed.entry);
+        assert_eq!(a.status, TurnStatus::Cancelled);
+        assert_eq!(a.seq, 42);
+        assert_eq!(a.entry_id, "entry-a");
+        assert_eq!(a.started_at, 1_000);
+        assert_eq!(a.ended_at, Some(5_000));
+        assert_eq!(a.blocks, vec![text("b1", "half an answer")], "the partial work is kept");
+        assert!(a.summary.collapsed);
+        assert!(c.current.is_none(), "no live turn survives");
+        assert!(c.assembler.blocks.is_empty(), "the assembler is clean for the next turn");
+    }
+
+    #[test]
+    fn an_engine_that_closes_mid_turn_fails_it_with_the_reason() {
+        let mut c = conv();
+        start_turn(&mut c);
+        let closed = close_turn(&mut c, &StopKind::Error("engine closed".into()), None, 5_000).unwrap();
+        assert_eq!(closed.status, TurnStatus::Failed);
+        assert_eq!(closed.err_text.as_deref(), Some("engine closed"));
+        assert_eq!(assistant(&closed.entry).status, TurnStatus::Failed);
+    }
+
+    #[test]
+    fn a_refusal_fails_the_turn_with_a_human_reason() {
+        let mut c = conv();
+        start_turn(&mut c);
+        let closed = close_turn(&mut c, &StopKind::Refusal, None, 5_000).unwrap();
+        assert_eq!(closed.status, TurnStatus::Failed);
+        assert_eq!(closed.err_text.as_deref(), Some("The agent declined to continue."));
+    }
+
+    #[test]
+    fn a_completed_turn_carries_its_usage_and_no_error() {
+        let mut c = conv();
+        start_turn(&mut c);
+        let usage =
+            UsageInfo { input: Some(12), output: Some(34), reasoning: None, cache_read: None, cache_write: None };
+        let closed = close_turn(&mut c, &StopKind::Completed, Some(usage.clone()), 5_000).unwrap();
+        assert_eq!(closed.status, TurnStatus::Completed);
+        assert_eq!(closed.err_text, None);
+        assert_eq!(assistant(&closed.entry).usage, Some(usage));
+    }
+
+    #[test]
+    fn closing_a_turn_twice_is_a_no_op() {
+        // What makes the restart / engine-closed / TurnEnded paths safe to
+        // race: only the first close produces a terminal entry.
+        let mut c = conv();
+        start_turn(&mut c);
+        assert!(close_turn(&mut c, &StopKind::Cancelled, None, 5_000).is_some());
+        assert!(close_turn(&mut c, &StopKind::Completed, None, 6_000).is_none());
+    }
+
+    #[test]
+    fn closing_a_turn_with_nothing_live_is_a_no_op() {
+        let mut c = conv();
+        assert!(close_turn(&mut c, &StopKind::Completed, None, 5_000).is_none());
+    }
+
+    #[test]
+    fn closing_a_turn_unblocks_every_pending_permission() {
+        // The ACP responders are awaiting these; leaving one hanging wedges the
+        // engine's session task.
+        let mut c = conv();
+        start_turn(&mut c);
+        let (tx1, mut rx1) = oneshot::channel();
+        let (tx2, mut rx2) = oneshot::channel();
+        c.pending_perms.insert("req-1".into(), tx1);
+        c.pending_perms.insert("req-2".into(), tx2);
+        close_turn(&mut c, &StopKind::Error("engine closed".into()), None, 5_000).unwrap();
+        assert_eq!(rx1.try_recv().unwrap(), None, "rejected, not left hanging");
+        assert_eq!(rx2.try_recv().unwrap(), None);
+        assert!(c.pending_perms.is_empty());
+    }
+
+    #[test]
+    fn the_terminal_entry_summarizes_the_work_it_carries() {
+        let mut c = conv();
+        start_turn(&mut c);
+        c.assembler.blocks = vec![text("b1", "done"), tool_block("edit", serde_json::json!({}))];
+        let closed = close_turn(&mut c, &StopKind::Completed, None, 5_000).unwrap();
+        assert_eq!(closed.summary, assistant(&closed.entry).summary, "one summary, not two");
+        assert!(closed.summary.collapsed);
+        assert_eq!(closed.summary.step_count, 1, "the tool call is a step");
+    }
+
+    // ── reset_for_restart(): tearing the engine down ────────────────────────
+
+    #[test]
+    fn a_restart_stashes_the_chosen_model_and_thinking_level() {
+        let mut c = conv();
+        c.config =
+            vec![opt("m", "model", "anthropic/opus"), opt("e", "thoughtLevel", "high"), opt("x", "mode", "build")];
+        reset_for_restart(&mut c, SessionReason::Cleared);
+        assert_eq!(c.desired_model.as_deref(), Some("anthropic/opus"));
+        assert_eq!(c.desired_effort.as_deref(), Some("high"));
+        assert_eq!(c.pending_reason, SessionReason::Cleared);
+    }
+
+    #[test]
+    fn a_restart_before_any_config_arrived_stashes_nothing() {
+        let mut c = conv();
+        reset_for_restart(&mut c, SessionReason::Compacted);
+        assert_eq!(c.desired_model, None);
+        assert_eq!(c.desired_effort, None);
+    }
+
+    #[test]
+    fn a_restart_drops_the_engine_and_the_live_turn() {
+        let mut c = conv();
+        let (engine, mut rx) = fake_engine();
+        c.engine = Some(engine);
+        c.ready = true;
+        start_turn(&mut c);
+        reset_for_restart(&mut c, SessionReason::Cleared);
+        assert!(c.engine.is_none());
+        assert!(!c.ready);
+        assert!(c.current.is_none(), "the caller already closed it as Cancelled");
+        // Dropping the handle shuts the old `opencode acp` down.
+        assert!(matches!(rx.try_recv(), Ok(EngineCommand::Shutdown)));
+    }
+
+    // ── prompt building ─────────────────────────────────────────────────────
+
+    fn attachment(url: &str) -> Attachment {
+        Attachment { mime: "image/png".into(), url: url.into(), filename: Some("shot.png".into()) }
+    }
+
+    #[test]
+    fn images_are_sent_ahead_of_the_text() {
+        let inputs = build_inputs("look at this", &[attachment("data:image/png;base64,AAAA")]);
+        assert!(matches!(&inputs[0], PromptInput::Image { mime, data } if mime == "image/png" && data == "AAAA"));
+        assert!(matches!(&inputs[1], PromptInput::Text(t) if t == "look at this"));
+    }
+
+    #[test]
+    fn an_empty_message_sends_only_its_attachments() {
+        let inputs = build_inputs("", &[attachment("data:image/png;base64,AAAA")]);
+        assert_eq!(inputs.len(), 1);
+        assert!(matches!(inputs[0], PromptInput::Image { .. }));
+    }
+
+    #[test]
+    fn an_unparseable_attachment_url_is_skipped_not_sent_as_text() {
+        let inputs = build_inputs("hi", &[attachment("https://example.test/shot.png")]);
+        assert_eq!(inputs.len(), 1);
+        assert!(matches!(&inputs[0], PromptInput::Text(t) if t == "hi"));
+    }
+
+    #[test]
+    fn data_urls_split_into_mime_and_payload() {
+        assert_eq!(parse_data_url("data:image/png;base64,AAAA"), Some(("image/png".into(), "AAAA".into())));
+        // No parameters, and a default mime when the meta section is empty.
+        assert_eq!(parse_data_url("data:text/plain,hello"), Some(("text/plain".into(), "hello".into())));
+        assert_eq!(parse_data_url("data:,hello"), Some(("".into(), "hello".into())));
+        assert_eq!(parse_data_url("https://example.test/x.png"), None);
+        assert_eq!(parse_data_url("data:image/png;base64"), None, "no comma, no payload");
+    }
+
+    // ── todo extraction (opencode's `todowrite` tool call) ──────────────────
+
+    fn tool_block(name: &str, input: serde_json::Value) -> Block {
+        Block::Tool(Box::new(ToolBlock {
+            block_id: "b-tool".into(),
+            call_id: "call-1".into(),
+            name: name.into(),
+            title: None,
+            status: ToolStatus::Completed,
+            input,
+            output: None,
+            diff: None,
+            locations: vec![],
+            raw_output: None,
+            started_at: None,
+            ended_at: None,
+        }))
+    }
+
+    #[test]
+    fn a_todowrite_tool_call_yields_the_composers_todo_list() {
+        // Keyed on the input shape, not the tool name — ACP reports it as
+        // ToolKind::Other with an engine-chosen title.
+        let block = tool_block(
+            "some-engine-title",
+            serde_json::json!({
+                "todos": [
+                    { "content": "write the test", "status": "completed" },
+                    { "content": "ship it", "status": "in_progress" },
+                ]
+            }),
+        );
+        let todos = todos_from_block(&block).expect("a todo list");
+        assert_eq!(todos.len(), 2);
+        assert_eq!(todos[0].content, "write the test");
+        assert_eq!(todos[1].status, "in_progress");
+    }
+
+    #[test]
+    fn a_malformed_todo_entry_defaults_to_pending_rather_than_dropping_out() {
+        let block = tool_block("todowrite", serde_json::json!({ "todos": [{ "content": "x" }, {}] }));
+        let todos = todos_from_block(&block).unwrap();
+        assert_eq!(todos.len(), 2);
+        assert_eq!(todos[0].status, "pending");
+        assert_eq!(todos[1].content, "");
+    }
+
+    #[test]
+    fn other_blocks_yield_no_todos() {
+        assert!(todos_from_block(&text("b1", "hello")).is_none());
+        assert!(todos_from_block(&tool_block("bash", serde_json::json!({ "command": "ls" }))).is_none());
+        assert!(todos_from_block(&tool_block("weird", serde_json::json!({ "todos": "not-an-array" }))).is_none());
+    }
 }
